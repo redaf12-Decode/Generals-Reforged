@@ -1,0 +1,447 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2025-2026 by Olcay Seygan for Zero Hour Reforged; see the git history.
+// Modified 2026 by İlyas Akın for the macOS/Linux port; see NOTICE.md and the git history.
+
+////////////////////////////////////////////////////////////////////////////////
+//																																						//
+//  (c) 2001-2003 Electronic Arts Inc.																				//
+//																																						//
+////////////////////////////////////////////////////////////////////////////////
+
+// FILE: AsciiString.cpp 
+//-----------------------------------------------------------------------------
+//                                                                          
+//                       Westwood Studios Pacific.                          
+//                                                                          
+//                       Confidential Information					         
+//                Copyright (C) 2001 - All Rights Reserved                  
+//                                                                          
+//-----------------------------------------------------------------------------
+//
+// Project:    RTS3
+//
+// File name:  AsciiString.cpp
+//
+// Created:    Steven Johnson, October 2001
+//
+// Desc:       General-purpose string classes
+//
+//-----------------------------------------------------------------------------
+///////////////////////////////////////////////////////////////////////////////
+#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+
+#include "Common/CriticalSection.h"
+
+
+// -----------------------------------------------------
+
+/*static*/ AsciiString AsciiString::TheEmptyString;
+
+//-----------------------------------------------------------------------------
+inline char* skipSeps(char* p, const char* seps)
+{
+	while (*p && strchr(seps, *p) != NULL)
+		++p;
+	return p;
+}
+
+//-----------------------------------------------------------------------------
+inline char* skipNonSeps(char* p, const char* seps)
+{
+	while (*p && strchr(seps, *p) == NULL)
+		++p;
+	return p;
+}
+
+//-----------------------------------------------------------------------------
+inline char* skipWhitespace(char* p)
+{
+	while (*p && isspace(*p))
+		++p;
+	return p;
+}
+
+//-----------------------------------------------------------------------------
+inline char* skipNonWhitespace(char* p)
+{
+	while (*p && !isspace(*p))
+		++p;
+	return p;
+}
+
+void AsciiString::freeBytes(void)
+{
+	TheDynamicMemoryAllocator->freeBytes(m_data);
+}
+
+// -----------------------------------------------------
+#ifdef _DEBUG
+void AsciiString::validate() const
+{
+	if (!m_data) return;
+	DEBUG_ASSERTCRASH(m_data->m_refCount.load(std::memory_order_relaxed) > 0, ("m_refCount is zero"));
+	DEBUG_ASSERTCRASH(m_data->m_refCount.load(std::memory_order_relaxed) < 32000, ("m_refCount is suspiciously large"));
+	DEBUG_ASSERTCRASH(m_data->m_numCharsAllocated > 0, ("m_numCharsAllocated is zero"));
+//	DEBUG_ASSERTCRASH(m_data->m_numCharsAllocated < 1024, ("m_numCharsAllocated suspiciously large"));
+	DEBUG_ASSERTCRASH(strlen(m_data->peek())+1 <= m_data->m_numCharsAllocated,("str is too long (%d) for storage",strlen(m_data->peek())+1));
+}
+#endif
+
+// -----------------------------------------------------
+void AsciiString::debugIgnoreLeaks()
+{
+#ifdef MEMORYPOOL_DEBUG
+	if (m_data)
+	{
+		TheDynamicMemoryAllocator->debugIgnoreLeaksForThisBlock(m_data);
+	}
+	else
+	{
+		DEBUG_LOG(("cannot ignore the leak (no data)\n"));
+	}
+#endif
+}
+
+// -----------------------------------------------------
+void AsciiString::ensureUniqueBufferOfSize(int numCharsNeeded, Bool preserveData, const char* strToCopy, const char* strToCat)
+{
+	validate();
+
+	if (m_data &&
+			m_data->m_refCount.load(std::memory_order_acquire) == 1 &&	// acquire: the last other holder's reads of the buffer happen before this thread writes it
+			m_data->m_numCharsAllocated >= numCharsNeeded)
+	{
+		// no buffer manhandling is needed (it's already large enough, and unique to us)
+		// memmove, not strcpy or strcat: the source can be this string's own text - nextToken sets the
+		// string to the rest of itself, and a string can be concatenated onto itself - and an
+		// overlapping strcpy or strcat is undefined.  MSVC's copies forward and got away with it;
+		// macOS's x86_64 strcpy did not, and the archive directory lost a random subset of its paths.
+		if (strToCopy)
+			memmove(m_data->peek(), strToCopy, strlen(strToCopy) + 1);
+		if (strToCat)
+		{
+			char *end = m_data->peek() + strlen(m_data->peek());
+			memmove(end, strToCat, strlen(strToCat) + 1);
+		}
+		return;
+	}
+
+	int minBytes = sizeof(AsciiStringData) + numCharsNeeded*sizeof(char);
+	if (minBytes > MAX_LEN)
+		throw ERROR_OUT_OF_MEMORY;
+
+	if (TheDynamicMemoryAllocator == NULL)
+		preMainInitMemoryManager();	// a string built by a static constructor, before main (GameMemory.h)
+	int actualBytes = TheDynamicMemoryAllocator->getActualAllocationSize(minBytes);
+	AsciiStringData* newData = (AsciiStringData*)TheDynamicMemoryAllocator->allocateBytesDoNotZero(actualBytes, "STR_AsciiString::ensureUniqueBufferOfSize");
+	/* Placement-new rather than assignment.  allocateBytesDoNotZero hands back raw bytes that are
+		 then cast to AsciiStringData - no constructor has ever run for this struct, which is what the
+		 "Plain Old Data Structure... don't add a ctor/dtor" note on it means - so m_refCount's
+		 lifetime has to be started explicitly now that it is a std::atomic.  It compiles to the same
+		 16-bit store either way; this is about the object model, not the instructions. */
+	new (&newData->m_refCount) std::atomic<unsigned short>(1);
+	newData->m_numCharsAllocated = (actualBytes - sizeof(AsciiStringData))/sizeof(char);
+#if defined(_DEBUG) || defined(_INTERNAL)
+	newData->m_debugptr = newData->peek();	// just makes it easier to read in the debugger
+#endif
+
+	if (m_data && preserveData)
+		strcpy(newData->peek(), m_data->peek());
+	else
+		newData->peek()[0] = 0;
+
+	// do these BEFORE releasing the old buffer, so that self-copies
+	// or self-cats will work correctly.
+	if (strToCopy)
+		strcpy(newData->peek(), strToCopy);
+	if (strToCat)
+		strcat(newData->peek(), strToCat);
+
+	releaseBuffer();
+	m_data = newData;
+
+	validate();
+}
+
+
+// -----------------------------------------------------
+char*  AsciiString::getBufferForRead(Int len)
+{
+	validate();
+	DEBUG_ASSERTCRASH(len>0, ("No need to allocate 0 len strings."));
+	ensureUniqueBufferOfSize(len + 1, false, NULL, NULL);
+	validate();
+	return peek();
+}
+
+// -----------------------------------------------------
+void AsciiString::translate(const UnicodeString& stringSrc)
+{
+	validate();
+	/// @todo srj put in a real translation here; this will only work for 7-bit ascii
+	clear();
+	Int len = stringSrc.getLength();
+	for (Int i = 0; i < len; i++)
+		concat((char)stringSrc.getCharAt(i));
+	validate();
+}
+
+// -----------------------------------------------------
+void AsciiString::trim()
+{
+	validate();
+
+	if (m_data)
+	{
+		char *c = peek();
+
+		//	Strip leading white space from the string.
+		c = skipWhitespace(c);
+		if (c != peek())
+		{
+			set(c);
+		}
+
+		if (m_data) // another check, because the previous set() could erase m_data
+		{
+			//	Clip trailing white space from the string.
+			int len = strlen(peek());
+			for (int index = len-1; index >= 0; index--)
+			{
+				if (isspace(getCharAt(index)))
+				{
+					removeLastChar();
+				}
+				else
+				{
+					break;
+				}
+			}
+		}
+	}
+	validate();
+}
+
+// -----------------------------------------------------
+void AsciiString::toLower()
+{
+	validate();
+	if (m_data)
+	{
+		//
+		// This used to strcpy into a fixed 2048 byte buffer on the stack.  A longer string - a path,
+		// a map name off the network - wrote straight past the end of it, and every call allocated a
+		// new buffer for the answer even when the string was already lowercase.  Do it where the
+		// string already lives, which is the same in-place shape removeLastChar uses just below.
+		//
+		// tolower() is called on a plain char exactly as it always was.  On this compiler a byte
+		// above 127 arrives as a negative index and the CRT's table tolerates it; changing that to
+		// an unsigned char would be the correct call in the abstract and a different answer for
+		// those bytes, and lowercased strings are keys here - the map cache is one.
+		//
+		const int len = strlen(peek());
+		if (len > 0)
+		{
+			ensureUniqueBufferOfSize(len + 1, true, NULL, NULL);
+			for (char *c = peek(); *c; ++c)
+				*c = tolower(*c);
+		}
+	}
+	validate();
+}
+
+// -----------------------------------------------------
+void AsciiString::removeLastChar()
+{
+	validate();
+	if (m_data)
+	{
+		int len = strlen(peek());
+		if (len > 0)
+		{
+			ensureUniqueBufferOfSize(len+1, true, NULL, NULL);
+			peek()[len - 1] = 0;
+		}
+	}
+	validate();
+}
+
+// -----------------------------------------------------
+void AsciiString::format(AsciiString format, ...)
+{
+	validate();
+	va_list args;
+	// C4840 here is va_start naming a class-typed last parameter, which both compilers handle;
+	// it is kept on everywhere else to catch a string object passed through the "...".
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4840)
+#endif
+  va_start(args, format);
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+	format_va(format, args);
+  va_end(args);
+	validate();
+}
+
+// -----------------------------------------------------
+void AsciiString::format(const char* format, ...)
+{
+	validate();
+	va_list args;
+  va_start(args, format);
+	format_va(format, args);
+  va_end(args);
+	validate();
+}
+
+// -----------------------------------------------------
+void AsciiString::format_va(const AsciiString& format, va_list args)
+{
+	validate();
+	char buf[MAX_FORMAT_BUF_LEN];
+  // vsnprintf, not vsnprintf, and the test is not the same test.  Microsoft's returns -1 when it
+	// truncates; C99's always returns the length it wanted, so "< 0" would stop noticing.  Passing
+	// the full sizeof is also deliberate: C99 counts the terminator inside the bound, so the usable
+	// length is unchanged at sizeof(buf)-1 - and a string that exactly filled the old bound used to
+	// leave buf unterminated for set() to read past, which this no longer permits.
+	const int wanted = vsnprintf(buf, sizeof(buf), format.str(), args);
+	if (wanted < 0 || (size_t)wanted >= sizeof(buf))
+			throw ERROR_OUT_OF_MEMORY;
+	set(buf);
+	validate();
+}
+
+// -----------------------------------------------------
+void AsciiString::format_va(const char* format, va_list args)
+{
+	validate();
+	char buf[MAX_FORMAT_BUF_LEN];
+  const int wanted = vsnprintf(buf, sizeof(buf), format, args);
+	if (wanted < 0 || (size_t)wanted >= sizeof(buf))
+			throw ERROR_OUT_OF_MEMORY;
+	set(buf);
+	validate();
+}
+
+// -----------------------------------------------------
+Bool AsciiString::startsWith(const char* p) const
+{
+	if (*p == 0)
+		return true;	// everything starts with the empty string
+
+	int lenThis = getLength();
+	int lenThat = strlen(p);
+	if (lenThis < lenThat)
+		return false;	// that must be smaller than this
+
+	return strncmp(peek(), p, lenThat) == 0;
+}
+
+// -----------------------------------------------------
+Bool AsciiString::startsWithNoCase(const char* p) const
+{
+	if (*p == 0)
+		return true;	// everything starts with the empty string
+
+	int lenThis = getLength();
+	int lenThat = strlen(p);
+	if (lenThis < lenThat)
+		return false;	// that must be smaller than this
+
+	return strncasecmp(peek(), p, lenThat) == 0;
+}
+
+// -----------------------------------------------------
+Bool AsciiString::endsWith(const char* p) const
+{
+	if (*p == 0)
+		return true;	// everything ends with the empty string
+
+	int lenThis = getLength();
+	int lenThat = strlen(p);
+	if (lenThis < lenThat)
+		return false;	// that must be smaller than this
+
+	return strncmp(peek() + lenThis - lenThat, p, lenThat) == 0;
+}
+
+// -----------------------------------------------------
+Bool AsciiString::endsWithNoCase(const char* p) const
+{
+	if (*p == 0)
+		return true;	// everything ends with the empty string
+
+	int lenThis = getLength();
+	int lenThat = strlen(p);
+	if (lenThis < lenThat)
+		return false;	// that must be smaller than this
+
+	return strncasecmp(peek() + lenThis - lenThat, p, lenThat) == 0;
+}
+
+//-----------------------------------------------------------------------------
+Bool AsciiString::isNone() const
+{
+	return m_data && strcasecmp(peek(), "None") == 0;
+}
+
+//-----------------------------------------------------------------------------
+Bool AsciiString::nextToken(AsciiString* tok, const char* seps)
+{
+	if (tok == this)
+		return false;
+
+	/* An exhausted source used to return false with the caller's token left holding the *previous*
+		 token.  Every loop of the form "while (token.getLength() > 0) nextToken(&token)" then never
+		 ends, because the token never empties - see ConvertShortMapPathToLongMapPath, where it grew
+		 a string until AsciiString's 32767-byte ceiling threw ERROR_OUT_OF_MEMORY out of
+		 parseCommandLine.  Failing to produce a token means the token is empty. */
+	if (this->isEmpty())
+	{
+		tok->clear();
+		return false;
+	}
+
+	if (seps == NULL)
+		seps = " \n\r\t";
+
+	char* start = skipSeps(peek(), seps);
+	char* end = skipNonSeps(start, seps);
+
+	if (end > start)
+	{
+		Int len = end - start;
+		char* tmp = tok->getBufferForRead(len + 1);
+		memcpy(tmp, start, len);
+		tmp[len] = 0;
+
+		this->set(end);
+
+		return true;
+	}
+	else
+	{
+		this->clear();
+		tok->clear();
+		return false;
+	}
+}

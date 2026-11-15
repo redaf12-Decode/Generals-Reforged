@@ -1,0 +1,7664 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2025-2026 by Olcay Seygan for Zero Hour Reforged; see the git history.
+// Modified 2026 by İlyas Akın for the macOS/Linux port; see NOTICE.md and the git history.
+
+////////////////////////////////////////////////////////////////////////////////
+//																																						//
+//  (c) 2001-2003 Electronic Arts Inc.																				//
+//																																						//
+////////////////////////////////////////////////////////////////////////////////
+
+// Drawable.cpp ///////////////////////////////////////////////////////////////////////////////////
+// "Drawables" - graphical GameClient entities bound to GameLogic objects
+// Author: Michael S. Booth, March 2001
+///////////////////////////////////////////////////////////////////////////////////////////////////
+  
+#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Lib/Clock.h"
+
+#include "Common/AudioEventInfo.h"
+#include "Common/LogicThread.h"
+#include "Common/LatchRestore.h"
+#include "Common/DynamicAudioEventInfo.h"
+#include "Common/AudioSettings.h"
+#include "Common/BitFlagsIO.h"
+#include "Common/BuildAssistant.h"
+#include "Common/ClientUpdateModule.h"
+#include "Common/DrawModule.h"
+#include "Common/GameAudio.h"
+#include "Common/GameEngine.h"
+#include "Common/GameLOD.h"
+#include "Common/GameState.h"
+#include "Common/GlobalData.h"
+#include "Common/ModuleFactory.h"
+#include "Common/PerfTimer.h"
+#include "Common/Player.h"
+#include "Common/PlayerList.h"
+#include "Common/ThingFactory.h"
+#include "Common/ThingTemplate.h"
+#include "Common/Xfer.h"
+
+#include "GameLogic/ExperienceTracker.h"
+#include "GameLogic/GameLogic.h"		// for logic frame count
+#include "GameLogic/Object.h"
+#include "GameLogic/Module/SpecialPowerModule.h"
+#include "Common/SpecialPower.h"
+		// countdown text over a building
+#include "GameLogic/Locomotor.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/BodyModule.h"
+#include "GameLogic/Module/ContainModule.h"
+#include "GameLogic/Module/PhysicsUpdate.h"
+#include "GameLogic/Module/ProductionUpdate.h"
+#include "GameLogic/Module/SupplyWarehouseDockUpdate.h"
+#include "Common/Upgrade.h"
+#include "GameLogic/Module/StealthUpdate.h"
+#include "GameLogic/Module/StickyBombUpdate.h"
+#include "GameLogic/Module/BattlePlanUpdate.h"
+#include "GameLogic/ScriptEngine.h"
+#include "GameLogic/Weapon.h"
+
+#include "GameClient/CinemaDirector.h"
+#include "GameClient/Anim2D.h"
+#include "GameClient/ControlBar.h"
+#include "GameClient/Display.h"
+#include "GameClient/DisplayStringManager.h"
+#include "GameClient/Drawable.h"
+#include "GameClient/DrawGroupInfo.h"
+#include "GameClient/FXList.h"
+#include "GameClient/GameClient.h"
+#include "GameClient/GlobalLanguage.h"
+#include "GameClient/InGameUI.h"
+#include "GameClient/Image.h"
+#include "GameClient/ObserverCamera.h"
+#include "GameClient/ParticleSys.h"
+#include "GameClient/PlayerColorScheme.h"
+#include "GameClient/LanguageFilter.h"
+#include "GameClient/Mouse.h"
+#include "GameClient/Shadow.h"
+#include "GameClient/GameText.h"
+
+//#define KRIS_BRUTAL_HACK_FOR_AIRCRAFT_CARRIER_DEBUGGING 
+#ifdef KRIS_BRUTAL_HACK_FOR_AIRCRAFT_CARRIER_DEBUGGING
+	#include "GameLogic/Module/ParkingPlaceBehavior.h"
+#endif
+
+#ifdef _INTERNAL
+// for occasional debugging...
+//#pragma optimize("", off)
+//#pragma MESSAGE("************************************** WARNING, optimization disabled for debugging purposes")
+#endif
+
+#define VERY_TRANSPARENT_MATERIAL_PASS_OPACITY (0.001f)
+#define MATERIAL_PASS_OPACITY_FADE_SCALAR (0.8f)
+
+static const char *TheDrawableIconNames[] = 
+{
+	"DefaultHeal",
+	"StructureHeal",
+	"VehicleHeal",
+#ifdef ALLOW_DEMORALIZE
+	"Demoralized",
+#else
+	"Demoralized_OBSOLETE",
+#endif
+	"BombTimed",
+	"BombRemote",
+	"Disabled",
+	"BattlePlanIcon_Bombard",
+	"BattlePlanIcon_HoldTheLine",
+	"BattlePlanIcon_SeekAndDestroy",
+  "Emoticon",
+	"Enthusiastic",//a red cross? // soon to replace?
+	"Subliminal",  //with the gold border! replace?
+	"CarBomb",
+	NULL
+};
+
+
+/** 
+ * Returns a special DynamicAudioEventInfo which can be used to mark a sound as "no sound".
+ * E.g. if m_customSoundAmbientInfo equals the value returned from this function, we
+ * know it really means don't allow an ambient sound to be attached. 
+ *
+ * OK, so it's a bit of a hack, but it saves memory in every Drawable
+ */
+static DynamicAudioEventInfo  * getNoSoundMarker()
+{
+  static DynamicAudioEventInfo  * marker = NULL;
+   
+  if ( marker == NULL )
+  {
+    // Initialize first time function is called
+    marker = newInstance( DynamicAudioEventInfo  );
+  }
+
+  return marker;
+}
+
+
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+DrawableIconInfo::DrawableIconInfo()
+{
+	for (int i = 0; i < MAX_ICONS; ++i)
+	{
+		m_icon[i] = NULL;
+		m_keepTillFrame[i] = 0;
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+DrawableIconInfo::~DrawableIconInfo()
+{
+	clear();
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void DrawableIconInfo::clear()
+{
+	for (int i = 0; i < MAX_ICONS; ++i)
+	{
+		if (m_icon[i])
+			m_icon[i]->deleteInstance();
+		m_icon[i] = NULL;
+		m_keepTillFrame[i] = 0;
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void DrawableIconInfo::killIcon(DrawableIconType t)
+{
+	if (m_icon[t])
+	{
+		m_icon[t]->deleteInstance();
+		m_icon[t] = NULL;
+		m_keepTillFrame[t] = 0;
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+DrawableLocoInfo::DrawableLocoInfo()
+{
+	m_pitch = 0.0f;
+	m_pitchRate = 0.0f;
+	m_roll = 0.0f;
+	m_rollRate = 0.0f;
+	m_yaw = 0.0f;
+	m_accelerationPitch = 0.0f;
+	m_accelerationPitchRate = 0.0f;
+	m_accelerationRoll = 0.0f;
+	m_accelerationRollRate = 0.0f;
+	m_overlapZVel = 0.0f;
+	m_overlapZ = 0.0f;
+	m_wobble = 1.0f;
+
+	m_wheelInfo.m_frontLeftHeightOffset = 0;
+	m_wheelInfo.m_frontRightHeightOffset = 0;
+	m_wheelInfo.m_rearLeftHeightOffset = 0;
+	m_wheelInfo.m_rearRightHeightOffset = 0;
+	m_wheelInfo.m_framesAirborneCounter = 0;
+	m_wheelInfo.m_framesAirborne = 0;
+	m_wheelInfo.m_wheelAngle = 0;
+
+  m_yawModulator = 0.0f;
+  m_pitchModulator = 0.0f;
+	m_leanPitch[0] = m_leanPitch[1] = 0.0f;
+	m_leanRoll[0] = m_leanRoll[1] = 0.0f;
+	m_airFrame = 0;
+	m_airPitch = 0.0f;
+	m_airRoll = 0.0f;
+	m_airYaw = 0.0f;
+	m_jetBank = 0.0f;
+	m_jetPitch = 0.0f;
+	for (Int i = 0; i < 3; ++i)
+		m_groundLeanStages[0][i] = m_groundLeanStages[1][i] = 0.0f;
+	m_groundFrame = 0;
+	m_prevForwardSpeed = 0.0f;
+	m_prevAngle = 0.0f;
+	m_groundLeanPitch = 0.0f;
+	m_groundLeanRoll = 0.0f;
+	m_groundPitch = 0.0f;
+	m_groundRoll = 0.0f;
+	m_groundZ = 0.0f;
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+DrawableLocoInfo::~DrawableLocoInfo()
+{
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+static const char *drawableIconIndexToName( DrawableIconType iconIndex )
+{
+
+	DEBUG_ASSERTCRASH( iconIndex >= ICON_FIRST && iconIndex < MAX_ICONS,
+										 ("drawableIconIndexToName - Illegal index '%d'\n", iconIndex) );
+
+	return TheDrawableIconNames[ iconIndex ];
+
+}  // end drawableIconIndexToName
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+static DrawableIconType drawableIconNameToIndex( const char *iconName )
+{
+
+	DEBUG_ASSERTCRASH( iconName != NULL, ("drawableIconNameToIndex - Illegal name\n") );
+
+	for( Int i = ICON_FIRST; i < MAX_ICONS; ++i )
+		if( strcasecmp( TheDrawableIconNames[ i ], iconName ) == 0 )
+			return (DrawableIconType)i;
+
+	return ICON_INVALID;
+
+}  // end drawableIconNameToIndex
+
+// ------------------------------------------------------------------------------------------------
+// constants
+const UnsignedInt HEALING_ICON_DISPLAY_TIME	= LOGICFRAMES_PER_SECOND * 3;
+const UnsignedInt DEFAULT_HEAL_ICON_WIDTH		= 32;
+const UnsignedInt DEFAULT_HEAL_ICON_HEIGHT	= 32;
+const RGBColor SICKLY_GREEN_POISONED_COLOR	= {-1.0f,  1.0f, -1.0f};
+const RGBColor DARK_GRAY_DISABLED_COLOR			= {-0.5f, -0.5f, -0.5f};
+const RGBColor RED_IRRADIATED_COLOR					= { 1.0f, -1.0f, -1.0f};
+const RGBColor SUBDUAL_DAMAGE_COLOR					= {-0.2f, -0.2f,  0.8f};
+const RGBColor FRENZY_COLOR									= { 0.2f, -0.2f, -0.2f};
+const RGBColor FRENZY_COLOR_INFANTRY				= { 0.0f, -0.7f, -0.7f};
+const Int MAX_ENABLED_MODULES								= 16;
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+
+/*static*/ Bool							Drawable::s_staticImagesInited = false;
+/*static*/ const Image*			Drawable::s_veterancyImage[LEVEL_COUNT]	= { NULL };
+/*static*/ Anim2DTemplate**	Drawable::s_animationTemplates = NULL;
+#ifdef DIRTY_CONDITION_FLAGS
+/*static*/ Int							Drawable::s_modelLockCount = 0;
+#endif
+
+// ------------------------------------------------------------------------------------------------
+/*static*/ void Drawable::initStaticImages()
+{
+	if (s_staticImagesInited)
+		return;
+
+	s_veterancyImage[0] = NULL;
+ 	s_veterancyImage[1] = TheMappedImageCollection->findImageByName("SCVeter1");
+	s_veterancyImage[2] = TheMappedImageCollection->findImageByName("SCVeter2");
+	s_veterancyImage[3] = TheMappedImageCollection->findImageByName("SCVeter3");
+
+	s_animationTemplates = NEW Anim2DTemplate* [ MAX_ICONS ];
+
+	s_animationTemplates[ICON_DEFAULT_HEAL]			= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_DEFAULT_HEAL]);
+	s_animationTemplates[ICON_STRUCTURE_HEAL]		= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_STRUCTURE_HEAL]);
+	s_animationTemplates[ICON_VEHICLE_HEAL]			= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_VEHICLE_HEAL]);
+#ifdef ALLOW_DEMORALIZE
+	s_animationTemplates[ICON_DEMORALIZED]			= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_DEMORALIZED]);
+#endif
+	s_animationTemplates[ICON_BOMB_TIMED]				= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_BOMB_TIMED]);
+	s_animationTemplates[ICON_BOMB_REMOTE]			= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_BOMB_REMOTE]);
+	s_animationTemplates[ICON_DISABLED]					= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_DISABLED]);
+	s_animationTemplates[ICON_BATTLEPLAN_BOMBARD]						= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_BATTLEPLAN_BOMBARD]);
+	s_animationTemplates[ICON_BATTLEPLAN_HOLDTHELINE]				= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_BATTLEPLAN_HOLDTHELINE]);
+	s_animationTemplates[ICON_BATTLEPLAN_SEARCHANDDESTROY]	= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_BATTLEPLAN_SEARCHANDDESTROY]);
+	s_animationTemplates[ICON_EMOTICON]					= NULL; //Emoticons can be anything, so we'll need to handle it dynamically.
+	s_animationTemplates[ICON_ENTHUSIASTIC]			= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_ENTHUSIASTIC]);
+	s_animationTemplates[ICON_ENTHUSIASTIC_SUBLIMINAL]			= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_ENTHUSIASTIC_SUBLIMINAL]);
+	s_animationTemplates[ICON_CARBOMB]			= TheAnim2DCollection->findTemplate(TheDrawableIconNames[ICON_CARBOMB]);
+
+	s_staticImagesInited = true;
+
+}
+
+//-------------------------------------------------------------------------------------------------
+/*static*/ void Drawable::killStaticImages()
+{
+	if( s_animationTemplates )
+	{
+		delete s_animationTemplates;
+		s_animationTemplates = NULL;
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::saturateRGB(RGBColor& color, Real factor)
+{
+	color.red *= factor;
+	color.green *= factor;
+	color.blue *= factor;
+
+	Real halfFactor = factor * 0.5f;
+
+	color.red -= halfFactor;
+	color.green -= halfFactor;
+	color.blue -= halfFactor;
+
+}
+
+
+//--- A MACRO TO APPLY TO TheTacticalView->getZoom() ------ To Clamp the return to a visually pleasing size
+//--- so that icons, emoticons, health bars, pips, etc, look reasonably solid and don't shimmer or tweed
+//#define CLAMP_ICON_ZOOM_FACTOR(n) (MAX(0.80f, MIN(1.00f, n)))
+#define CLAMP_ICON_ZOOM_FACTOR(n) (n)//nothing
+
+
+//-------------------------------------------------------------------------------------------------
+/** Opacity a drawable is drawn at.  Stealth scales whatever the drawable asked for, and a structure
+	* that has been placed but not started - its builder is still walking over - is drawn as the same
+	* translucent silhouette the placement preview used, so a plan on the map never reads as a
+	* building that is already standing there. */
+//-------------------------------------------------------------------------------------------------
+Real Drawable_effectiveOpacity( Real explicitOpacity, Real stealthOpacity, Bool awaitingBuilder )
+{
+	Real opacity = explicitOpacity * stealthOpacity;
+
+	if( awaitingBuilder )
+		opacity *= PLACEMENT_SILHOUETTE_OPACITY;
+
+	return opacity;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Whether a structure's health bar belongs on screen.
+	*
+	* A bridge is not a thing you can see: `GenericBridge` carries an empty `W3DDefaultDraw` and one
+	* immortal hit point, the span itself being drawn by the terrain, so its bar hung in mid air over
+	* the middle of the river with no object under it - and so did the landmark bridges' and the
+	* bridge towers'.
+	*
+	* The rest of the map's masonry is nobody's: a row of houses, the concrete apron each of them
+	* stands on - a separate 2000 hit point object of its own - and the scenery of a city map. None
+	* of it is anybody's to lose, and always-on bars turned a built up map into a wall of them.
+	*
+	* Two exceptions, and both are things worth doing something about. A building troops can be put
+	* in: clearing a garrison out of it is a real decision, so its health stays readable. And one
+	* that can be taken - an oil derrick, a hospital, an artillery platform - because whether to walk
+	* in or to level it is exactly the choice its health answers. Anything a player owns keeps its
+	* bar either way. */
+//-------------------------------------------------------------------------------------------------
+Bool Drawable_structureShowsHealthBar( Bool isBridge, Bool isUnowned, Bool isGarrisonable,
+																			Bool isCapturable )
+{
+	if( isBridge )
+		return FALSE;
+
+	if( isUnowned && !isGarrisonable && !isCapturable )
+		return FALSE;
+
+	return TRUE;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Health bars are always on in this fork, so anything with a body would draw one. Effect objects
+	* (projectiles in flight, toxin and radiation fields, parachutes, fire walls, wrecked hulks,
+	* subobject turrets) are not things the player commands or targets, so their bars are pure
+	* clutter.
+	*
+	* So is the scenery: street lamps, phone boxes, barrels, planters, fire hydrants, rocks, bushes
+	* and the odd tree all carry a BodyModule. The rule is fixed-in-place-and-not-a-building, not a
+	* list of scenery kinds: the shipped data does not tag that furniture as PROP or SHRUBBERY at all
+	* (`KindOf = IMMOBILE CLEARED_BY_BUILD` is the whole of a street lamp), while every real target
+	* is either mobile or a STRUCTURE.
+	*
+	* A booby trap has one hit point and cannot be shot, so its bar was a full green line forever.
+	* Everything force-attackable on the ground is a civilian fence with one hit point.
+	*
+	* And a unit the cursor cannot reach at all - no SELECTABLE, which in EA's data means "the mouse
+	* can interact with it" - never wore a bar in retail, where a bar needed a selection or a mouse
+	* over. The ones that matter are the death puppets: a soldier killed by toxin or fire is removed
+	* and a ToxicInfantry or FlamingInfantry takes his place, a live 50 hit point INFANTRY that melts
+	* or runs burning for three seconds, and always-on bars put a full one over every one of them.
+	* Buildings keep their own rule below.
+	*
+	* Aircraft are the exception to both rules. The planes a general's power or a support building
+	* sends over - the A-10s, the B-52 and B-3, the MiG napalm strike, the carrier's Raptors, the
+	* American, Chinese and GLA cargo planes with their paradrops and supply crates, the Chinese
+	* carpet bomber - carry no SELECTABLE, and the cargo planes and the carpet bomber are
+	* FORCEATTACKABLE besides, yet every one of them is a target with real hit points that anti-air
+	* is meant to bring down. So an AIRCRAFT keeps its bar whether the cursor can reach it or not.
+	* The only plane left bare by the list above is the Chinese artillery barrage's dummy, which is
+	* UNATTACKABLE. The civilian airliner a map sends over gains one too, and it can be shot down.
+	*
+	* INERT is what the toxin and radiation fields carry, and the Spy Drone too: EA tags it INERT so
+	* nothing targets it and NO_SELECT so it cannot be selected, and NO_SELECT is commented in
+	* KindOf.h as "you can mouse over it to see its health (drones!)". So a NO_SELECT object keeps
+	* its bar whatever else it is; without that the owner never saw his drone's health at all. */
+//-------------------------------------------------------------------------------------------------
+/** China's Artillery Barrage flies twelve invisible AIRCRAFT over the target, one per shell, and each
+	* hung a line and a ring in the sky. What marks them is UNATTACKABLE and IGNORED_IN_GUI together:
+	* either alone is a real plane, the Turkish Kargu drone carrying the first and every general's power
+	* plane the second. Shells, missiles, bombs and parachutes are out by kind as well, so a mod that
+	* calls one of them an aircraft does not grow a line on every round. */
+//-------------------------------------------------------------------------------------------------
+Bool Drawable_kindWearsAltitudeLine( const KindOfMaskType& kinds )
+{
+	if( !TEST_KINDOFMASK( kinds, KINDOF_AIRCRAFT ) )
+		return FALSE;
+
+	return !( ( TEST_KINDOFMASK( kinds, KINDOF_UNATTACKABLE ) && TEST_KINDOFMASK( kinds, KINDOF_IGNORED_IN_GUI ) ) ||
+						TEST_KINDOFMASK( kinds, KINDOF_PROJECTILE ) ||
+						TEST_KINDOFMASK( kinds, KINDOF_SMALL_MISSILE ) ||
+						TEST_KINDOFMASK( kinds, KINDOF_BALLISTIC_MISSILE ) ||
+						TEST_KINDOFMASK( kinds, KINDOF_PARACHUTE ) );
+}
+
+//-------------------------------------------------------------------------------------------------
+Bool Drawable_kindShowsHealthBar( const KindOfMaskType& kinds )
+{
+	if( TEST_KINDOFMASK( kinds, KINDOF_INERT ) && !TEST_KINDOFMASK( kinds, KINDOF_NO_SELECT ) )
+		return FALSE;
+
+	if( TEST_KINDOFMASK( kinds, KINDOF_PROJECTILE ) ||
+			TEST_KINDOFMASK( kinds, KINDOF_BOOBY_TRAP ) ||
+			TEST_KINDOFMASK( kinds, KINDOF_CLEANUP_HAZARD ) ||
+			TEST_KINDOFMASK( kinds, KINDOF_UNATTACKABLE ) ||
+			TEST_KINDOFMASK( kinds, KINDOF_PARACHUTE ) ||
+			TEST_KINDOFMASK( kinds, KINDOF_HULK ) ||
+			TEST_KINDOFMASK( kinds, KINDOF_CLICK_THROUGH ) ||
+			TEST_KINDOFMASK( kinds, KINDOF_CRATE ) )
+		return FALSE;
+
+	if( TEST_KINDOFMASK( kinds, KINDOF_AIRCRAFT ) )
+		return TRUE;
+
+	if( TEST_KINDOFMASK( kinds, KINDOF_FORCEATTACKABLE ) )
+		return FALSE;
+
+	if( TEST_KINDOFMASK( kinds, KINDOF_STRUCTURE ) )
+		return TRUE;
+
+	return !TEST_KINDOFMASK( kinds, KINDOF_IMMOBILE ) && TEST_KINDOFMASK( kinds, KINDOF_SELECTABLE );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** The health bar setting, applied to one object.
+	*
+	* Smart is the mode worth explaining.  A bar over a unit at full health tells you nothing you did
+	* not already know, and a base full of them is what makes always-on tiring to look at; a bar over
+	* a unit that has been hit is the whole point of having them.  So smart keeps every damaged thing
+	* marked and lets the healthy ones disappear, with the selection and the object under the cursor
+	* always readable on top of that - those two are how you ask a specific question about a specific
+	* unit, and the answer should not depend on whether it has been shot at yet.
+	*
+	* Selection is retail's rule, exactly. */
+//-------------------------------------------------------------------------------------------------
+Bool Drawable_healthBarModeShows( Int healthBarMode, Bool isSelected, Bool isMousedOver,
+																	Bool isDamaged )
+{
+	if( healthBarMode == HEALTH_BAR_NEVER )
+		return FALSE;
+
+	if( healthBarMode == HEALTH_BAR_ALWAYS )
+		return TRUE;
+
+	if( isSelected || isMousedOver )
+		return TRUE;
+
+	return healthBarMode == HEALTH_BAR_SMART && isDamaged;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** A disabled object wears a blue bar instead of its owner's colour, because that is a state
+	* nothing else on screen signals.  Being held - inside a transport, a bunker, a building - is not
+	* a malfunction and does not count.
+	*
+	* The old test was `isDisabled() && !isDisabledByType(DISABLED_HELD)`, which is two different
+	* questions stapled together: a unit that is both held and EMP'd answers yes to the second, so it
+	* lost its blue bar and looked healthy.  Clear HELD out of the mask and ask whether anything is
+	* left, which is what was meant. */
+//-------------------------------------------------------------------------------------------------
+Bool Drawable_disabledShowsBlueHealthBar( DisabledMaskType disabledFlags )
+{
+	disabledFlags.clear( MAKE_DISABLED_MASK( DISABLED_HELD ) );
+	return DISABLEDMASK_ANY_SET( disabledFlags );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** The silhouette is the finished building, not a foundation: the construction model conditions are
+	* left alone until the builder arrives, so what stands on the map is the shape that was under the
+	* cursor.  A drawable with no object behind it is the placement preview itself, which carries the
+	* same opacity explicitly.  The render asks this, so the object's half is the sync point's
+	* (setObjectForDraw). */
+//-------------------------------------------------------------------------------------------------
+Real Drawable::getEffectiveOpacity() const
+{
+	if( LogicThread::isInsideWindow() )
+		return m_lookForDraw.effectiveOpacity;
+	return Drawable_effectiveOpacity( m_explicitOpacity, m_effectiveStealthOpacity, m_objectForDraw.awaitingBuilder );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** LOGIC-THREAD.md phase 3, step 3b: see LookForDraw.  Outside the window, so every getter reads the
+	* drawable's own fields. */
+//-------------------------------------------------------------------------------------------------
+void Drawable::takeLookForDraw( void )
+{
+	LookForDraw &look = m_lookForDraw;
+	look.hidden = isDrawableEffectivelyHidden();
+	look.fullyObscured = m_drawableFullyObscuredByShroud;
+	look.drawsInMirror = getDrawsInMirror();
+	look.noSave = testDrawableStatus( DRAWABLE_STATUS_NO_SAVE );
+	look.receivesDynamicLights = m_receivesDynamicLights;
+	look.stealthLook = m_stealthLook;
+	look.stealthDrawnLook = m_stealthDrawnLook;
+	look.stealthFade = m_stealthFade;
+	look.stealthSolid = getStealthSolid();
+	look.secondMaterialPassOpacity = m_secondMaterialPassOpacity;
+	look.effectiveOpacity = getEffectiveOpacity();
+	look.tintStatus = m_tintStatus;
+	const Vector3 *tint = getTintColor();
+	look.hasTintColor = tint != NULL;
+	if( tint )
+		look.tintColor = *tint;
+	const Vector3 *selection = getSelectionColor();
+	look.hasSelectionColor = selection != NULL;
+	if( selection )
+		look.selectionColor = *selection;
+	look.position = *getPosition();
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Drawables are lightweight, graphical entities which live on the GameClient,
+ * and are usually bound to GameLogic objects.  In other words, they are the
+ * graphical side of a logical object, whereas GameLogic objects encapsulate
+ * behaviors and physics.  */
+//-------------------------------------------------------------------------------------------------
+Drawable::Drawable( const ThingTemplate *thingTemplate, DrawableStatus statusBits )
+				: Thing( thingTemplate )
+{
+
+	// assign status bits before anything else can be done
+	m_status = statusBits;
+	m_clientWorkQueued = FALSE;
+	m_transformPending = FALSE;
+	m_renderPending = FALSE;
+
+	// Added By Sadullah Nader
+	// Initialization missing and needed
+	m_nextDrawable = NULL;
+	m_smoothPrevPos.zero();
+	m_smoothCurPos.zero();
+	m_smoothFrame = 0xFFFFFFFFu;	// never captured
+	m_smoothHavePrev = FALSE;
+	m_motionDiscontinuity = FALSE;
+	m_prevDrawable = NULL;
+	//
+
+  m_customSoundAmbientInfo = NULL;
+
+	// register drawable with the GameClient ... do this first before we start doing anything
+	// complex that uses any of the drawable data so that we have and ID!!  It's ok to initialize
+	// members of the drawable before this registration happens
+	//
+	TheGameClient->registerDrawable( this );
+
+	Int i;
+
+	// Added By Sadullah Nader
+	// Initialization missing and needed
+	m_flashColor = 0;
+	m_indicatorColorAsked = 0;
+	m_selected = '\0';
+	//
+
+	m_expirationDate = 0;  // 0 == never expires
+
+	m_lastConstructDisplayed = -1.0f;
+	m_supplyCashDisplayString = NULL;
+	m_lastSupplyCashDisplayed = -1;
+	m_chargeTimeDisplayString = NULL;
+	m_constructDisplayString = NULL;	// buildRenderObjects
+
+	m_ambientSound = NULL;
+  m_ambientSoundEnabled = true;
+  m_ambientSoundEnabledFromScript = true;
+ 
+	m_decalOpacityFadeTarget = 0;
+	m_decalOpacityFadeRate = 0;
+	m_decalOpacity = 0;
+
+	m_explicitOpacity = 1.0f;
+	m_stealthOpacity = 1.0f;
+	m_effectiveStealthOpacity = 1.0f;
+	m_terrainDecalType = TERRAIN_DECAL_NONE;
+
+  m_fadeMode = FADING_NONE;
+	m_timeElapsedFade = 0;
+	m_timeToFade = 0;
+
+	m_shroudClearFrame = 0;
+	m_shroudForDraw = OBJECTSHROUD_CLEAR;
+	m_objectDeadForDraw = FALSE;
+	m_objectForDraw.hasObject = FALSE;
+	m_objectForDraw.awaitingBuilder = FALSE;
+	m_objectForDraw.empDisabled = FALSE;
+	m_objectForDraw.outage = FALSE;
+	m_objectForDraw.playerIndex = 0;
+	m_objectForDraw.playerColor = 0;
+	m_objectForDraw.safeOcclusionFrame = 0;
+	m_objectForDraw.layer = LAYER_GROUND;
+	m_objectForDraw.layerHeight = 0.0f;
+	m_lookForDraw.hidden = FALSE;
+	m_lookForDraw.fullyObscured = FALSE;
+	m_lookForDraw.drawsInMirror = FALSE;
+	m_lookForDraw.noSave = BitTest( m_status, DRAWABLE_STATUS_NO_SAVE );
+	m_lookForDraw.receivesDynamicLights = TRUE;
+	m_lookForDraw.hasTintColor = FALSE;
+	m_lookForDraw.hasSelectionColor = FALSE;
+	m_lookForDraw.stealthLook = STEALTHLOOK_NONE;
+	m_lookForDraw.stealthDrawnLook = STEALTHLOOK_NONE;
+	m_lookForDraw.stealthFade = 0.0f;
+	m_lookForDraw.stealthSolid = 1.0f;
+	m_lookForDraw.secondMaterialPassOpacity = 0.0f;
+	m_lookForDraw.effectiveOpacity = 1.0f;
+	m_lookForDraw.tintStatus = 0;
+	m_lookForDraw.tintColor.Set( 0.0f, 0.0f, 0.0f );
+	m_lookForDraw.selectionColor.Set( 0.0f, 0.0f, 0.0f );
+
+	for (i = 0; i < NUM_DRAWABLE_MODULE_TYPES; ++i)
+		m_modules[i] = NULL;
+
+	m_stealthLook = STEALTHLOOK_NONE;
+	m_stealthDrawnLook = STEALTHLOOK_NONE;
+	m_stealthFade = 0.0f;
+
+	m_flashCount = 0;
+
+	m_locoInfo = NULL;
+
+	// sanity
+	if( TheGameClient == NULL || thingTemplate == NULL )
+	{
+
+		assert( 0 );
+		return;
+
+	}  // end if
+
+	m_instance.Make_Identity();
+	m_instanceIsIdentity = true;
+
+	//Real scaleFuzziness = thingTemplate->getInstanceScaleFuzziness();
+	//Real fuzzyScale = ( 1.0f + GameClientRandomValueReal( -scaleFuzziness, scaleFuzziness ));
+	m_instanceScale = thingTemplate->getAssetScale();// * fuzzyScale;
+
+	// initially not bound to an object
+	m_object = NULL;
+
+	// tintStatusTracking
+	m_tintStatus = 0;
+	m_prevTintStatus = 0;
+
+#ifdef DIRTY_CONDITION_FLAGS
+	m_isModelDirty = true;
+#endif
+
+	m_hidden = false;
+	m_hiddenByStealth = false;
+	m_secondMaterialPassOpacity = 0.0f;
+	m_drawableFullyObscuredByShroud = false;
+
+  m_receivesDynamicLights = TRUE; // a good default... overridden by one of my draw modules if at all
+	
+	// allocate any modules we need to, we should keep
+	// this at or near the end of the drawable construction so that we have
+	// all the valid data about the thing when we create the module
+	//
+
+	//Filter out drawable modules which have been disabled because of game LOD.
+	Int modIdx;
+	Module** m;
+
+	const ModuleInfo& drawMI = thingTemplate->getDrawModuleInfo();
+	m_modules[MODULETYPE_DRAW - FIRST_DRAWABLE_MODULE_TYPE] = MSGNEW("ModulePtrs") Module*[drawMI.getCount()+1];	// pool[]ify
+	m = m_modules[MODULETYPE_DRAW - FIRST_DRAWABLE_MODULE_TYPE];
+	for (modIdx = 0; modIdx < drawMI.getCount(); ++modIdx)
+	{
+		const ModuleData* newModData = drawMI.getNthData(modIdx);
+		if (TheGlobalData->m_useDrawModuleLOD && 
+				newModData->getMinimumRequiredGameLOD() > TheGameLODManager->getStaticLODLevel())
+			continue;
+		*m++ = TheModuleFactory->newModule(this, drawMI.getNthName(modIdx), newModData, MODULETYPE_DRAW);
+	}
+	*m = NULL;
+
+	m_clipFeedbackSlots = 0;
+	for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+	{
+		ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+		if (di)
+			m_clipFeedbackSlots |= di->getProjectileClipFeedbackSlots();
+	}
+
+	const ModuleInfo& cuMI = thingTemplate->getClientUpdateModuleInfo();
+	if (cuMI.getCount())
+	{
+		// since most things don't have CU modules, we allow this to be null!
+		m_modules[MODULETYPE_CLIENT_UPDATE - FIRST_DRAWABLE_MODULE_TYPE] = MSGNEW("ModulePtrs") Module*[cuMI.getCount()+1];	// pool[]ify
+		m = m_modules[MODULETYPE_CLIENT_UPDATE - FIRST_DRAWABLE_MODULE_TYPE];
+		for (modIdx = 0; modIdx < cuMI.getCount(); ++modIdx)
+		{
+			const ModuleData* newModData = cuMI.getNthData(modIdx);
+
+	/// @todo srj -- this is evil, we shouldn't look at the module name directly!
+			if (thingTemplate->isKindOf(KINDOF_SHRUBBERY) && 
+					!TheGlobalData->m_useTreeSway &&
+					cuMI.getNthName(modIdx).compareNoCase("SwayClientUpdate") == 0)
+				continue;
+
+			*m++ = TheModuleFactory->newModule(this, cuMI.getNthName(modIdx), newModData, MODULETYPE_CLIENT_UPDATE);
+		}
+		*m = NULL;
+	}
+
+	/// allow for inter-Module resolution
+	for (i = 0; i < NUM_DRAWABLE_MODULE_TYPES; ++i)
+	{
+		for (Module** m = m_modules[i]; m && *m; ++m)
+			(*m)->onObjectCreated();
+	}
+	
+	m_groupNumber = NULL;
+	m_captionDisplayString = NULL;
+	m_drawableInfo.m_drawable = this;
+	m_drawableInfo.m_ghostObject = NULL;
+
+	m_iconInfo = NULL;								// lazily allocate!
+	m_selectionFlashEnvelope = NULL;	// lazily allocate!
+	m_colorTintEnvelope = NULL;				// lazily allocate!
+
+	initStaticImages();
+
+	// a drawable logic makes in a tick is a shell until the flush after it: its modules exist, so
+	// everything logic asks of them (bones, barrels, launch points, the laser's client update) is
+	// answered, and only the render objects wait
+	if (tickDefersLifetime())
+	{
+		m_renderPending = TRUE;
+		queueClientWork();
+	}
+	else
+		buildRenderObjects();
+
+  // If we are inside GameLogic::startNewGame(), then starting the ambient sound
+  // will be taken care of by Drawable::onLevelStart(). It's important that we 
+  // wait until Drawable::onLevelStart(), because we may have a customized ambient
+  // sound which we'll only learn about after the constructor is finished. The
+  // map maker may also have disabled the ambient sound; again, we only learn that
+  // after the constructor is done.
+  // By the same token, when loading from save, we may learn that the ambient sound 
+  // is enabled or disabled in xfer(), and we may learn we have a customized sound there,
+  // so don't start the ambient sound yet. 
+  // This is all really traceable to the fact that stopAmbientSound() won't stop a sound which 
+  // is in the middle of playing; it will only stop it when the current wavefile is finished.
+  // So we have to be very careful of called startAmbientSound() because we can't "take it back" later.
+  if ( TheGameLogic != NULL && !TheGameLogic->isLoadingMap() && TheGameState != NULL && !TheGameState->isInLoadGame() )
+  {
+  	startAmbientSound();
+  }
+
+}  // end Drawable
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+Drawable::~Drawable()
+{
+	Int i;
+
+	if( m_constructDisplayString )
+		TheDisplayStringManager->freeDisplayString( m_constructDisplayString );
+	m_constructDisplayString = NULL;
+
+	if( m_supplyCashDisplayString )
+		TheDisplayStringManager->freeDisplayString( m_supplyCashDisplayString );
+	m_supplyCashDisplayString = NULL;
+
+	if( m_chargeTimeDisplayString )
+		TheDisplayStringManager->freeDisplayString( m_chargeTimeDisplayString );
+	m_chargeTimeDisplayString = NULL;
+
+	if ( m_captionDisplayString )
+		TheDisplayStringManager->freeDisplayString( m_captionDisplayString );
+	m_captionDisplayString = NULL;
+
+	m_groupNumber = NULL;
+
+	// delete any modules callbacks
+	for (i = 0; i < NUM_DRAWABLE_MODULE_TYPES; ++i)
+	{
+		for (Module** m = m_modules[i]; m && *m; ++m)
+		{
+			(*m)->deleteInstance();
+			*m = NULL;	// in case other modules call findModule from their dtor!
+		}
+		delete [] m_modules[i]; 
+		m_modules[i] = NULL;
+	}
+
+	// now, even inside a tick: nothing is left to stop it after the flush
+	if (m_ambientSound)
+		TheAudio->removeAudioEvent(m_ambientSound->m_event.getPlayingHandle());
+	if (m_ambientSound)
+	{
+		m_ambientSound->deleteInstance();
+		m_ambientSound = NULL;
+	}
+
+  clearCustomSoundAmbient( false );
+
+	/// @todo this is nasty, we need a real general effects system
+	// remove any entries that might be present from the ray effect system
+	TheGameClient->removeFromRayEffects( this );
+
+	// reset object to NULL so we never mistaken grab "dead" objects
+	m_object = NULL;
+
+	// delete any icons present
+	if (m_iconInfo)
+		m_iconInfo->deleteInstance();
+
+	if (m_selectionFlashEnvelope)
+		m_selectionFlashEnvelope->deleteInstance();
+
+	if (m_colorTintEnvelope)
+		m_colorTintEnvelope->deleteInstance();
+
+	if (m_locoInfo)
+	{
+		m_locoInfo->deleteInstance();
+		m_locoInfo = NULL;
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Run from GameClient::destroyDrawable */
+//-------------------------------------------------------------------------------------------------
+void Drawable::onDestroy( void )
+{
+
+	//
+	// run the onDelete on all modules present so they each have an opportunity to cleanup
+	// anything they need to ... including talking to any other modules
+	//
+	for( Int i = 0; i < NUM_DRAWABLE_MODULE_TYPES; i++ )
+	{
+
+		for( Module** m = m_modules[ i ]; m && *m; ++m )
+			(*m)->onDelete();
+
+	}  // end for i
+
+}  // end onDestroy
+
+//-------------------------------------------------------------------------------------------------
+Bool Drawable::isVisible()
+{
+	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		if ((*dm)->isVisible())
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+//-------------------------------------------------------------------------------------------------
+Bool Drawable::getShouldAnimate( Bool considerPower ) const
+{
+	const Object *obj = getObject();
+
+	if (obj)
+	{
+		if (considerPower && obj->testScriptStatusBit(OBJECT_STATUS_SCRIPT_UNPOWERED))
+			return FALSE;
+
+		if (obj->isDisabled())
+		{
+			if( 
+         ! obj->isKindOf( KINDOF_PRODUCED_AT_HELIPAD )  && 
+        // mal sez: helicopters just look goofy if they stop animating, so keep animating them, anyway
+
+        (  obj->isDisabledByType( DISABLED_HACKED ) 
+				|| obj->isDisabledByType( DISABLED_PARALYZED ) 
+				|| obj->isDisabledByType( DISABLED_EMP ) 
+				|| obj->isDisabledByType( DISABLED_SUBDUED ) 
+				// srj sez: unmanned things also should not animate. (eg, gattling tanks,
+				// which have a slight barrel animation even when at rest). if this causes
+				// a problem, we will need to fix gattling tanks in another way.
+				|| obj->isDisabledByType( DISABLED_UNMANNED ) )
+        
+				)
+				return FALSE;
+
+			if (considerPower && obj->isDisabledByType(DISABLED_UNDERPOWERED))
+			{
+				// We only pause animations if this draw module says so
+				// By checking for the others first, we prevent underpower from allowing a True on an addition disable type
+				return FALSE;
+			}
+		}
+	}
+
+	return TRUE;
+}
+
+//-------------------------------------------------------------------------------------------------
+// this method must ONLY be called from the client, NEVER From the logic, not even indirectly.
+Bool Drawable::clientOnly_getFirstRenderObjInfo(Coord3D* pos, Real* boundingSphereRadius, Matrix3D* transform)
+{
+	DrawModule** dm = getDrawModules();
+	const ObjectDrawInterface* di = (dm && *dm) ? (*dm)->getObjectDrawInterface() : NULL;
+	if (di)
+	{
+		return di->clientOnly_getRenderObjInfo(pos, boundingSphereRadius, transform);
+	}
+	return false;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** The bones, launch offsets and barrel counts logic reads skip a draw module the player's "extra
+	* animations" option (m_useDrawModuleLOD) can leave out, on every machine, so one player's option
+	* cannot change where another machine's shot leaves from.  Only logic's reads skip it, the tick's
+	* and the map load's: an FX at a bone or a supply box count on the client reads every module drawn. */
+static Bool skipsForLogic( const DrawModule *dm )
+{
+	return dm->isLODOptional() && ( TheGameLogic->isInGameLogicUpdate() || TheGameLogic->isLoadingMap() );
+}
+
+Bool Drawable::getProjectileLaunchOffset(WeaponSlotType wslot, Int specificBarrelToUse, Matrix3D* launchPos, WhichTurretType tur, Coord3D* turretRotPos, Coord3D* turretPitchPos) const
+{
+	for (const DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		if (skipsForLogic(*dm))
+			continue;
+		const ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+		if (di && di->getProjectileLaunchOffset(m_conditionState, wslot, specificBarrelToUse, launchPos, tur, turretRotPos, turretPitchPos))
+			return true;
+	}
+	return false;
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::setAnimationLoopDuration(UnsignedInt numFrames)
+{
+	// on the state the tick's condition flush builds, which the step list puts in front of it
+	doClientWork( [this, numFrames]() {
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di)
+				di->setAnimationLoopDuration(numFrames);
+		}
+	}, WORK_AFTER_FLUSH, TRUE );
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::setAnimationCompletionTime(UnsignedInt numFrames)
+{
+	doClientWork( [this, numFrames]() {
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di)
+				di->setAnimationCompletionTime(numFrames);
+		}
+	}, WORK_AFTER_FLUSH, TRUE );
+}
+
+//Kris: Manually set a drawable's current animation to specific frame.
+//-------------------------------------------------------------------------------------------------
+void Drawable::setAnimationFrame( int frame )
+{
+	doClientWork( [this, frame]() {
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di)
+				di->setAnimationFrame( frame );
+		}
+	}, WORK_AFTER_FLUSH, TRUE );
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::updateSubObjects()
+{
+	doClientWork( [this]() {
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di)
+				di->updateSubObjects();
+		}
+	}, WORK_AFTER_FLUSH );
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::showSubObject( const AsciiString& name, Bool show )
+{
+	doClientWork( [this, name, show]() {
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di)
+				di->showSubObject( name, show );
+		}
+	}, WORK_AFTER_FLUSH );
+}
+
+#ifdef ALLOW_ANIM_INQUIRIES
+// srj sez: not sure if this is a good idea, for net sync reasons...
+//-------------------------------------------------------------------------------------------------
+/**
+	This call asks, "In the current animation (if any) how far along are you, from 0.0f to 1.0f". 
+*/
+Real Drawable::getAnimationScrubScalar( void ) const // lorenzen
+{
+	for (const DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		const ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+		if (di)
+		{
+			return di->getAnimationScrubScalar();
+		}
+	}
+	
+	return 0.0f;
+
+}
+#endif
+
+//-------------------------------------------------------------------------------------------------
+Int Drawable::getPristineBonePositions(const char* boneNamePrefix, Int startIndex, Coord3D* positions, Matrix3D* transforms, Int maxBones) const
+{
+	Int count = 0;
+	for (const DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		if (maxBones <= 0)
+			break;
+
+		if (skipsForLogic(*dm))
+			continue;
+
+		const ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+		if (di)
+		{
+			Int subcount =
+				di->getPristineBonePositionsForConditionState(m_conditionState, boneNamePrefix, startIndex, positions, transforms, maxBones);
+
+			if (subcount > 0)
+			{
+				count += subcount;
+				if (positions)
+					positions += subcount;
+				if (transforms)
+					transforms += subcount;
+				maxBones -= subcount;
+			}
+		}
+	}
+	return count;
+}
+
+//-------------------------------------------------------------------------------------------------
+Int Drawable::getCurrentClientBonePositions(const char* boneNamePrefix, Int startIndex, Coord3D* positions, Matrix3D* transforms, Int maxBones) const
+{
+	Int count = 0;
+	// the bones as drawn; asked after the tick (the uplink cannon's raised antenna, FX at bones), where
+	// what the tick deferred on this drawable is applied first
+	LogicThread::TickReachesLiveModels liveModels;	// a tick beside the render waits out the shadow pass's poses
+	for (DrawModule** dm = const_cast<Drawable*>(this)->getDrawModulesFlushed(); *dm; ++dm)
+	{
+		if (maxBones <= 0)
+			break;
+		if (skipsForLogic(*dm))
+			continue;
+
+		const ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+		if (di)
+		{
+			Int subcount = 
+				di->getCurrentBonePositions(boneNamePrefix, startIndex, positions, transforms, maxBones);
+
+			if (subcount > 0)
+			{
+				count += subcount;
+				if (positions)
+					positions += subcount;
+				if (transforms)
+					transforms += subcount;
+				maxBones -= subcount;
+			}
+		}
+	}
+	return count;
+}
+
+//-------------------------------------------------------------------------------------------------
+Bool Drawable::getCurrentWorldspaceClientBonePositions(const char* boneName, Matrix3D& transform) const
+{
+	// a laser's client update and the attached models ask; the bones have to be where the tick left the drawable
+	LogicThread::TickReachesLiveModels liveModels;
+	for (DrawModule** dm = const_cast<Drawable*>(this)->getDrawModulesFlushed(); *dm; ++dm)
+	{
+		if (skipsForLogic(*dm))
+			continue;
+		const ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+		if (di && di->getCurrentWorldspaceClientBonePositions(boneName, transform))
+			return true;
+	}
+	return false;
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::setTerrainDecal(TerrainDecalType type)
+{
+	if (m_terrainDecalType == type)
+		return;
+
+	m_terrainDecalType=type;
+
+	doClientWork( [this, type]() {
+		DrawModule** dm = getDrawModulesNonDirty();
+
+		//Only the first draw module gets a decal to prevent stacking.
+		//Should be okay as long as we keep the primary object in the
+		//first module.
+		if (*dm)
+			(*dm)->setTerrainDecal(type);
+	}, WORK_AFTER_FLUSH );
+
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::setTerrainDecalSize(Real x, Real y)
+{
+	doClientWork( [this, x, y]() {
+		DrawModule** dm = getDrawModulesNonDirty();
+
+		if (*dm)
+			(*dm)->setTerrainDecalSize(x,y);
+	}, WORK_AFTER_FLUSH );
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::setTerrainDecalFadeTarget(Real target, Real rate)
+{
+	if (m_decalOpacityFadeTarget != target)
+	{
+		m_decalOpacityFadeTarget = target;
+		m_decalOpacityFadeRate = rate;
+	}
+	//else
+	//	m_decalOpacityFadeRate = 0;
+
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::setShadowsEnabled(Bool enable)
+{
+	// set status bit
+	if( enable )
+		setDrawableStatus( DRAWABLE_STATUS_SHADOWS );
+	else
+		clearDrawableStatus( DRAWABLE_STATUS_SHADOWS );
+
+	doClientWork( [this, enable]() {
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			(*dm)->setShadowsEnabled(enable);
+		}
+	}, WORK_AFTER_FLUSH );
+}
+
+//-------------------------------------------------------------------------------------------------
+/**frees all shadow resources used by this module - used by Options screen.*/
+void Drawable::releaseShadows(void)
+{
+	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		(*dm)->releaseShadows();
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+/**create shadow resources if not already present. Used by Options screen.*/
+void Drawable::allocateShadows(void)
+{
+	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		(*dm)->allocateShadows();
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::setFullyObscuredByShroud(Bool fullyObscured)
+{
+	// passed on every frame while obscured, not only on the change: whether a building's shadow stays
+	// in the fog can change under a flag that does not, when its ground goes from fogged to shrouded
+	// or its snapshot is taken or freed
+	if (m_drawableFullyObscuredByShroud != fullyObscured || fullyObscured)
+	{
+		doClientWork( [this, fullyObscured]() {
+			for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+			{
+				(*dm)->setFullyObscuredByShroud(fullyObscured);
+			}
+		}, WORK_AFTER_FLUSH );
+		m_drawableFullyObscuredByShroud = fullyObscured;
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Set drawable's "selected" status, if not already set.  Also update running
+ * total count of selected drawables. */
+//-------------------------------------------------------------------------------------------------
+void Drawable::friend_setSelected( void ) 
+{ 
+	if(isSelected() == false)
+	{
+		m_selected = TRUE;
+		onSelected();
+	}
+
+}			
+
+//-------------------------------------------------------------------------------------------------
+/** Clear drawable's "selected" status, if not already clear.  Also update running
+ * total count of selected drawables. */
+//-------------------------------------------------------------------------------------------------
+void Drawable::friend_clearSelected( void ) 
+{
+	if(isSelected()) 
+	{
+		m_selected = FALSE;
+		onUnselected();
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Flash the drawable with the color */
+// ------------------------------------------------------------------------------------------------
+void Drawable::colorFlash( const RGBColor* color, UnsignedInt decayFrames, UnsignedInt attackFrames, UnsignedInt sustainAtPeak )
+{
+	if (m_colorTintEnvelope == NULL)
+		m_colorTintEnvelope = newInstance(TintEnvelope);
+
+	if( color )
+	{
+		m_colorTintEnvelope->play( color, attackFrames, decayFrames, sustainAtPeak);
+	}
+	else
+	{
+		RGBColor white;
+		white.setFromInt(0xffffffff);
+		m_colorTintEnvelope->play( &white );
+	}
+
+	// make sure the tint color is unlocked so we "fade back down" to normal
+	clearDrawableStatus( DRAWABLE_STATUS_TINT_COLOR_LOCKED );
+} 
+
+// ------------------------------------------------------------------------------------------------
+/** Tint a drawable a specified color */
+// ------------------------------------------------------------------------------------------------
+void Drawable::colorTint( const RGBColor* color )
+{
+	if( color )
+	{
+		// set the color via color flash
+		colorFlash( color, 0, 0, TRUE );
+
+		// lock the tint color so the flash never "fades back down"
+		setDrawableStatus( DRAWABLE_STATUS_TINT_COLOR_LOCKED );
+
+	}
+	else
+	{
+		if (m_colorTintEnvelope == NULL)
+			m_colorTintEnvelope = newInstance(TintEnvelope);
+
+		// remove the tint applied to the object
+		m_colorTintEnvelope->rest();
+
+		// set the tint as unlocked so we can flash and stuff again
+		clearDrawableStatus( DRAWABLE_STATUS_TINT_COLOR_LOCKED );
+
+	}
+
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Gathering point for all things besides actual selection that must happen on selection */
+//-------------------------------------------------------------------------------------------------
+void Drawable::onSelected()
+{
+
+	flashAsSelected();//much simpler
+	
+	Object* obj = getObject();
+	if ( obj )
+	{
+		ContainModuleInterface* contain = obj->getContain();
+		if ( contain )
+		{
+			contain->clientVisibleContainedFlashAsSelected();
+		}
+	}
+
+}  // end onSelected
+
+//-------------------------------------------------------------------------------------------------
+/** Gathering point for all things besides actual selection that must happen on deselection */
+//-------------------------------------------------------------------------------------------------
+void Drawable::onUnselected()
+{
+	// nothing
+}
+
+//-------------------------------------------------------------------------------------------------
+/** get FX color value to add to ALL LIGHTS when drawing */
+//-------------------------------------------------------------------------------------------------
+const Vector3 * Drawable::getTintColor( void ) const
+{
+	if( LogicThread::isInsideWindow() )
+		return m_lookForDraw.hasTintColor ? &m_lookForDraw.tintColor : NULL;
+	if ( m_colorTintEnvelope )
+	{
+		if (m_colorTintEnvelope->isEffective())
+		{
+			return m_colorTintEnvelope->getColor();
+		}
+	}
+
+	return NULL;
+
+}
+//-------------------------------------------------------------------------------------------------
+/** get SELECTION color value to add to ALL LIGHTS when drawing */
+//-------------------------------------------------------------------------------------------------
+const Vector3 * Drawable::getSelectionColor( void )	const
+{
+	if( LogicThread::isInsideWindow() )
+		return m_lookForDraw.hasSelectionColor ? &m_lookForDraw.selectionColor : NULL;
+	if (m_selectionFlashEnvelope)
+	{
+		if (m_selectionFlashEnvelope->isEffective())
+		{
+			return m_selectionFlashEnvelope->getColor();
+		}
+	}
+
+	return NULL;
+
+}
+
+		
+//-------------------------------------------------------------------------------------------------
+/** fades the object out gradually...how gradually is determined by number of frames */
+//-------------------------------------------------------------------------------------------------
+void Drawable::fadeOut( UnsignedInt frames )		///< cloak object
+{
+	setDrawableOpacity(1.0);
+	m_fadeMode = FADING_OUT;
+	m_timeToFade = frames;
+	m_timeElapsedFade = 0;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** fades the object in gradually...how gradually is determined by number of frames */
+//-------------------------------------------------------------------------------------------------
+void Drawable::fadeIn( UnsignedInt frames )		///< decloak object
+{
+	setDrawableOpacity(0.0);
+	m_fadeMode = FADING_IN;
+	m_timeToFade = frames;
+	m_timeElapsedFade = 0;
+}
+
+
+//-------------------------------------------------------------------------------------------------
+/** The scale a model is built at: the template's Scale, which the asset manager bakes into the render
+	* object (Create_Render_Obj) and the bone caches are taken at.  EA returned m_instanceScale, with this
+	* line commented out under it.  The two were the same whenever a model was built, because a drawable
+	* built its model in its constructor and only EMPUpdate ever changes the instance scale, from its first
+	* update on.  Built after the tick (W3DModelDraw::buildRenderObjects), the EMP sphere took that first
+	* update's 0.08 into its model as well as into its transform, so the dome that should grow to three or
+	* four times its 30 ft radius stopped at about a tenth of that size.  The instance scale belongs to the
+	* transform alone (W3DModelDraw::doDrawModule). */
+const Real Drawable::getScale (void) const
+{
+	return getTemplate()->getAssetScale();
+}
+
+//-------------------------------------------------------------------------------------------------
+/** The Collapse option: a building that is about to vanish or swap to rubble in one frame hands over
+	its model as it stands, which is why this comes before the rubble state.  What stages its own end
+	keeps it: EA's high rises, towers that topple, a slow death and a landmark bridge's animation. */
+//-------------------------------------------------------------------------------------------------
+void Drawable::startCollapse()
+{
+	const Object *obj = getObject();
+	if (obj == NULL || !isKindOf(KINDOF_STRUCTURE) || isKindOf(KINDOF_BRIDGE) || isKindOf(KINDOF_BRIDGE_TOWER)
+		|| obj->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION) || obj->testStatus(OBJECT_STATUS_SOLD))
+		return;
+	static const NameKeyType collapseKey = NAMEKEY("StructureCollapseUpdate");
+	static const NameKeyType toppleKey = NAMEKEY("StructureToppleUpdate");
+	static const NameKeyType slowDeathKey = NAMEKEY("SlowDeathBehavior");
+	if (obj->findUpdateModule(collapseKey) || obj->findUpdateModule(toppleKey) || obj->findUpdateModule(slowDeathKey))
+		return;
+	// the template's: by now the body has put the object's own geometry at rubble height
+	const Real height = obj->getTemplate()->getTemplateGeometryInfo().getMaxHeightAbovePosition();
+	doClientWork( [this, height]() { TheGameClient->structureCollapsing( this, height ); }, WORK_AFTER_FLUSH );
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+void Drawable::reactToBodyDamageStateChange(BodyDamageType newState)
+{
+	if (newState == BODY_RUBBLE && TheGlobalData->m_structureCollapse && !TheGameLogic->isLoadingMap())
+		startCollapse();
+
+	static const ModelConditionFlagType TheDamageMap[BODYDAMAGETYPE_COUNT] =
+	{
+		MODELCONDITION_INVALID,
+		MODELCONDITION_DAMAGED,
+		MODELCONDITION_REALLY_DAMAGED,
+		MODELCONDITION_RUBBLE,
+	};
+
+	ModelConditionFlags newDamage;
+	if (TheDamageMap[newState] != MODELCONDITION_INVALID)
+		newDamage.set(TheDamageMap[newState]);
+
+	clearAndSetModelConditionFlags(
+		MAKE_MODELCONDITION_MASK3(MODELCONDITION_DAMAGED, MODELCONDITION_REALLY_DAMAGED, MODELCONDITION_RUBBLE), 
+		newDamage);
+
+  // When loading map, ambient sound starting is handled by onLevelStart(), so that we can
+  // correctly react to customizations
+  if ( !TheGameLogic->isLoadingMap() )
+ 	  startAmbientSound(newState, TheGlobalData->m_timeOfDay);
+
+	if (newState == BODY_RUBBLE && !TheGameLogic->isLoadingMap() && getObject() && isKindOf(KINDOF_STRUCTURE) && !isKindOf(KINDOF_BRIDGE))
+		TheGameClient->structureFell(getPosition(), getObject()->getGeometryInfo().getBoundingCircleRadius());
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::setEffectiveOpacity( Real pulseFactor, Real explicitOpacity /* = -1.0f */)
+{
+	if( explicitOpacity != -1.0f )
+	{
+		m_stealthOpacity = MIN( 1.0f, MAX( 0.0f, explicitOpacity ) );
+	}
+
+	Real pf = MIN(1.0f, MAX(0.0f, pulseFactor));
+
+	Real pulseMargin = (1.0f - m_stealthOpacity);
+	Real pulseAmount = pulseMargin * pf;
+
+	m_effectiveStealthOpacity = m_stealthOpacity + pulseAmount; 
+}		///< get alpha/opacity value used to override defaults when drawing.
+
+
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::imitateStealthLook( Drawable& otherDraw )
+{
+  m_stealthOpacity = otherDraw.friend_getStealthOpacity();
+  m_explicitOpacity = otherDraw.friend_getExplicitOpacity();
+  m_effectiveStealthOpacity = otherDraw.friend_getEffectiveStealthOpacity();
+  m_hidden = otherDraw.isDrawableEffectivelyHidden();
+  m_hiddenByStealth = otherDraw.isDrawableEffectivelyHidden();
+  m_stealthLook = otherDraw.getStealthLook();
+  m_stealthDrawnLook = otherDraw.getStealthDrawnLook();
+  m_stealthFade = otherDraw.getStealthFade();
+  m_secondMaterialPassOpacity = otherDraw.getSecondMaterialPassOpacity();
+
+}
+
+
+
+
+
+
+
+
+
+//-------------------------------------------------------------------------------------------------
+/** update is called once per frame */
+//-------------------------------------------------------------------------------------------------
+DECLARE_PERF_TIMER(updateDrawable)
+void Drawable::updateDrawable( void )
+{
+	USE_PERF_TIMER(updateDrawable)
+
+	UnsignedInt now = TheGameLogic->getFrame();
+	Object *obj = getObject();
+
+	{
+		for (ClientUpdateModule** cu = getClientUpdateModules(); cu && *cu; ++cu)
+		{
+			(*cu)->clientUpdate();
+		}
+	}
+
+	{
+
+		// handle fading in or out
+		if (m_fadeMode != FADING_NONE)
+		{
+			Real numer = (m_fadeMode == FADING_IN) ? (m_timeElapsedFade) : (m_timeToFade-m_timeElapsedFade);
+
+			setDrawableOpacity(numer/(Real)m_timeToFade);
+			++m_timeElapsedFade;
+			
+			if (m_timeElapsedFade > m_timeToFade)
+				m_fadeMode = FADING_NONE;
+		}
+	}
+
+
+	if ( getTerrainDecalType() != TERRAIN_DECAL_NONE )
+	{
+		DrawModule** dm = getDrawModules();
+
+		if (*dm)
+		{
+			if (m_decalOpacityFadeRate != 0)
+			{
+				//LERP
+				(*dm)->setTerrainDecalOpacity(m_decalOpacity);
+				m_decalOpacity += m_decalOpacityFadeRate;
+			}
+			//---------------
+
+			if (m_decalOpacityFadeRate < 0 && m_decalOpacity <= 0 )
+			{
+				m_decalOpacityFadeRate = 0.0f;
+				m_decalOpacity = 0.0f;
+				this->setTerrainDecal(TERRAIN_DECAL_NONE);
+			}
+			else if (m_decalOpacityFadeRate > 0 && m_decalOpacity >= 1.0f)
+			{
+				m_decalOpacity = 1.0f;
+				m_decalOpacityFadeRate = 0.0f;
+				(*dm)->setTerrainDecalOpacity(m_decalOpacity);
+			}
+
+		}//end if (*dm)
+	}
+	else
+		m_decalOpacity = 0;
+
+
+	{
+
+		if (m_expirationDate != 0 && now >= m_expirationDate)
+		{
+			DEBUG_ASSERTCRASH(obj == NULL, ("Drawables with Objects should not have expiration dates!"));
+			TheGameClient->destroyDrawable(this);
+			return;
+		}
+	}
+
+	{
+
+		if (m_flashCount > 0  && (TheGameClient->getFrame() % DRAWABLE_FRAMES_PER_FLASH) == 0)
+		{
+			RGBColor tmp;
+			tmp.setFromInt(clientColor(m_flashColor));
+			colorFlash(&tmp);
+			m_flashCount--;
+		}
+	}
+
+	//Lets figure out whether we should be changing colors right about now
+	// we'll use an ifelseif ladder since we are scanning bits
+	if( m_prevTintStatus != m_tintStatus )// edge test 
+	{
+		if ( testTintStatus( TINT_STATUS_DISABLED ) )
+		{
+			if (m_colorTintEnvelope == NULL)
+				m_colorTintEnvelope = newInstance(TintEnvelope);
+			m_colorTintEnvelope->play( &DARK_GRAY_DISABLED_COLOR, ConvertRetailFrames(30), ConvertRetailFrames(30), SUSTAIN_INDEFINITELY);
+		}
+		else if( testTintStatus(TINT_STATUS_GAINING_SUBDUAL_DAMAGE) )
+		{
+			// Disabled has precendence, so it goes first
+			if (m_colorTintEnvelope == NULL)
+				m_colorTintEnvelope = newInstance(TintEnvelope);
+			m_colorTintEnvelope->play( &SUBDUAL_DAMAGE_COLOR, ConvertRetailFrames(150), ConvertRetailFrames(150), SUSTAIN_INDEFINITELY);
+		}
+		else if( testTintStatus(TINT_STATUS_FRENZY) )
+		{
+			// Disabled has precendence, so it goes first
+			if (m_colorTintEnvelope == NULL)
+				m_colorTintEnvelope = newInstance(TintEnvelope);
+
+      m_colorTintEnvelope->play( isKindOf( KINDOF_INFANTRY) ? &FRENZY_COLOR_INFANTRY:&FRENZY_COLOR, ConvertRetailFrames(30), ConvertRetailFrames(30), SUSTAIN_INDEFINITELY);
+		
+    }
+//		else if ( testTintStatus( TINT_STATUS_POISONED) )
+//		{
+//			if (m_colorTintEnvelope == NULL)
+//				m_colorTintEnvelope = newInstance(TintEnvelope);
+//			m_colorTintEnvelope->play( &SICKLY_GREEN_POISONED_COLOR, 30, 30, SUSTAIN_INDEFINITELY);
+//		}
+//		else if ( testTintStatus( TINT_STATUS_IRRADIATED) )
+//		{
+//			if (m_colorTintEnvelope == NULL)
+//				m_colorTintEnvelope = newInstance(TintEnvelope);
+//			m_colorTintEnvelope->play( &RED_IRRADIATED_COLOR, 30, 30, SUSTAIN_INDEFINITELY);
+//		}
+		else 
+		{ 
+			// NO TINTING SHOULD BE PRESENT
+			if (m_colorTintEnvelope == NULL)
+				m_colorTintEnvelope = newInstance(TintEnvelope);
+			m_colorTintEnvelope->release(); // head on back to normal, now
+		}
+
+	}
+
+	m_prevTintStatus = m_tintStatus;//for next frame
+
+	if ( obj )
+	{
+		if ( ! obj->isEffectivelyDead() )
+			clearTintStatus( TINT_STATUS_IRRADIATED); // so the res glow stops when not exposed
+	}
+
+	if (m_colorTintEnvelope)
+	  m_colorTintEnvelope->update(); // defector fx, disable fx, etc...
+
+	if (m_selectionFlashEnvelope)
+		m_selectionFlashEnvelope->update(); // selection flashing
+
+	//If we have an ambient sound, and we aren't currently playing it, attempt to play it now.
+  // However, if the attached sound is a one-shot (non-looping) sound, don't restart it -- only
+  // start it ONCE. The problem is, looping sounds need to keep being restarted. Why? Because 
+  // MilesAudioManager will kill the sound (in MilesAudioManager::processPlayingList) if gets 
+  // out of range. Looping ambient sounds need to restart if the user moves back into range.
+  // The MilesAudioManager doesn't handle this, so we need to keep checking looping sounds 
+  // to see if they are in range. But this messes up non-looping sounds -- they keep looping!
+  // End result: a hack of testing the looping bit and only restarting the sound if the looping
+  // bit is on and the loop count is 0 (loop forever).
+  if( m_ambientSound && m_ambientSoundEnabled && m_ambientSoundEnabledFromScript && 
+      !m_ambientSound->m_event.getEventName().isEmpty() && !m_ambientSound->m_event.isCurrentlyPlaying() ) 
+  {
+    const AudioEventInfo * eventInfo = m_ambientSound->m_event.getAudioEventInfo();
+
+    if ( eventInfo == NULL && TheAudio != NULL )
+    {
+      // We'll need this in a second anyway so cache it
+      TheAudio->getInfoForAudioEvent( &m_ambientSound->m_event );
+      eventInfo = m_ambientSound->m_event.getAudioEventInfo();
+    }
+
+    if ( eventInfo == NULL || ( eventInfo->isPermanentSound() ) )
+    {
+  		startAmbientSound();
+    }
+ 	}
+}	
+ 
+//-------------------------------------------------------------------------------------------------
+// Called just after the level loads. Only called for NEW games, not save games.
+void Drawable::onLevelStart()
+{
+  // Make sure the current ambient sound is playing if it should be playing. Needed because
+  // the call to startAmbientSound in the constructor is too early to
+  // actually start the sound if the constructor is called during level load. 
+  if( m_ambientSoundEnabled && m_ambientSoundEnabledFromScript && 
+      ( m_ambientSound == NULL || 
+        ( !m_ambientSound->m_event.getEventName().isEmpty() && !m_ambientSound->m_event.isCurrentlyPlaying() ) ) )
+  {
+    // Unlike the check in the update() function, we want to do this for looping & one-shot sounds equally
+    startAmbientSound();
+  }
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::flashAsSelected( const RGBColor *color ) ///< drawable takes care of the details if you spec no color
+{
+	if (m_selectionFlashEnvelope == NULL)
+		m_selectionFlashEnvelope = newInstance(TintEnvelope);
+
+	if ( color )
+	{
+		m_selectionFlashEnvelope->play( color, 0, DEF_DECAY_FRAMES );
+	}
+	else
+	{
+		Object *obj = getObject();
+		if (obj)
+		{
+			RGBColor tempColor; 
+			if (TheGlobalData->m_selectionFlashHouseColor)
+				tempColor.setFromInt(clientColor(obj->getIndicatorColor()));
+			else
+				tempColor.setFromInt(0xffffffff);//white
+
+			Real saturation = TheGlobalData->m_selectionFlashSaturationFactor;
+			saturateRGB( tempColor, saturation );
+			m_selectionFlashEnvelope->play( &tempColor, 0, DEF_DECAY_FRAMES );
+
+		}
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::applyPhysicsXform(Matrix3D* mtx)
+{
+	const Object *obj = getObject();
+
+ 	Bool frozen = TheTacticalView->isTimeFrozen() && !TheTacticalView->isCameraMovementFinished();
+ 	frozen = frozen || TheScriptEngine->isTimeFrozenDebug() || TheScriptEngine->isTimeFrozenScript();
+	if( !obj ||	obj->isDisabledByType( DISABLED_HELD ) || !TheGlobalData->m_showClientPhysics || frozen )
+		return;
+	PhysicsXformInfo info;
+	if (calcPhysicsXform(info))
+	{
+		mtx->Translate(0.0f, 0.0f, info.m_totalZ);
+		mtx->Rotate_Y( info.m_totalPitch );
+		mtx->Rotate_X( -info.m_totalRoll );
+		mtx->Rotate_Z( info.m_totalYaw );
+
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+Bool Drawable::calcPhysicsXform(PhysicsXformInfo& info)
+{
+	const Object* obj = getObject();
+	const AIUpdateInterface *ai = obj ? obj->getAIUpdateInterface() : NULL;
+	Bool hasPhysicsXform = false;
+	if (ai)
+	{
+		const Locomotor *locomotor = ai->getCurLocomotor();
+		if (locomotor) 
+		{
+			switch (locomotor->getAppearance())
+			{
+				case LOCO_WHEELS_FOUR:
+				case LOCO_MOTORCYCLE:
+				case LOCO_TREADS:
+					calcPhysicsXformGround(locomotor, info);
+					hasPhysicsXform = true;
+					break;
+				case LOCO_HOVER:
+				case LOCO_WINGS:
+					calcPhysicsXformHoverOrWings(locomotor, info);
+					hasPhysicsXform = true;
+					break;
+				case LOCO_THRUST:	
+					calcPhysicsXformThrust(locomotor, info);
+					hasPhysicsXform = true;
+					break;
+			}
+		}
+	}
+
+  if (hasPhysicsXform)
+  {
+    // HOTFIX: Ensure that we are not passing denormalized values back to caller
+    // @todo remove hotfix
+    if (info.m_totalPitch>-1e-20f&&info.m_totalPitch<1e-20f)
+      info.m_totalPitch=0.f;
+    if (info.m_totalRoll>-1e-20f&&info.m_totalRoll<1e-20f)
+      info.m_totalRoll=0.f;
+    if (info.m_totalYaw>-1e-20f&&info.m_totalYaw<1e-20f)
+      info.m_totalYaw=0.f;
+    if (info.m_totalZ>-1e-20f&&info.m_totalZ<1e-20f)
+      info.m_totalZ=0.f;
+  }
+
+	return hasPhysicsXform;
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void Drawable::calcPhysicsXformThrust( const Locomotor *locomotor, PhysicsXformInfo& info )
+{
+	if (m_locoInfo == NULL)
+		m_locoInfo = newInstance(DrawableLocoInfo);
+
+	Real THRUST_ROLL = locomotor->getThrustRoll();
+	Real WOBBLE_RATE = locomotor->getWobbleRate();
+	Real MAX_WOBBLE  = locomotor->getMaxWobble();
+	Real MIN_WOBBLE  = locomotor->getMinWobble();
+
+	//
+	// this is a kind of quick thrust implementation cause we need scud missiles to wobble *now*,
+	// we deal with just adjusting pitch, yaw, and roll just a little bit
+	//
+
+	// stepped on the retail clock, every second logic frame, which the rates above were written for
+	UnsignedInt now = TheGameLogic->getFrame() / LOGICFRAMES_PER_RETAIL_FRAME;
+	Bool step = now != m_locoInfo->m_airFrame;
+	m_locoInfo->m_airFrame = now;
+
+	if( WOBBLE_RATE && step )
+	{
+
+		if( m_locoInfo->m_wobble >= 1.0f )
+		{
+
+			if( m_locoInfo->m_pitch < MAX_WOBBLE - WOBBLE_RATE * 2 )
+			{
+
+				m_locoInfo->m_pitch += WOBBLE_RATE;
+				m_locoInfo->m_yaw += WOBBLE_RATE;
+
+			}  // end if
+			else
+			{
+
+				m_locoInfo->m_pitch += (WOBBLE_RATE / 2.0f);
+				m_locoInfo->m_yaw += (WOBBLE_RATE / 2.0f);
+
+			}  // end else
+
+			if( m_locoInfo->m_pitch >= MAX_WOBBLE )
+				m_locoInfo->m_wobble = -1.0f;
+
+		}  // end if
+		else
+		{
+
+			if( m_locoInfo->m_pitch >= MIN_WOBBLE + WOBBLE_RATE * 2.0f )
+			{
+
+				m_locoInfo->m_pitch -= WOBBLE_RATE;
+				m_locoInfo->m_yaw -= WOBBLE_RATE;
+
+			}  // end if
+			else
+			{
+
+				m_locoInfo->m_pitch -= (WOBBLE_RATE / 2.0f);
+				m_locoInfo->m_yaw -= (WOBBLE_RATE / 2.0f);
+
+			}  // end else
+			if( m_locoInfo->m_pitch <= MIN_WOBBLE )
+				m_locoInfo->m_wobble = 1.0f;
+
+		}  // end else
+
+	}  // end if, wobble exists
+
+	if( WOBBLE_RATE )
+	{
+
+		info.m_totalPitch = m_locoInfo->m_pitch;
+		info.m_totalYaw = m_locoInfo->m_yaw;
+
+	}  // end if
+
+	if( THRUST_ROLL )
+	{
+
+		if( step )
+			m_locoInfo->m_roll += THRUST_ROLL;
+		info.m_totalRoll = m_locoInfo->m_roll;
+
+	}  // end if
+
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+void Drawable::calcPhysicsXformHoverOrWings( const Locomotor *locomotor, PhysicsXformInfo& info )
+{
+	if (m_locoInfo == NULL)
+		m_locoInfo = newInstance(DrawableLocoInfo);
+
+	const Real ACCEL_PITCH_LIMIT = locomotor->getAccelPitchLimit();
+	const Real DECEL_PITCH_LIMIT = locomotor->getDecelPitchLimit();
+	const Real PITCH_STIFFNESS = locomotor->getPitchStiffness();
+	const Real ROLL_STIFFNESS =  locomotor->getRollStiffness();
+	const Real PITCH_DAMPING = locomotor->getPitchDamping();
+	const Real ROLL_DAMPING = locomotor->getRollDamping();
+	const Real Z_VEL_PITCH_COEFF = locomotor->getPitchByZVelCoef();	
+	const Real FORWARD_VEL_COEFF = locomotor->getForwardVelCoef();	
+	const Real LATERAL_VEL_COEFF = locomotor->getLateralVelCoef();	
+	const Real FORWARD_ACCEL_COEFF = locomotor->getForwardAccelCoef();	
+	const Real LATERAL_ACCEL_COEFF = locomotor->getLateralAccelCoef();	
+	const Real UNIFORM_AXIAL_DAMPING = locomotor->getUniformAxialDamping();	
+
+
+	// get object from logic
+	Object *obj = getObject();
+	if (obj == NULL)
+		return;
+
+	AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	if (ai == NULL)
+		return;
+
+	// get object physics state
+	PhysicsBehavior *physics = obj->getPhysics();
+	if (physics == NULL)
+		return;
+
+	// get our position and direction vector
+//const Coord3D *pos = getPosition();
+	const Coord3D* dir = getUnitDirectionVector2D();
+	const Coord3D* accel = physics->getAcceleration();
+	const Coord3D* vel = physics->getVelocity();
+
+	/* Stepped on the retail clock, every second logic frame, so the springs, the locomotor's stiffness,
+		 damping and correction rates and the lean's ease frames keep the timing they were tuned at; the
+		 logic frame in between draws the last result, as calcPhysicsXformGround does. */
+	UnsignedInt now = TheGameLogic->getFrame() / LOGICFRAMES_PER_RETAIL_FRAME;
+	if (now == m_locoInfo->m_airFrame)
+	{
+		info.m_totalPitch = m_locoInfo->m_airPitch;
+		info.m_totalRoll = m_locoInfo->m_airRoll;
+		info.m_totalYaw = m_locoInfo->m_airYaw;
+		info.m_totalZ = 0.0f;
+		return;
+	}
+	UnsignedInt elapsed = now - m_locoInfo->m_airFrame;
+	m_locoInfo->m_airFrame = now;
+
+	/* A jet banks into its turn and pitches with its climb. The bank is the lateral acceleration of
+		 the turn, speed times turn rate, against the full pull of its wings (Locomotor::getJetPull):
+		 JET_MAX_BANK at the full pull and level flying straight. The logic eases the turn in and out,
+		 so the bank rolls with it, and through level when a turn reverses. The turn rate is the
+		 locomotor's own, not the heading's change since the last drawn frame: that one was unknown
+		 for a jet coming into view, which rolled it level and back into its turn as it appeared. The
+		 pitch is the climb angle, clamped, plus a few degrees of nose-up while it flies slow, the
+		 attitude it comes in to land with, fading out over the last few feet so the nose comes down
+		 after the wheels touch.
+
+		 Both are eased here over JET_EASE_FRAMES. The logic flies the quickest turn there is, so a
+		 2 degree correction on a chase or a path corner rolls the wings 15 degrees in and straight out
+		 again inside a third of a second, and a jet doing that every few seconds rocked its wings
+		 the whole time it flew. Over 6 retail frames nearly all of those flicks stay under 8 degrees
+		 while a real turn still reaches the full bank, a fifth of a second behind it (2026-10-26, a
+		 four-player Hard match: 1.8 flicks of 8 degrees or more that turned the nose less than 5, a
+		 flight-minute a jet, at 3 frames, 0.2 at 6). The pitch ease also
+		 takes out the lift's frame-to-frame ripple. After a gap in the drawing both start from where
+		 the jet is, not from where it was last seen. The springs below are left holding the same
+		 attitude, so a jet that dies falls from where it was. */
+	if (locomotor->isJet(obj))
+	{
+		const Real JET_MAX_BANK = 1.1f;				// radians, about 63 degrees, at the full pull of the wings
+		const Real JET_MAX_CLIMB = 0.35f;			// radians, about 20 degrees, nose up or down
+		const Real JET_SLOW_NOSE_UP = 0.12f;	// radians, about 7 degrees, at MinSpeed and below, none from twice that
+		const Real JET_NOSE_UP_HEIGHT = 5.0f;	// the nose-up fades out below this height
+		const Real JET_EASE_FRAMES = 6.0f;		// retail frames
+		const UnsignedInt MAX_GAP = 4;				// retail frames; after a longer gap (hidden, out of view) the eased attitude is stale
+
+		BodyDamageType bdt = obj->getBodyModule()->getDamageState();
+		Real speed = sqrt(sqr(vel->x) + sqr(vel->y));	// per logic frame
+		Real bank = 0.0f;
+		Real pull = locomotor->getJetPull(bdt);
+		if (pull > 0.0f)
+		{
+			bank = JET_MAX_BANK * speed * locomotor->getYawRate() / pull;
+			if (bank > JET_MAX_BANK)
+				bank = JET_MAX_BANK;
+			else if (bank < -JET_MAX_BANK)
+				bank = -JET_MAX_BANK;
+		}
+
+		Real pitch = 0.0f;	// nose up
+		if (speed > 0.01f || fabs(vel->z) > 0.01f)
+			pitch = atan2(vel->z, speed);
+		if (pitch > JET_MAX_CLIMB)
+			pitch = JET_MAX_CLIMB;
+		else if (pitch < -JET_MAX_CLIMB)
+			pitch = -JET_MAX_CLIMB;
+		Real height = obj->getHeightAboveTerrain();
+		if (obj->getStatusBits().test( OBJECT_STATUS_DECK_HEIGHT_OFFSET ))
+			height -= obj->getCarrierDeckHeight();
+		Real minSpeed = locomotor->getMinSpeed();
+		if (height > 0.0f && minSpeed > 0.0f)
+		{
+			Real slow = (2.0f * minSpeed - speed) / minSpeed;
+			if (slow > 1.0f)
+				slow = 1.0f;
+			if (slow > 0.0f)
+			{
+				Real fade = height / JET_NOSE_UP_HEIGHT;
+				if (fade > 1.0f)
+					fade = 1.0f;
+				pitch += JET_SLOW_NOSE_UP * slow * fade;
+			}
+		}
+
+		if (elapsed > MAX_GAP)
+		{
+			m_locoInfo->m_jetBank = bank;
+			m_locoInfo->m_jetPitch = pitch;
+		}
+		else
+		{
+			m_locoInfo->m_jetBank += (bank - m_locoInfo->m_jetBank) / JET_EASE_FRAMES;
+			m_locoInfo->m_jetPitch += (pitch - m_locoInfo->m_jetPitch) / JET_EASE_FRAMES;
+		}
+
+		info.m_totalRoll = m_locoInfo->m_jetBank;		// positive rolls the left wing down, into a turn to the left
+		info.m_totalPitch = -m_locoInfo->m_jetPitch;	// negative lifts the nose
+		info.m_totalYaw = 0.0f;
+		info.m_totalZ = 0.0f;
+
+		m_locoInfo->m_pitch = info.m_totalPitch;
+		m_locoInfo->m_roll = info.m_totalRoll;
+		m_locoInfo->m_pitchRate = 0.0f;
+		m_locoInfo->m_rollRate = 0.0f;
+		m_locoInfo->m_accelerationPitch = 0.0f;
+		m_locoInfo->m_accelerationPitchRate = 0.0f;
+		m_locoInfo->m_accelerationRoll = 0.0f;
+		m_locoInfo->m_accelerationRollRate = 0.0f;
+		m_locoInfo->m_airPitch = info.m_totalPitch;
+		m_locoInfo->m_airRoll = info.m_totalRoll;
+		m_locoInfo->m_airYaw = info.m_totalYaw;
+		return;
+	}
+
+	m_locoInfo->m_pitchRate += ((-PITCH_STIFFNESS * m_locoInfo->m_pitch) + (-PITCH_DAMPING * m_locoInfo->m_pitchRate));		// spring/damper
+	m_locoInfo->m_rollRate += ((-ROLL_STIFFNESS * m_locoInfo->m_roll) + (-ROLL_DAMPING * m_locoInfo->m_rollRate));		// spring/damper
+
+	m_locoInfo->m_pitch += m_locoInfo->m_pitchRate * UNIFORM_AXIAL_DAMPING;
+	m_locoInfo->m_roll += m_locoInfo->m_rollRate   * UNIFORM_AXIAL_DAMPING;
+
+	/* A helicopter tilts its rotor the way it wants to go: nose down to speed up, nose up to brake,
+		 a roll into a push sideways, and a little lean held into the airflow while it cruises. The
+		 lean is the point the acceleration spring below settles on, at the locomotor's PitchStiffness
+		 and RollStiffness, so it comes level again in a hover. The velocity-roll factor its INI
+		 carries was tuned for the small skid of a turn and would roll one flying sideways onto its
+		 back, so a helicopter does not use it. */
+	const Bool helicopter = locomotor->isHelicopter(obj);
+	Real accelPitchLimit = ACCEL_PITCH_LIMIT;
+	Real decelPitchLimit = DECEL_PITCH_LIMIT;
+	Real pitchTarget = 0.0f;
+	Real rollTarget = 0.0f;
+	if (helicopter)
+	{
+		const Real LEAN_AT_FULL_ACCEL = 0.2f;	// radians, at the locomotor's own Acceleration
+		const Real LEAN_AT_FULL_SPEED = 0.12f;	// radians, held at the locomotor's own Speed
+		const Real SOFT_LEAN = 0.27f;					// the lean flattens out towards this, about 15 degrees
+		const Real LEAN_EASE_FRAMES = 5.0f;		// each of the two smoothing stages, in retail frames
+		const Real MAX_LEAN = 0.4f;
+		if (accelPitchLimit == 0.0f)
+			accelPitchLimit = MAX_LEAN;
+		if (decelPitchLimit == 0.0f)
+			decelPitchLimit = MAX_LEAN;
+
+		if (physics->isMotive())
+		{
+			BodyDamageType bdt = obj->getBodyModule()->getDamageState();
+			Real maxAccel = locomotor->getMaxAcceleration(bdt);
+			Real maxSpeed = locomotor->getMaxSpeedForCondition(bdt);
+			Real accelScale = maxAccel > 0.0f ? LEAN_AT_FULL_ACCEL / maxAccel : 0.0f;
+			Real speedScale = maxSpeed > 0.0f ? LEAN_AT_FULL_SPEED / maxSpeed : 0.0f;
+
+			Real forwardVel = dir->x * vel->x + dir->y * vel->y;
+			Real lateralVel = -dir->y * vel->x + dir->x * vel->y;
+			Real forwardAccel = dir->x * accel->x + dir->y * accel->y;
+			Real lateralAccel = -dir->y * accel->x + dir->x * accel->y;
+
+			pitchTarget = SOFT_LEAN * tanh((forwardAccel * accelScale + forwardVel * speedScale) / SOFT_LEAN);
+			rollTarget = SOFT_LEAN * tanh((lateralAccel * accelScale + lateralVel * speedScale) / SOFT_LEAN);
+		}
+
+		/* The acceleration jumps from one logic frame to the next, and the spring below would copy
+			 every jump. Two smoothing stages ease the lean in and out over about half a second. */
+		m_locoInfo->m_leanPitch[0] += (pitchTarget - m_locoInfo->m_leanPitch[0]) / LEAN_EASE_FRAMES;
+		m_locoInfo->m_leanPitch[1] += (m_locoInfo->m_leanPitch[0] - m_locoInfo->m_leanPitch[1]) / LEAN_EASE_FRAMES;
+		m_locoInfo->m_leanRoll[0] += (rollTarget - m_locoInfo->m_leanRoll[0]) / LEAN_EASE_FRAMES;
+		m_locoInfo->m_leanRoll[1] += (m_locoInfo->m_leanRoll[0] - m_locoInfo->m_leanRoll[1]) / LEAN_EASE_FRAMES;
+		pitchTarget = m_locoInfo->m_leanPitch[1];
+		rollTarget = m_locoInfo->m_leanRoll[1];
+	}
+
+	// process chassis acceleration dynamics - damp back towards zero, or a helicopter's lean
+
+	m_locoInfo->m_accelerationPitchRate += ((-PITCH_STIFFNESS * (m_locoInfo->m_accelerationPitch - pitchTarget)) + (-PITCH_DAMPING * m_locoInfo->m_accelerationPitchRate));		// spring/damper
+	m_locoInfo->m_accelerationPitch += m_locoInfo->m_accelerationPitchRate;
+
+	m_locoInfo->m_accelerationRollRate += ((-ROLL_STIFFNESS * (m_locoInfo->m_accelerationRoll - rollTarget)) + (-ROLL_DAMPING * m_locoInfo->m_accelerationRollRate));		// spring/damper
+	m_locoInfo->m_accelerationRoll += m_locoInfo->m_accelerationRollRate;
+
+	// compute total pitch and roll of tank
+	info.m_totalPitch = m_locoInfo->m_pitch + m_locoInfo->m_accelerationPitch;
+	info.m_totalRoll = m_locoInfo->m_roll + m_locoInfo->m_accelerationRoll;
+
+	if (!helicopter && physics->isMotive())
+  {
+		if (Z_VEL_PITCH_COEFF != 0.0f)
+		{
+			const Real TINY_DZ = 0.001f;
+			if (fabs(vel->z) > TINY_DZ)
+			{
+				Real pitch = atan2(vel->z, sqrt(sqr(vel->x)+sqr(vel->y)));
+				m_locoInfo->m_pitch -= Z_VEL_PITCH_COEFF * pitch;
+			}
+		}
+
+		// cause the chassis to pitch & roll in reaction to current speed; the coefficients were tuned
+		// against speeds per retail frame and accelerations per retail frame squared, and physics
+		// keeps them per logic frame
+		const Real RETAIL_VEL = (Real)LOGICFRAMES_PER_RETAIL_FRAME;
+		const Real RETAIL_ACCEL = RETAIL_VEL * RETAIL_VEL;
+		Real forwardVel = (dir->x * vel->x + dir->y * vel->y) * RETAIL_VEL;
+		m_locoInfo->m_pitch += -(FORWARD_VEL_COEFF * forwardVel);
+
+		Real lateralVel = (-dir->y * vel->x + dir->x * vel->y) * RETAIL_VEL;
+		m_locoInfo->m_roll += -(LATERAL_VEL_COEFF * lateralVel);
+
+		// cause the chassis to pitch & roll in reaction to acceleration/deceleration
+		Real forwardAccel = (dir->x * accel->x + dir->y * accel->y) * RETAIL_ACCEL;
+		m_locoInfo->m_accelerationPitchRate += -(FORWARD_ACCEL_COEFF * forwardAccel);
+
+		Real lateralAccel = (-dir->y * accel->x + dir->x * accel->y) * RETAIL_ACCEL;
+		m_locoInfo->m_accelerationRollRate += -(LATERAL_ACCEL_COEFF * lateralAccel);
+	}
+
+	// limit acceleration pitch and roll
+
+	if (m_locoInfo->m_accelerationPitch > decelPitchLimit)
+		m_locoInfo->m_accelerationPitch = decelPitchLimit;
+	else if (m_locoInfo->m_accelerationPitch < -accelPitchLimit)
+		m_locoInfo->m_accelerationPitch = -accelPitchLimit;
+
+	if (m_locoInfo->m_accelerationRoll > decelPitchLimit)
+		m_locoInfo->m_accelerationRoll = decelPitchLimit;
+	else if (m_locoInfo->m_accelerationRoll < -accelPitchLimit)
+		m_locoInfo->m_accelerationRoll = -accelPitchLimit;
+
+
+
+	const Real RUDDER_CORRECTION_DEGREE   = locomotor->getRudderCorrectionDegree();	
+	const Real RUDDER_CORRECTION_RATE     = locomotor->getRudderCorrectionRate();	
+	const Real ELEVATOR_CORRECTION_DEGREE = locomotor->getElevatorCorrectionDegree();	
+	const Real ELEVATOR_CORRECTION_RATE   = locomotor->getElevatorCorrectionRate();	
+
+  info.m_totalYaw = RUDDER_CORRECTION_DEGREE * sin( m_locoInfo->m_yawModulator += RUDDER_CORRECTION_RATE );
+  info.m_totalPitch += ELEVATOR_CORRECTION_DEGREE * cos( m_locoInfo->m_pitchModulator += ELEVATOR_CORRECTION_RATE );
+
+	m_locoInfo->m_airPitch = info.m_totalPitch;
+	m_locoInfo->m_airRoll = info.m_totalRoll;
+	m_locoInfo->m_airYaw = info.m_totalYaw;
+	info.m_totalZ = 0.0f;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Treads, wheels and motorcycles. EA stepped their springs once a drawn frame, which was once a
+	* logic frame at the 30 pictures a second the game was tuned at; at 120 the chassis bounced and
+	* settled four times as fast. They are stepped once a retail frame here, catching up when a slow
+	* picture let more than one go by, and the pictures in between show the last result: the unit's
+	* position does not move between logic frames either.
+	*
+	* The lean from speeding up, braking and turning is worked out here as well. EA kicked the recoil
+	* spring with the physics acceleration, and with Acceleration = 1000 in most locomotors that is one
+	* frame long, so every start and stop pinned the chassis to its limit in a single picture. The
+	* spring is left to the weapon recoil, which is what it is tuned for. The lean
+	* follows the change of forward speed over a logic frame as a share of top speed, and in a turn
+	* speed times turn rate as a share of the most the locomotor can do, eased through three stages:
+	* a standing start to top speed inside one frame peaks four frames later at most of the limit and
+	* has gone by about half a second, and a slower pull away leans less for longer. That one frame
+	* start is how a tank or car pulls away again (Locomotor::isGroundVehicle), so the share of top
+	* speed and of the turn is held to one: a diagonal start, at up to 1.41 times Speed, or a shove
+	* leans no further than a straight start. */
+//-------------------------------------------------------------------------------------------------
+void Drawable::calcPhysicsXformGround( const Locomotor *locomotor, PhysicsXformInfo& info )
+{
+	if (m_locoInfo == NULL)
+		m_locoInfo = newInstance(DrawableLocoInfo);
+
+	const UnsignedInt MAX_CATCH_UP_FRAMES = 4;	// more than this unseen and there is nothing to measure against
+	const Real LEAN_EASE_FRAMES = 3.0f;					// each of the three smoothing stages, in retail frames
+	const Real START_GAIN = 11.0f;							// a one frame start from rest to top speed peaks at tanh(1.2) of the limit
+	const Real DEFAULT_LEAN_LIMIT = 0.07f;			// 4 degrees, for a locomotor that reacts but names no limit, like the Humvee's
+
+	/* Stepped on the retail clock, every second logic frame, so the springs, the locomotor's
+		 stiffness and damping and the ease frames below keep the timing they were tuned at.  Speeds are
+		 per logic frame and only ever divided by the locomotor's own top speed, which cancels; the turn
+		 rate does not, so it is taken per retail frame. */
+	UnsignedInt now = TheGameLogic->getFrame() / LOGICFRAMES_PER_RETAIL_FRAME;
+	UnsignedInt steps = now - m_locoInfo->m_groundFrame;
+	if (steps != 0)
+	{
+		const Object *obj = getObject();
+		// EA's per-appearance versions of this each returned on an object without physics
+		const PhysicsBehavior *physics = obj->getPhysics();
+		if (physics == NULL)
+			return;
+		BodyDamageType bdt = obj->getBodyModule()->getDamageState();
+		Real speed = physics->getForwardSpeed2D();
+		Real angle = getOrientation();
+		if (steps > MAX_CATCH_UP_FRAMES)
+		{
+			// long unseen, or just loaded: let the springs settle without a lurch from the gap
+			m_locoInfo->m_prevForwardSpeed = speed;
+			m_locoInfo->m_prevAngle = angle;
+			steps = MAX_CATCH_UP_FRAMES;
+		}
+		Real forwardAccel = (speed - m_locoInfo->m_prevForwardSpeed) / steps;
+		Real lateralAccel = speed * stdAngleDiff(angle, m_locoInfo->m_prevAngle) / steps;
+		m_locoInfo->m_prevForwardSpeed = speed;
+		m_locoInfo->m_prevAngle = angle;
+		m_locoInfo->m_groundFrame = now;
+
+		/* A locomotor with neither factor set never leaned under EA either (the train, a taxiing jet).
+			 One with a factor but no limit, the Humvee's, was clamped flat; it gets a small one. The
+			 change of speed is not asked whether the locomotor caused it, as EA's kick was: the last
+			 frame of a stop is not a motive one, and a shove from a blast is a lurch as well. */
+		Real pitchIn = 0.0f;
+		Real rollIn = 0.0f;
+		if (locomotor->getForwardAccelCoef() != 0.0f || locomotor->getLateralAccelCoef() != 0.0f)
+		{
+			Real maxSpeed = locomotor->getMaxSpeedForCondition(bdt);
+			Real maxLateral = maxSpeed * locomotor->getMaxTurnRate(bdt, obj) * LOGICFRAMES_PER_RETAIL_FRAME;
+			pitchIn = maxSpeed > 0.0f ? -START_GAIN * clamp(-1.0f, forwardAccel / maxSpeed, 1.0f) : 0.0f;
+			rollIn = maxLateral > 0.0f ? -clamp(-1.0f, lateralAccel / maxLateral, 1.0f) : 0.0f;
+		}
+		Real accelLimit = locomotor->getAccelPitchLimit();
+		Real decelLimit = locomotor->getDecelPitchLimit();
+		if (accelLimit == 0.0f)
+			accelLimit = DEFAULT_LEAN_LIMIT;
+		if (decelLimit == 0.0f)
+			decelLimit = DEFAULT_LEAN_LIMIT;
+
+		PhysicsXformInfo step;
+		for (UnsignedInt i = 0; i < steps; ++i)
+		{
+			Real *p = m_locoInfo->m_groundLeanStages[0];
+			Real *r = m_locoInfo->m_groundLeanStages[1];
+			p[0] += (pitchIn - p[0]) / LEAN_EASE_FRAMES;
+			p[1] += (p[0] - p[1]) / LEAN_EASE_FRAMES;
+			p[2] += (p[1] - p[2]) / LEAN_EASE_FRAMES;
+			r[0] += (rollIn - r[0]) / LEAN_EASE_FRAMES;
+			r[1] += (r[0] - r[1]) / LEAN_EASE_FRAMES;
+			r[2] += (r[1] - r[2]) / LEAN_EASE_FRAMES;
+			// negative is the squat of a start and the lean out of a left turn, as EA had it
+			m_locoInfo->m_groundLeanPitch = (p[2] < 0.0f ? accelLimit : decelLimit) * tanh(p[2]);
+			m_locoInfo->m_groundLeanRoll = (r[2] < 0.0f ? accelLimit : decelLimit) * tanh(r[2]);
+
+			step = PhysicsXformInfo();
+			switch (locomotor->getAppearance())
+			{
+				case LOCO_WHEELS_FOUR:	calcPhysicsXformWheels(locomotor, step);			break;
+				case LOCO_MOTORCYCLE:		calcPhysicsXformMotorcycle(locomotor, step);	break;
+				case LOCO_TREADS:				calcPhysicsXformTreads(locomotor, step);			break;
+			}
+		}
+		m_locoInfo->m_groundPitch = step.m_totalPitch;
+		m_locoInfo->m_groundRoll = step.m_totalRoll;
+		m_locoInfo->m_groundZ = step.m_totalZ;
+	}
+	info.m_totalPitch = m_locoInfo->m_groundPitch;
+	info.m_totalRoll = m_locoInfo->m_groundRoll;
+	info.m_totalZ = m_locoInfo->m_groundZ;
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+void Drawable::calcPhysicsXformTreads( const Locomotor *locomotor, PhysicsXformInfo& info )
+{
+	if (m_locoInfo == NULL)
+		m_locoInfo = newInstance(DrawableLocoInfo);
+
+	const Real OVERLAP_SHRINK_FACTOR = 0.8f;
+	const Real FLATTENED_OBJECT_HEIGHT = 0.5f;
+	const Real LEAVE_OVERLAP_PITCH_KICK = PI/128;
+	const Real OVERLAP_ROUGH_VIBRATION_FACTOR = 5.0f;
+	const Real MAX_ROUGH_VIBRATION = 0.5f;
+	const Real ACCEL_PITCH_LIMIT = locomotor->getAccelPitchLimit();
+	const Real DECEL_PITCH_LIMIT = locomotor->getDecelPitchLimit();
+	const Real PITCH_STIFFNESS = locomotor->getPitchStiffness();
+	const Real ROLL_STIFFNESS =  locomotor->getRollStiffness();
+	const Real PITCH_DAMPING = locomotor->getPitchDamping();
+	const Real ROLL_DAMPING = locomotor->getRollDamping();
+	const Real UNIFORM_AXIAL_DAMPING = locomotor->getUniformAxialDamping();
+
+	// get object from logic
+	Object *obj = getObject();
+	if (obj == NULL)
+		return;
+
+	AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	if (ai == NULL)
+		return ;
+
+	// get object physics state
+	PhysicsBehavior *physics = obj->getPhysics();
+	if (physics == NULL)
+		return;
+
+	// get our position and direction vector
+	const Coord3D *pos = getPosition();
+	const Coord3D *dir = getUnitDirectionVector2D();
+	const Coord3D *vel = physics->getVelocity();
+
+	// compute perpendicular (2d)
+	Coord3D perp;
+	perp.x = -dir->y;
+	perp.y = dir->x;
+	perp.z = 0.0f;
+
+	// find pitch and roll of terrain under chassis
+	Coord3D normal;
+/*	Real hheight = */ TheTerrainLogic->getLayerHeight( pos->x, pos->y, obj->getLayer(), &normal );
+
+	// override surface normal if we are overlapping another object - crushing it
+	Real overlapZ = 0.0f;
+
+	// get object we are currently overlapping, if any
+	Object* overlapped = TheGameLogic->findObjectByID(physics->getCurrentOverlap());
+	if (overlapped && overlapped->isKindOf(KINDOF_SHRUBBERY)) {
+		overlapped = NULL; // We just smash through shrubbery.  jba.
+	}
+
+	if (overlapped)
+	{
+		const Coord3D *overPos = overlapped->getPosition();
+		Real dx = overPos->x - pos->x;
+		Real dy = overPos->y - pos->y;
+		Real centerDistSqr = sqr(dx) + sqr(dy);
+
+		// compute maximum distance between objects, if their edges just touched
+		Real ourSize = getDrawableGeometryInfo().getBoundingCircleRadius();
+		Real otherSize = overlapped->getGeometryInfo().getBoundingCircleRadius();
+		Real maxCenterDist = otherSize + ourSize;
+
+		// shrink the overlap distance a bit to avoid floating
+		maxCenterDist *= OVERLAP_SHRINK_FACTOR;
+		if (centerDistSqr < sqr(maxCenterDist))
+		{
+			Real centerDist = sqrtf(centerDistSqr);
+			Real amount = 1.0f - centerDist/maxCenterDist;
+			if (amount < 0.0f)
+				amount = 0.0f;
+			else if (amount > 1.0f)
+				amount = 1.0f;
+
+			// rough vibrations proportional to speed when we drive over something
+			// the speed per retail frame, which the factor was tuned for
+			Real rough = (vel->x*vel->x + vel->y*vel->y) * sqr((Real)LOGICFRAMES_PER_RETAIL_FRAME) * OVERLAP_ROUGH_VIBRATION_FACTOR;
+			if (rough > MAX_ROUGH_VIBRATION)
+				rough = MAX_ROUGH_VIBRATION;
+			
+			Real height = overlapped->getGeometryInfo().getMaxHeightAbovePosition();
+
+			// do not "go up" flattened crushed things
+			Bool flat = false;
+			if (overlapped->isKindOf(KINDOF_LOW_OVERLAPPABLE) ||
+					overlapped->isKindOf(KINDOF_INFANTRY) ||
+					(overlapped->getBodyModule()->getFrontCrushed() && overlapped->getBodyModule()->getBackCrushed()))
+			{
+				flat = true;
+				height = FLATTENED_OBJECT_HEIGHT;
+			}
+
+			if (amount < FLATTENED_OBJECT_HEIGHT && flat == false)
+			{
+				overlapZ = height * 2.0f * amount;
+
+				// compute vector along "surface"
+				// not proportional to actual geometry to avoid overlay steep inclines, etc
+				Coord3D v;
+				v.x = dx/centerDist;
+				v.y = dy/centerDist;
+				v.z = 0.2f;		// 0.25
+
+				Coord3D up;
+				up.x = GameClientRandomValueReal( -rough, rough );
+				up.y = GameClientRandomValueReal( -rough, rough );
+				up.z = 1.0f;
+				up.normalize();
+
+				Coord3D prp;
+				prp.crossProduct( &v, &up, &prp );
+				normal.crossProduct( &prp, &v, &normal );
+
+				// compute unit normal
+				normal.normalize();
+			}
+			else
+			{
+				// sitting on top of object
+				overlapZ = height;
+
+				normal.x = GameClientRandomValueReal( -rough, rough );
+				normal.y = GameClientRandomValueReal( -rough, rough );
+				normal.z = 1.0f;
+				normal.normalize();
+			}
+		}
+	}
+	else	// no overlap this frame
+	{
+		// if we had an overlap last frame, and we're now in the air, give a
+		// kick to the pitch for effect
+		if (physics->getPreviousOverlap() != INVALID_ID && m_locoInfo->m_overlapZ > 0.0f)
+			m_locoInfo->m_pitchRate += LEAVE_OVERLAP_PITCH_KICK;
+	}
+
+
+
+	Real dot = normal.x * dir->x + normal.y * dir->y;
+	Real groundPitch = dot * (PI/2.0f);
+
+	dot = normal.x * perp.x + normal.y * perp.y;
+	Real groundRoll = dot * (PI/2.0f);
+
+	// process chassis suspension dynamics - damp back towards groundPitch
+
+	// the ground can only push back if we're touching it
+	if (overlapped || m_locoInfo->m_overlapZ <= 0.0f)
+	{
+		m_locoInfo->m_pitchRate += ((-PITCH_STIFFNESS * (m_locoInfo->m_pitch - groundPitch)) + (-PITCH_DAMPING * m_locoInfo->m_pitchRate));		// spring/damper
+		if (m_locoInfo->m_pitchRate > 0.0f)
+			m_locoInfo->m_pitchRate *= 0.5f;
+
+		m_locoInfo->m_rollRate += ((-ROLL_STIFFNESS * (m_locoInfo->m_roll - groundRoll)) + (-ROLL_DAMPING * m_locoInfo->m_rollRate));		// spring/damper
+	}
+
+	m_locoInfo->m_pitch += m_locoInfo->m_pitchRate * UNIFORM_AXIAL_DAMPING;
+	m_locoInfo->m_roll += m_locoInfo->m_rollRate   * UNIFORM_AXIAL_DAMPING;
+
+	// process chassis recoil dynamics - damp back towards zero
+
+	m_locoInfo->m_accelerationPitchRate += ((-PITCH_STIFFNESS * (m_locoInfo->m_accelerationPitch)) + (-PITCH_DAMPING * m_locoInfo->m_accelerationPitchRate));		// spring/damper
+	m_locoInfo->m_accelerationPitch += m_locoInfo->m_accelerationPitchRate;
+
+	m_locoInfo->m_accelerationRollRate += ((-ROLL_STIFFNESS * m_locoInfo->m_accelerationRoll) + (-ROLL_DAMPING * m_locoInfo->m_accelerationRollRate));		// spring/damper
+	m_locoInfo->m_accelerationRoll += m_locoInfo->m_accelerationRollRate;
+
+	// compute total pitch and roll of tank: terrain, weapon recoil, and the lean calcPhysicsXformGround worked out
+	info.m_totalPitch = m_locoInfo->m_pitch + m_locoInfo->m_accelerationPitch + m_locoInfo->m_groundLeanPitch;
+	info.m_totalRoll = m_locoInfo->m_roll + m_locoInfo->m_accelerationRoll + m_locoInfo->m_groundLeanRoll;
+
+#ifdef RECOIL_FROM_BEING_DAMAGED
+	// recoil from being hit
+	/// @todo Recoil needs to be based on sane damage amounts (MSB)
+	const DamageInfo *damageInfo = obj->getBodyModule()->getLastDamageInfo();
+	if (damageInfo)
+	{
+		if (obj->getBodyModule()->getLastDamageTimestamp() > m_lastDamageTimestamp && damageInfo->in.m_amount > RECOIL_DAMAGE)
+		{
+			Object *attacker = TheGameLogic->getObject( damageInfo->in.m_sourceID );
+			if (attacker)
+			{
+				Coord3D to;
+				ThePartitionManager->getVectorTo( obj, attacker, FROM_CENTER_2D, &to );
+
+				to.normalize();
+
+				Real forward = dir->x * to.x + dir->y * to.y;
+				Real lateral = perp.x * to.x + perp.y * to.y;
+
+				Real recoil = PI/16.0f * GameClientRandomValueReal( 0.5f, 1.0f );
+			
+				m_locoInfo->m_accelerationPitchRate -= recoil * forward;
+				m_locoInfo->m_accelerationRollRate -= recoil * lateral;
+			}
+
+			m_lastDamageTimestamp = obj->getBodyModule()->getLastDamageTimestamp();
+		}
+	}
+#endif
+
+	// limit recoil pitch and roll
+
+	if (m_locoInfo->m_accelerationPitch > DECEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationPitch = DECEL_PITCH_LIMIT;
+	else if (m_locoInfo->m_accelerationPitch < -ACCEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationPitch = -ACCEL_PITCH_LIMIT;
+
+	if (m_locoInfo->m_accelerationRoll > DECEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationRoll = DECEL_PITCH_LIMIT;
+	else if (m_locoInfo->m_accelerationRoll < -ACCEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationRoll = -ACCEL_PITCH_LIMIT;
+
+	// adjust z
+	if (overlapZ > m_locoInfo->m_overlapZ)
+	{
+		m_locoInfo->m_overlapZ = overlapZ;
+		/// @todo Z needs to accelerate/decelerate, not be directly set (MSB)
+		// m_locoInfo->m_overlapZ += 0.4f;
+		m_locoInfo->m_overlapZVel = 0.0f;
+	}
+	
+	Real ztmp = m_locoInfo->m_overlapZ/2.0f;
+
+	// do fake Z physics
+	if (m_locoInfo->m_overlapZ > 0.0f)
+	{
+		m_locoInfo->m_overlapZVel -= 0.2f;
+		m_locoInfo->m_overlapZ += m_locoInfo->m_overlapZVel;
+	}
+
+	if (m_locoInfo->m_overlapZ <= 0.0f)
+	{
+		m_locoInfo->m_overlapZ = 0.0f;
+		m_locoInfo->m_overlapZVel = 0.0f; 
+	}
+	info.m_totalZ = ztmp;
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+void Drawable::calcPhysicsXformWheels( const Locomotor *locomotor, PhysicsXformInfo& info )
+{
+	if (m_locoInfo == NULL)
+		m_locoInfo = newInstance(DrawableLocoInfo);
+
+	const Real ACCEL_PITCH_LIMIT = locomotor->getAccelPitchLimit();
+	const Real DECEL_PITCH_LIMIT = locomotor->getDecelPitchLimit();
+	const Real BOUNCE_ANGLE_KICK = locomotor->getBounceKick() * LOGICFRAMES_PER_RETAIL_FRAME;	// parsed per logic frame, stepped per retail frame
+	const Real PITCH_STIFFNESS = locomotor->getPitchStiffness();
+	const Real ROLL_STIFFNESS =  locomotor->getRollStiffness();
+	const Real PITCH_DAMPING = locomotor->getPitchDamping();
+	const Real ROLL_DAMPING = locomotor->getRollDamping();
+	const Real UNIFORM_AXIAL_DAMPING = locomotor->getUniformAxialDamping();
+
+	const Real MAX_SUSPENSION_EXTENSION = locomotor->getMaxWheelExtension(); //-2.3f;
+//	const Real MAX_SUSPENSION_COMPRESSION = locomotor->getMaxWheelCompression(); //1.4f;
+	const Real WHEEL_ANGLE = locomotor->getWheelTurnAngle(); //PI/8;
+
+	const Bool DO_WHEELS = locomotor->hasSuspension();
+
+	// get object from logic
+	Object *obj = getObject();
+	if (obj == NULL)
+		return;
+
+	AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	if (ai == NULL)
+		return ;
+
+	// get object physics state
+	PhysicsBehavior *physics = obj->getPhysics();
+	if (physics == NULL)
+		return ;
+
+	// get our position and direction vector
+	const Coord3D *pos = getPosition();
+	const Coord3D *dir = getUnitDirectionVector2D();
+
+	// compute perpendicular (2d)
+	Coord3D perp;
+	perp.x = -dir->y;
+	perp.y = dir->x;
+	perp.z = 0.0f;
+
+	// find pitch and roll of terrain under chassis
+	Coord3D normal;
+	Real hheight = TheTerrainLogic->getLayerHeight( pos->x, pos->y, obj->getLayer(), &normal );
+
+	Real dot = normal.x * dir->x + normal.y * dir->y;
+	Real groundPitch = dot * (PI/2.0f);
+
+	dot = normal.x * perp.x + normal.y * perp.y;
+	Real groundRoll = dot * (PI/2.0f);
+
+	Bool airborne = obj->isSignificantlyAboveTerrain();
+
+	if (airborne)
+	{
+		if (DO_WHEELS)
+		{
+			// Wheels extend when airborne.
+			m_locoInfo->m_wheelInfo.m_framesAirborne = 0;
+			m_locoInfo->m_wheelInfo.m_framesAirborneCounter++;
+			if (pos->z - hheight > -MAX_SUSPENSION_EXTENSION)
+			{
+				m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset += (MAX_SUSPENSION_EXTENSION - m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset)/2.0f;
+				m_locoInfo->m_wheelInfo.m_rearRightHeightOffset += (MAX_SUSPENSION_EXTENSION - m_locoInfo->m_wheelInfo.m_rearRightHeightOffset)/2.0f;
+			}
+			else 
+			{
+				m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset += (0 - m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset)/2.0f;
+				m_locoInfo->m_wheelInfo.m_rearRightHeightOffset += (0 - m_locoInfo->m_wheelInfo.m_rearRightHeightOffset)/2.0f;
+			}
+		}
+		// Calculate suspension info.
+		Real length = obj->getGeometryInfo().getMajorRadius();
+		Real width = obj->getGeometryInfo().getMinorRadius();
+		Real pitchHeight = length*Sin(m_locoInfo->m_pitch + m_locoInfo->m_accelerationPitch - groundPitch);	
+		Real rollHeight = width*Sin(m_locoInfo->m_roll + m_locoInfo->m_accelerationRoll - groundRoll);
+		info.m_totalZ = fabs(pitchHeight)/4 + fabs(rollHeight)/4;
+		return; // maintain the same orientation while we fly through the air.
+	}
+
+	// Bouncy.
+	Real curSpeed = physics->getVelocityMagnitude();
+#if 1 
+	Real maxSpeed = ai->getCurLocomotorSpeed();
+	if (!airborne && curSpeed > maxSpeed/10) 
+	{
+		Real factor = curSpeed/maxSpeed;
+		if (fabs(m_locoInfo->m_pitchRate)<factor*BOUNCE_ANGLE_KICK/4 && fabs(m_locoInfo->m_rollRate)<factor*BOUNCE_ANGLE_KICK/8) 
+		{
+			// do the bouncy. 
+			switch (GameClientRandomValue(0,3)) 
+			{
+			case 0:
+				m_locoInfo->m_pitchRate -= BOUNCE_ANGLE_KICK*factor;
+				m_locoInfo->m_rollRate -= BOUNCE_ANGLE_KICK*factor/2;
+				break;
+			case 1:
+				m_locoInfo->m_pitchRate += BOUNCE_ANGLE_KICK*factor;
+				m_locoInfo->m_rollRate -= BOUNCE_ANGLE_KICK*factor/2;
+				break;
+			case 2:
+				m_locoInfo->m_pitchRate -= BOUNCE_ANGLE_KICK*factor;
+				m_locoInfo->m_rollRate += BOUNCE_ANGLE_KICK*factor/2;
+				break;
+			case 3:
+				m_locoInfo->m_pitchRate += BOUNCE_ANGLE_KICK*factor;
+				m_locoInfo->m_rollRate += BOUNCE_ANGLE_KICK*factor/2;
+				break;
+			}
+		}
+	}
+
+#endif
+
+	// process chassis suspension dynamics - damp back towards groundPitch
+
+	// the ground can only push back if we're touching it
+	if (!airborne)
+	{
+		m_locoInfo->m_pitchRate += ((-PITCH_STIFFNESS * (m_locoInfo->m_pitch - groundPitch)) + (-PITCH_DAMPING * m_locoInfo->m_pitchRate));		// spring/damper
+		if (m_locoInfo->m_pitchRate > 0.0f)
+			m_locoInfo->m_pitchRate *= 0.5f;
+
+		m_locoInfo->m_rollRate += ((-ROLL_STIFFNESS * (m_locoInfo->m_roll - groundRoll)) + (-ROLL_DAMPING * m_locoInfo->m_rollRate));		// spring/damper
+	}
+
+	m_locoInfo->m_pitch += m_locoInfo->m_pitchRate * UNIFORM_AXIAL_DAMPING;
+	m_locoInfo->m_roll += m_locoInfo->m_rollRate   * UNIFORM_AXIAL_DAMPING;
+
+	// process chassis recoil dynamics - damp back towards zero
+
+	m_locoInfo->m_accelerationPitchRate += ((-PITCH_STIFFNESS * (m_locoInfo->m_accelerationPitch)) + (-PITCH_DAMPING * m_locoInfo->m_accelerationPitchRate));		// spring/damper
+	m_locoInfo->m_accelerationPitch += m_locoInfo->m_accelerationPitchRate;
+
+	m_locoInfo->m_accelerationRollRate += ((-ROLL_STIFFNESS * m_locoInfo->m_accelerationRoll) + (-ROLL_DAMPING * m_locoInfo->m_accelerationRollRate));		// spring/damper
+	m_locoInfo->m_accelerationRoll += m_locoInfo->m_accelerationRollRate;
+
+	// compute total pitch and roll: terrain, weapon recoil, and the lean calcPhysicsXformGround worked out
+	info.m_totalPitch = m_locoInfo->m_pitch + m_locoInfo->m_accelerationPitch + m_locoInfo->m_groundLeanPitch;
+	info.m_totalRoll = m_locoInfo->m_roll + m_locoInfo->m_accelerationRoll + m_locoInfo->m_groundLeanRoll;
+
+	// limit recoil pitch and roll
+
+	if (m_locoInfo->m_accelerationPitch > DECEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationPitch = DECEL_PITCH_LIMIT;
+	else if (m_locoInfo->m_accelerationPitch < -ACCEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationPitch = -ACCEL_PITCH_LIMIT;
+
+	if (m_locoInfo->m_accelerationRoll > DECEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationRoll = DECEL_PITCH_LIMIT;
+	else if (m_locoInfo->m_accelerationRoll < -ACCEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationRoll = -ACCEL_PITCH_LIMIT;
+
+	info.m_totalZ = 0;
+
+	// Calculate suspension info.
+	Real length = obj->getGeometryInfo().getMajorRadius();
+	Real width = obj->getGeometryInfo().getMinorRadius();
+	Real pitchHeight = length*Sin(info.m_totalPitch-groundPitch);
+	Real rollHeight = width*Sin(info.m_totalRoll-groundRoll);
+	if (DO_WHEELS)
+	{
+		// calculate each wheel position
+		m_locoInfo->m_wheelInfo.m_framesAirborne = m_locoInfo->m_wheelInfo.m_framesAirborneCounter;
+		m_locoInfo->m_wheelInfo.m_framesAirborneCounter = 0;
+		TWheelInfo newInfo = m_locoInfo->m_wheelInfo;
+		PhysicsTurningType rotation = physics->getTurning();
+		if (rotation == TURN_NEGATIVE) {
+			newInfo.m_wheelAngle = -WHEEL_ANGLE;
+		} else if (rotation == TURN_POSITIVE) {
+			newInfo.m_wheelAngle = WHEEL_ANGLE;
+		}	else {
+			newInfo.m_wheelAngle = 0;
+		}
+		if (physics->getForwardSpeed2D() < 0.0f) {
+			// if we're moving backwards, the wheels rotate in the opposite direction.
+			newInfo.m_wheelAngle = -newInfo.m_wheelAngle;
+		}
+
+		//
+		///@todo Steven/John ... please review this and make sure it makes sense (CBD)
+		// we're going to add the angle to the current wheel rotation ... but we're going to
+		// divide that number to add small angles.  This allows for "smoother" wheel turning
+		// transitions ... and when the AI has things move in a straight line, since it's
+		// constantly telling the object to go left, go straight, go right, go straight,
+		// etc, this smaller angle we'll be adding covers the constant wheel shifting
+		// left and right when moving in a relatively straight line
+		//
+		#define WHEEL_SMOOTHNESS 10.0f  // higher numbers add smaller angles, make it more "smooth"
+		m_locoInfo->m_wheelInfo.m_wheelAngle += (newInfo.m_wheelAngle - m_locoInfo->m_wheelInfo.m_wheelAngle)/WHEEL_SMOOTHNESS;
+
+		const Real SPRING_FACTOR = 0.9f;
+		if (pitchHeight<0) {	// Front raising up
+			newInfo.m_frontLeftHeightOffset = SPRING_FACTOR*(pitchHeight/3+pitchHeight/2);
+			newInfo.m_frontRightHeightOffset = SPRING_FACTOR*(pitchHeight/3+pitchHeight/2);
+			newInfo.m_rearLeftHeightOffset = -pitchHeight/2 + pitchHeight/4;
+			newInfo.m_rearRightHeightOffset = -pitchHeight/2 + pitchHeight/4;
+		}	else {	// Back rasing up.
+			newInfo.m_frontLeftHeightOffset = (-pitchHeight/4+pitchHeight/2);
+			newInfo.m_frontRightHeightOffset = (-pitchHeight/4+pitchHeight/2);
+			newInfo.m_rearLeftHeightOffset = SPRING_FACTOR*(-pitchHeight/2 + -pitchHeight/3);
+			newInfo.m_rearRightHeightOffset = SPRING_FACTOR*(-pitchHeight/2 + -pitchHeight/3);
+		}
+		if (rollHeight>0) {	// Right raising up
+			newInfo.m_frontRightHeightOffset += -SPRING_FACTOR*(rollHeight/3+rollHeight/2);
+			newInfo.m_rearRightHeightOffset += -SPRING_FACTOR*(rollHeight/3+rollHeight/2);
+			newInfo.m_rearLeftHeightOffset += rollHeight/2 - rollHeight/4;
+			newInfo.m_frontLeftHeightOffset += rollHeight/2 - rollHeight/4;
+		}	else {	// Left rasing up.
+			newInfo.m_frontRightHeightOffset += -rollHeight/2 + rollHeight/4;
+			newInfo.m_rearRightHeightOffset += -rollHeight/2 + rollHeight/4;
+			newInfo.m_rearLeftHeightOffset += SPRING_FACTOR*(rollHeight/3+rollHeight/2);
+			newInfo.m_frontLeftHeightOffset += SPRING_FACTOR*(rollHeight/3+rollHeight/2);
+		}
+		if (newInfo.m_frontLeftHeightOffset < m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset) {
+			// If it's going down, dampen the movement a bit
+			m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset += (newInfo.m_frontLeftHeightOffset - m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset)/2.0f;
+		}	else {
+			m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset = newInfo.m_frontLeftHeightOffset;
+		}
+		if (newInfo.m_frontRightHeightOffset < m_locoInfo->m_wheelInfo.m_frontRightHeightOffset) {
+			// If it's going down, dampen the movement a bit
+			m_locoInfo->m_wheelInfo.m_frontRightHeightOffset += (newInfo.m_frontRightHeightOffset - m_locoInfo->m_wheelInfo.m_frontRightHeightOffset)/2.0f;
+		}	else {
+			m_locoInfo->m_wheelInfo.m_frontRightHeightOffset = newInfo.m_frontRightHeightOffset;
+		}
+		if (newInfo.m_rearLeftHeightOffset < m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset) {
+			// If it's going down, dampen the movement a bit
+			m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset += (newInfo.m_rearLeftHeightOffset - m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset)/2.0f;
+		}	else {
+			m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset = newInfo.m_rearLeftHeightOffset;
+		}
+		if (newInfo.m_rearRightHeightOffset < m_locoInfo->m_wheelInfo.m_rearRightHeightOffset) {
+			// If it's going down, dampen the movement a bit
+			m_locoInfo->m_wheelInfo.m_rearRightHeightOffset += (newInfo.m_rearRightHeightOffset - m_locoInfo->m_wheelInfo.m_rearRightHeightOffset)/2.0f;
+		}	else {
+			m_locoInfo->m_wheelInfo.m_rearRightHeightOffset = newInfo.m_rearRightHeightOffset;
+		}
+		//m_locoInfo->m_wheelInfo = newInfo;
+		if (m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset<MAX_SUSPENSION_EXTENSION) {
+			m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset=MAX_SUSPENSION_EXTENSION;
+		}
+		if (m_locoInfo->m_wheelInfo.m_frontRightHeightOffset<MAX_SUSPENSION_EXTENSION) {
+			m_locoInfo->m_wheelInfo.m_frontRightHeightOffset=MAX_SUSPENSION_EXTENSION;
+		}
+		if (m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset<MAX_SUSPENSION_EXTENSION) {
+			m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset=MAX_SUSPENSION_EXTENSION;
+		}
+		if (m_locoInfo->m_wheelInfo.m_rearRightHeightOffset<MAX_SUSPENSION_EXTENSION) {
+			m_locoInfo->m_wheelInfo.m_rearRightHeightOffset=MAX_SUSPENSION_EXTENSION;
+		}
+/*
+		if (m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset>MAX_SUSPENSION_COMPRESSION) {
+			m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset=MAX_SUSPENSION_COMPRESSION;
+		}
+		if (m_locoInfo->m_wheelInfo.m_frontRightHeightOffset>MAX_SUSPENSION_COMPRESSION) {
+			m_locoInfo->m_wheelInfo.m_frontRightHeightOffset=MAX_SUSPENSION_COMPRESSION;
+		}
+		if (m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset>MAX_SUSPENSION_COMPRESSION) {
+			m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset=MAX_SUSPENSION_COMPRESSION;
+		}
+		if (m_locoInfo->m_wheelInfo.m_rearRightHeightOffset>MAX_SUSPENSION_COMPRESSION) {
+			m_locoInfo->m_wheelInfo.m_rearRightHeightOffset=MAX_SUSPENSION_COMPRESSION;
+		}	
+		*/
+	}
+	// If we are > 22 degrees, need to raise height;
+	Real divisor = 4;
+	Real pitch = fabs(info.m_totalPitch-groundPitch);
+
+	if (pitch>PI/8) {
+		divisor = ((4*PI/8) + (1*(pitch-PI/8)))/pitch;
+	}
+	info.m_totalZ += fabs(pitchHeight)/divisor;
+	info.m_totalZ += fabs(rollHeight)/divisor;
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+void Drawable::calcPhysicsXformMotorcycle( const Locomotor *locomotor, PhysicsXformInfo& info )
+{
+	if (m_locoInfo == NULL)
+		m_locoInfo = newInstance(DrawableLocoInfo);
+
+	const Real ACCEL_PITCH_LIMIT = locomotor->getAccelPitchLimit();
+	const Real DECEL_PITCH_LIMIT = locomotor->getDecelPitchLimit();
+	const Real BOUNCE_ANGLE_KICK = locomotor->getBounceKick() * LOGICFRAMES_PER_RETAIL_FRAME;	// parsed per logic frame, stepped per retail frame
+	const Real PITCH_STIFFNESS = locomotor->getPitchStiffness();
+	const Real ROLL_STIFFNESS =  locomotor->getRollStiffness();
+	const Real PITCH_DAMPING = locomotor->getPitchDamping();
+	const Real ROLL_DAMPING = locomotor->getRollDamping();
+	const Real UNIFORM_AXIAL_DAMPING = locomotor->getUniformAxialDamping();
+
+	const Real MAX_SUSPENSION_EXTENSION = locomotor->getMaxWheelExtension(); //-2.3f;
+//	const Real MAX_SUSPENSION_COMPRESSION = locomotor->getMaxWheelCompression(); //1.4f;
+	const Real WHEEL_ANGLE = locomotor->getWheelTurnAngle(); //PI/8;
+
+	const Bool DO_WHEELS = locomotor->hasSuspension();
+
+	// get object from logic
+	Object *obj = getObject();
+	if (obj == NULL)
+		return;
+
+	AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	if (ai == NULL)
+		return ;
+
+	// get object physics state
+	PhysicsBehavior *physics = obj->getPhysics();
+	if (physics == NULL)
+		return ;
+
+	// get our position and direction vector
+	const Coord3D *pos = getPosition();
+	const Coord3D *dir = getUnitDirectionVector2D();
+
+	// compute perpendicular (2d)
+	Coord3D perp;
+	perp.x = -dir->y;
+	perp.y = dir->x;
+	perp.z = 0.0f;
+
+	// find pitch and roll of terrain under chassis
+	Coord3D normal;
+	Real hheight = TheTerrainLogic->getLayerHeight( pos->x, pos->y, obj->getLayer(), &normal );
+
+	Real dot = normal.x * dir->x + normal.y * dir->y;
+	Real groundPitch = dot * (PI/2.0f);
+
+	dot = normal.x * perp.x + normal.y * perp.y;
+	Real groundRoll = dot * (PI/2.0f);
+
+	Bool airborne = obj->isSignificantlyAboveTerrain();
+
+	if (airborne) 
+	{
+		if (DO_WHEELS) 
+		{	
+			// Wheels extend when airborne.
+			m_locoInfo->m_wheelInfo.m_framesAirborne = 0;
+			m_locoInfo->m_wheelInfo.m_framesAirborneCounter++;
+			if (pos->z - hheight > -MAX_SUSPENSION_EXTENSION) 
+			{
+				m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset += (MAX_SUSPENSION_EXTENSION - m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset)/2.0f;
+				m_locoInfo->m_wheelInfo.m_rearRightHeightOffset = m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset;
+			} 
+			else 
+			{
+				m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset += (0 - m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset)/2.0f;
+				m_locoInfo->m_wheelInfo.m_rearRightHeightOffset = m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset;
+			}
+		}
+		// Calculate suspension info.
+		Real length = obj->getGeometryInfo().getMajorRadius();
+		//Real width = obj->getGeometryInfo().getMinorRadius();
+		Real pitchHeight = length*Sin(m_locoInfo->m_pitch + m_locoInfo->m_accelerationPitch + m_locoInfo->m_groundLeanPitch - groundPitch);
+		//Real rollHeight = width*Sin(m_locoInfo->m_roll + m_locoInfo->m_accelerationRoll - groundRoll);
+		info.m_totalZ = fabs(pitchHeight)/4;// + fabs(rollHeight)/4;
+		//return; // maintain the same orientation while we fly through the air.
+	}
+
+	// Bouncy.
+	Real curSpeed = physics->getVelocityMagnitude();
+#if 1 
+	Real maxSpeed = ai->getCurLocomotorSpeed();
+	if (!airborne && curSpeed > maxSpeed/10) 
+	{
+		Real factor = curSpeed/maxSpeed;
+		if (fabs(m_locoInfo->m_pitchRate)<factor*BOUNCE_ANGLE_KICK/4 && fabs(m_locoInfo->m_rollRate)<factor*BOUNCE_ANGLE_KICK/8) 
+		{
+			// do the bouncy. 
+			switch (GameClientRandomValue(0,3)) 
+			{
+			case 0:
+				m_locoInfo->m_pitchRate -= BOUNCE_ANGLE_KICK*factor;
+				m_locoInfo->m_rollRate -= BOUNCE_ANGLE_KICK*factor/2;
+				break;
+			case 1:
+				m_locoInfo->m_pitchRate += BOUNCE_ANGLE_KICK*factor;
+				m_locoInfo->m_rollRate -= BOUNCE_ANGLE_KICK*factor/2;
+				break;
+			case 2:
+				m_locoInfo->m_pitchRate -= BOUNCE_ANGLE_KICK*factor;
+				m_locoInfo->m_rollRate += BOUNCE_ANGLE_KICK*factor/2;
+				break;
+			case 3:
+				m_locoInfo->m_pitchRate += BOUNCE_ANGLE_KICK*factor;
+				m_locoInfo->m_rollRate += BOUNCE_ANGLE_KICK*factor/2;
+				break;
+			}
+		}
+	}
+
+#endif
+
+	// process chassis suspension dynamics - damp back towards groundPitch
+
+	// the ground can only push back if we're touching it
+	if (!airborne)
+	{
+		m_locoInfo->m_pitchRate += ((-PITCH_STIFFNESS * (m_locoInfo->m_pitch - groundPitch)) + (-PITCH_DAMPING * m_locoInfo->m_pitchRate));		// spring/damper
+		m_locoInfo->m_rollRate += ((-ROLL_STIFFNESS * (m_locoInfo->m_roll - groundRoll)) + (-ROLL_DAMPING * m_locoInfo->m_rollRate));		// spring/damper
+	}
+	else
+	{
+		//Autolevel
+		m_locoInfo->m_pitchRate += ( (-PITCH_STIFFNESS * m_locoInfo->m_pitch) + (-PITCH_DAMPING * m_locoInfo->m_pitchRate) );		// spring/damper
+		m_locoInfo->m_rollRate += ( (-ROLL_STIFFNESS * m_locoInfo->m_roll) + (-ROLL_DAMPING * m_locoInfo->m_rollRate) );		// spring/damper
+	}
+
+	m_locoInfo->m_pitch += m_locoInfo->m_pitchRate * UNIFORM_AXIAL_DAMPING;
+	m_locoInfo->m_roll += m_locoInfo->m_rollRate   * UNIFORM_AXIAL_DAMPING;
+
+	// process chassis acceleration dynamics - damp back towards zero
+
+	m_locoInfo->m_accelerationPitchRate += ((-PITCH_STIFFNESS * (m_locoInfo->m_accelerationPitch)) + (-PITCH_DAMPING * m_locoInfo->m_accelerationPitchRate));		// spring/damper
+	m_locoInfo->m_accelerationPitch += m_locoInfo->m_accelerationPitchRate;
+
+	m_locoInfo->m_accelerationRollRate += ((-ROLL_STIFFNESS * m_locoInfo->m_accelerationRoll) + (-ROLL_DAMPING * m_locoInfo->m_accelerationRollRate));		// spring/damper
+	m_locoInfo->m_accelerationRoll += m_locoInfo->m_accelerationRollRate;
+
+	// compute total pitch and roll: terrain, weapon recoil, and the lean calcPhysicsXformGround worked out
+	info.m_totalPitch = m_locoInfo->m_pitch + m_locoInfo->m_accelerationPitch + m_locoInfo->m_groundLeanPitch;
+
+
+  // THis logic had recently been added to Drawable::applyPhysicsXform(), which was naughty, since it clamped the roll in every drawable in the game
+  // Now only motorcycles enjoy this constraint
+  Real unclampedRoll = m_locoInfo->m_roll + m_locoInfo->m_accelerationRoll;
+  info.m_totalRoll = (unclampedRoll > 0.5f && unclampedRoll < -0.5f ? unclampedRoll : 0.0f);
+
+	// limit acceleration pitch and roll
+
+	if (m_locoInfo->m_accelerationPitch > DECEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationPitch = DECEL_PITCH_LIMIT;
+	else if (m_locoInfo->m_accelerationPitch < -ACCEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationPitch = -ACCEL_PITCH_LIMIT;
+
+	if (m_locoInfo->m_accelerationRoll > DECEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationRoll = DECEL_PITCH_LIMIT;
+	else if (m_locoInfo->m_accelerationRoll < -ACCEL_PITCH_LIMIT)
+		m_locoInfo->m_accelerationRoll = -ACCEL_PITCH_LIMIT;
+
+	info.m_totalZ = 0;
+
+	// Calculate suspension info.
+	Real length = obj->getGeometryInfo().getMajorRadius();
+	Real width = obj->getGeometryInfo().getMinorRadius();
+	Real pitchHeight = length*Sin(info.m_totalPitch-groundPitch);
+	Real rollHeight = width*Sin(info.m_totalRoll-groundRoll);
+	if (DO_WHEELS) 
+	{	
+		// calculate each wheel position
+		m_locoInfo->m_wheelInfo.m_framesAirborne = m_locoInfo->m_wheelInfo.m_framesAirborneCounter;
+		m_locoInfo->m_wheelInfo.m_framesAirborneCounter = 0;
+		TWheelInfo newInfo = m_locoInfo->m_wheelInfo;
+		PhysicsTurningType rotation = physics->getTurning();
+		if (rotation == TURN_NEGATIVE) {
+			newInfo.m_wheelAngle = -WHEEL_ANGLE;
+		} else if (rotation == TURN_POSITIVE) {
+			newInfo.m_wheelAngle = WHEEL_ANGLE;
+		}	else {
+			newInfo.m_wheelAngle = 0;
+		}
+		if (physics->getForwardSpeed2D() < 0.0f) {
+			// if we're moving backwards, the wheels rotate in the opposite direction.
+			newInfo.m_wheelAngle = -newInfo.m_wheelAngle;
+		}
+
+		//
+		///@todo Steven/John ... please review this and make sure it makes sense (CBD)
+		// we're going to add the angle to the current wheel rotation ... but we're going to 
+		// divide that number to add small angles.  This allows for "smoother" wheel turning
+		// transitions ... and when the AI has things move in a straight line, since it's
+		// constantly telling the object to go left, go straight, go right, go straight,
+		// etc, this smaller angle we'll be adding covers the constant wheel shifting 
+		// left and right when moving in a relatively straight line
+		//
+		#define WHEEL_SMOOTHNESS 10.0f  // higher numbers add smaller angles, make it more "smooth"
+		m_locoInfo->m_wheelInfo.m_wheelAngle += (newInfo.m_wheelAngle - m_locoInfo->m_wheelInfo.m_wheelAngle)/WHEEL_SMOOTHNESS;
+
+		const Real SPRING_FACTOR = 0.9f;
+		if (pitchHeight<0) 
+		{	
+			// Front raising up
+			newInfo.m_frontLeftHeightOffset		= SPRING_FACTOR*(pitchHeight/3+pitchHeight/2);
+			newInfo.m_rearLeftHeightOffset		= -pitchHeight/2 + pitchHeight/4;
+			newInfo.m_frontRightHeightOffset	= newInfo.m_frontLeftHeightOffset;
+			newInfo.m_rearRightHeightOffset		= newInfo.m_rearLeftHeightOffset;
+		}	
+		else 
+		{	
+			// Back raising up.
+			newInfo.m_frontLeftHeightOffset		= (-pitchHeight/4+pitchHeight/2);
+			newInfo.m_rearLeftHeightOffset		= SPRING_FACTOR*(-pitchHeight/2 + -pitchHeight/3);
+			newInfo.m_frontRightHeightOffset	= newInfo.m_frontLeftHeightOffset;
+			newInfo.m_rearRightHeightOffset		= newInfo.m_rearLeftHeightOffset;
+		}
+		/*
+		if (rollHeight>0) {	// Right raising up
+			newInfo.m_frontRightHeightOffset += -SPRING_FACTOR*(rollHeight/3+rollHeight/2);
+			newInfo.m_rearLeftHeightOffset += rollHeight/2 - rollHeight/4;
+		}	else {	// Left raising up.
+			newInfo.m_frontRightHeightOffset += -rollHeight/2 + rollHeight/4;
+			newInfo.m_rearLeftHeightOffset += SPRING_FACTOR*(rollHeight/3+rollHeight/2);
+		}
+		*/
+		if (newInfo.m_frontLeftHeightOffset < m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset) 
+		{
+			// If it's going down, dampen the movement a bit
+			m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset += (newInfo.m_frontLeftHeightOffset - m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset)/2.0f;
+			m_locoInfo->m_wheelInfo.m_frontRightHeightOffset = m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset;
+		}	
+		else 
+		{
+			m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset = newInfo.m_frontLeftHeightOffset;
+			m_locoInfo->m_wheelInfo.m_frontRightHeightOffset = newInfo.m_frontLeftHeightOffset;
+		}
+		if (newInfo.m_rearLeftHeightOffset < m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset) 
+		{
+			// If it's going down, dampen the movement a bit
+			m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset += (newInfo.m_rearLeftHeightOffset - m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset)/2.0f;
+			m_locoInfo->m_wheelInfo.m_rearRightHeightOffset = m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset;
+		}	
+		else 
+		{
+			m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset = newInfo.m_rearLeftHeightOffset;
+			m_locoInfo->m_wheelInfo.m_rearRightHeightOffset = newInfo.m_rearLeftHeightOffset;
+		}
+		//m_locoInfo->m_wheelInfo = newInfo;
+		if (m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset<MAX_SUSPENSION_EXTENSION) 
+		{
+			m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset = MAX_SUSPENSION_EXTENSION;
+			m_locoInfo->m_wheelInfo.m_frontRightHeightOffset = MAX_SUSPENSION_EXTENSION;
+		}
+		if (m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset<MAX_SUSPENSION_EXTENSION) 
+		{
+			m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset = MAX_SUSPENSION_EXTENSION;
+			m_locoInfo->m_wheelInfo.m_rearRightHeightOffset = MAX_SUSPENSION_EXTENSION;
+		}
+	}
+	// If we are > 22 degrees, need to raise height;
+	Real divisor = 4;
+	Real pitch = fabs(info.m_totalPitch-groundPitch);
+
+	if (pitch>PI/8) {
+		divisor = ((4*PI/8) + (1*(pitch-PI/8)))/pitch;
+	} 
+	
+	if( !airborne )
+	{
+		info.m_totalZ += fabs(pitchHeight)/divisor;
+		info.m_totalZ += fabs(rollHeight)/divisor;
+	}
+}
+
+
+//-------------------------------------------------------------------------------------------------
+/** decodes the current previous damage type and sets the ambient sound set from that. */
+//-------------------------------------------------------------------------------------------------
+const AudioEventRTS& Drawable::getAmbientSoundByDamage(BodyDamageType dt)
+{
+	switch (dt)
+	{
+		case BODY_DAMAGED:
+			return *getTemplate()->getSoundAmbientDamaged();
+		case BODY_REALLYDAMAGED:
+			return *getTemplate()->getSoundAmbientReallyDamaged();
+		case BODY_RUBBLE:
+			return *getTemplate()->getSoundAmbientRubble();
+		case BODY_PRISTINE:
+		default:
+			return *getTemplate()->getSoundAmbient();
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+#ifdef _DEBUG
+void Drawable::validatePos() const
+{
+	const Coord3D* ourPos = getPosition();
+	if (_isnan(ourPos->x) || _isnan(ourPos->y) || _isnan(ourPos->z))
+	{
+		DEBUG_CRASH(("Drawable/Object position NAN! '%s'\n", getTemplate()->getName().str()));
+	}
+	if (getObject())
+	{
+		const Coord3D* objPos = getObject()->getPosition();
+		if (ourPos->x != objPos->x || ourPos->y != objPos->y || ourPos->z != objPos->z)
+		{
+			DEBUG_CRASH(("Drawable/Object position mismatch! '%s'\n", getTemplate()->getName().str()));
+		}
+	}
+}
+#endif
+
+
+//=============================================================================
+void Drawable::setStealthLook(StealthLookType look)
+{
+	if (look != m_stealthLook)
+	{
+		const StealthLookType previous = m_stealthLook;
+		const Bool wasHidden = m_hiddenByStealth;
+
+		m_stealthOpacity = 1.0f;	//assume not transparent
+		switch (look)
+		{
+			case STEALTHLOOK_NONE:
+				m_hiddenByStealth = false;
+				m_secondMaterialPassOpacity = 0.0f;
+				break;
+
+			case STEALTHLOOK_VISIBLE_FRIENDLY:
+			case STEALTHLOOK_VISIBLE_FRIENDLY_DETECTED:
+			{
+				Real opacity = TheGlobalData->m_stealthFriendlyOpacity;
+
+				Object *obj = getObject();
+				if( obj )
+				{
+					//Try to get the stealthupdate module and see if the opacity value is overriden.
+          StealthUpdate *stealth = obj->getStealth();
+					if( stealth )
+					{
+						if( stealth->isDisguised() )
+						{
+							//Disguised objects drive the opacity level directly, hence the break.
+							m_hiddenByStealth = false;
+							break;
+						}
+						else
+						{
+							Real friendlyOpacity = stealth->getFriendlyOpacity();
+							if( friendlyOpacity != INVALID_OPACITY )
+							{
+								opacity = friendlyOpacity;
+							}
+						}
+					}
+				}
+
+				m_stealthOpacity = opacity;	// make as partially transparent as this while pulsing
+				m_hiddenByStealth = false;
+
+			/** @todo srj -- evil hack here... this whole heat-vision thing is fucked.
+				don't want it on mines but no good way to do that. hack for now. */
+				if (look == STEALTHLOOK_VISIBLE_FRIENDLY_DETECTED && !isKindOf(KINDOF_MINE))
+					m_secondMaterialPassOpacity = 1.0f;
+				else
+					m_secondMaterialPassOpacity = 0.0f;
+
+				break;
+			}
+			
+			case STEALTHLOOK_DISGUISED_ENEMY:
+				m_hiddenByStealth = false;
+				m_secondMaterialPassOpacity = 0.0f;
+				break;
+
+			// this is for the non-controllingplayer that can see me anyway
+			case STEALTHLOOK_VISIBLE_DETECTED:
+				m_hiddenByStealth = false;// let the scene omit the first drawing pass
+				/** @todo srj -- evil hack here... this whole heat-vision thing is fucked.
+					don't want it on mines but no good way to do that. hack for now. */
+				if (isKindOf(KINDOF_MINE))
+					m_secondMaterialPassOpacity = 0.0f;
+				else
+					m_secondMaterialPassOpacity = 1.0f;// Draw() will fade until it is set to 1 again
+				break;
+
+			case STEALTHLOOK_INVISIBLE:
+				m_secondMaterialPassOpacity = 0.0f;
+				// snap hide when the unit has never been drawn stealthed: an enemy spawning cloaked
+				// must not flash a frame of its body.  Classic and Direct3D 9 have no cloak shader
+				// to fade with, so they hide at once as they did in 2003.  The D3D11 path keeps
+				// drawing while draw() eases the fade out.
+				{
+					const Bool shaderFade = TheGlobalData
+						&& TheGlobalData->m_direct3D11
+						&& !TheGlobalData->m_classicGraphics;
+					if( ( previous == STEALTHLOOK_NONE && m_stealthFade <= 0.0f ) || !shaderFade )
+					{
+						m_hiddenByStealth = true;
+						m_stealthDrawnLook = STEALTHLOOK_INVISIBLE;
+						m_stealthFade = 0.0f;
+					}
+					else
+						m_hiddenByStealth = false;
+				}
+				break;
+		}
+
+		m_stealthLook = look;
+
+		if( look != STEALTHLOOK_INVISIBLE && look != STEALTHLOOK_NONE && look != STEALTHLOOK_DISGUISED_ENEMY )
+		{
+			m_stealthDrawnLook = look;
+			if( wasHidden )
+				m_stealthFade = 0.0f;
+		}
+
+		updateHiddenStatus();
+	}
+}
+
+
+//-------------------------------------------------------------------------------------------------
+/** default draw is to just call the database defined draw */
+//-------------------------------------------------------------------------------------------------
+void Drawable::draw( View *view )
+{
+	//
+	// The fade below is a fixed fraction per rendered frame, and the renderer is not capped any
+	// more: at a few hundred fps the stealth shimmer is gone the instant it appears. The fade is
+	// exponential, so the frame-rate-independent form is the scalar raised to the number of 30fps
+	// steps that actually elapsed. Worked out once per client frame - draw() runs once per
+	// drawable, and every drawable in a frame must fade by the same amount.
+	//
+	static UnsignedInt fadeFrame = ~0;
+	static UnsignedInt fadeLastMs = 0;
+	static Real fadeScalar = MATERIAL_PASS_OPACITY_FADE_SCALAR;
+
+	if ( fadeFrame != TheGameClient->getFrame() )
+	{
+		fadeFrame = TheGameClient->getFrame();
+
+		const UnsignedInt nowMs = Clock_Milliseconds();
+		if ( fadeLastMs == 0 )
+			fadeLastMs = nowMs;
+
+		Real steps = (Real)( nowMs - fadeLastMs ) * 0.001f * 30.0f;
+		fadeLastMs = nowMs;
+		if ( steps > 4.0f )
+			steps = 4.0f;		// a level load must not fade everything out at once
+
+		fadeScalar = powf( MATERIAL_PASS_OPACITY_FADE_SCALAR, steps );
+	}
+
+  if ( testTintStatus( TINT_STATUS_FRENZY ) == FALSE )
+  {
+    if ( getObject() && getObject()->isEffectivelyDead() )
+		  m_secondMaterialPassOpacity = 0.0f;//dead folks don't stealth anyway
+	  else if ( m_secondMaterialPassOpacity > VERY_TRANSPARENT_MATERIAL_PASS_OPACITY )// keep fading any add'l material unless something has set it to zero
+		  m_secondMaterialPassOpacity *= fadeScalar;
+	  else
+		  m_secondMaterialPassOpacity = 0.0f;
+  }
+
+	{
+		const Bool wantEffect = ( m_stealthLook == STEALTHLOOK_VISIBLE_FRIENDLY
+			|| m_stealthLook == STEALTHLOOK_VISIBLE_FRIENDLY_DETECTED
+			|| m_stealthLook == STEALTHLOOK_VISIBLE_DETECTED );
+		if( wantEffect )
+		{
+			m_stealthDrawnLook = m_stealthLook;
+			m_stealthFade = 1.0f - ( 1.0f - m_stealthFade ) * fadeScalar;
+			if( m_stealthFade > 0.999f )
+				m_stealthFade = 1.0f;
+		}
+		else
+		{
+			m_stealthFade *= fadeScalar;
+			if( m_stealthFade <= VERY_TRANSPARENT_MATERIAL_PASS_OPACITY )
+			{
+				m_stealthFade = 0.0f;
+				m_stealthDrawnLook = m_stealthLook;
+				if( m_stealthLook == STEALTHLOOK_INVISIBLE && !m_hiddenByStealth )
+				{
+					m_hiddenByStealth = true;
+					updateHiddenStatus();
+				}
+			}
+		}
+	}
+
+	if (m_hidden || m_hiddenByStealth || getFullyObscuredByShroud())
+		return;	// my, that was easy
+
+	if ( getObject() && !getObject()->isEffectivelyDead() )
+		setShadowsEnabled( m_stealthLook != STEALTHLOOK_VISIBLE_DETECTED );
+
+
+
+#ifdef _DEBUG
+	validatePos();
+#endif
+
+	// call the database defined draw action method
+	Matrix3D transformMtx = *getTransformMatrix();
+	if (!isInstanceIdentity())
+	{
+#ifdef ALLOW_TEMPORARIES
+		transformMtx = transformMtx * (*getInstanceMatrix());
+#else
+		transformMtx.postMul(*getInstanceMatrix());
+#endif
+	}
+
+	applyPhysicsXform(&transformMtx);
+
+	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		(*dm)->doDrawModule(&transformMtx);
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Compute the health bar region based on the health of the object and the
+	* zoom level of the camera */
+// ------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+/** How far above `getHealthBoxPosition` a bar has to sit to clear the object's own art.
+	*
+	* A building's geometry box is its walls: the pitched roof of a civilian house, the mast on a
+	* radar dome and the tower on a barracks are not in the logical height at all, so the bar landed
+	* on the roof of its own building - and, side on, inside the one in front of it. Lift a structure
+	* by a share of its own height rather than by a fixed amount, so it scales from a low bunker to a
+	* four storey apartment block and a flat faction building barely moves. Everything that can move
+	* keeps its bar where it was: a unit's geometry is its model. */
+//-------------------------------------------------------------------------------------------------
+static Real healthBarArtLift( const Object *obj )
+{
+	if( obj == NULL || !obj->isKindOf( KINDOF_STRUCTURE ) )
+		return 0.0f;
+
+	return obj->getGeometryInfo().getMaxHeightAbovePosition() * 0.35f;
+}
+
+//-------------------------------------------------------------------------------------------------
+static Bool computeHealthRegion( const Drawable *draw, IRegion2D& region )
+{
+
+	// sanity
+	if( draw == NULL )
+		return FALSE;
+
+	const Object *obj = draw->getObject();
+	if( obj == NULL )
+		return FALSE;
+
+	Coord3D p;
+	obj->getHealthBoxPosition(p);
+	p.z += healthBarArtLift( obj );
+	ICoord2D screenCenter;
+	if( !TheTacticalView->worldToScreen( &p, &screenCenter ) )
+		return FALSE;
+
+	Real healthBoxWidth, healthBoxHeight;
+	if (!obj->getHealthBoxDimensions(healthBoxHeight, healthBoxWidth))
+	{
+		// IGNORED_IN_GUI has no box, and the planes a general's power sends over are all IGNORED_IN_GUI;
+		// they wear a bar anyway (Drawable_kindShowsHealthBar), sized as any other unit's would be
+		if( !obj->isKindOf( KINDOF_AIRCRAFT ) )
+			return FALSE;
+		const GeometryInfo& geom = obj->getGeometryInfo();
+		healthBoxHeight = 3.0f;
+		healthBoxWidth = 2.0f * MAX( 20.0f, MIN( 150.0f, geom.getMajorRadius() + geom.getMinorRadius() ) );
+	}
+
+	// scale the health bars according to the zoom
+	Real zoom = TheTacticalView->getZoom();
+	//Real widthScale = 1.3f / zoom;
+	Real widthScale = 1.0f / zoom;
+	//Real heightScale = 0.8f / zoom; 
+	Real heightScale = 1.0f; 
+
+	healthBoxWidth *= widthScale;
+	healthBoxHeight *= heightScale;
+
+	//
+	// the width above is world units treated as pixels, and the height below is a flat three of
+	// them, so both stayed the size they were in 2003 while the unit they sit over grew with the
+	// screen: on a 2560 wide screen a tank was three times its 800x600 size wearing the same
+	// hairline bar.  Both follow the screen now.
+	//
+	const Real uiScale = TheUIScale();
+	healthBoxWidth *= uiScale;
+
+	// do this so health bar doesn't get too skinny or fat after scaling
+	//healthBoxHeight = max(3.0f, healthBoxHeight);
+	// two thirds of the thickness it had: at full height a screen of bars drew the eye away from the
+	// units under them.  drawHealthBar still floors it at three pixels, a one pixel fill inside its
+	// outline, and gives the lost health a dark slot so a thin bar still reads.
+	healthBoxHeight = 2.0f * uiScale;
+
+	// figure out the final region for the health box
+	region.lo.x = screenCenter.x - healthBoxWidth * 0.45f;
+	region.lo.y = screenCenter.y - healthBoxHeight * 0.5f;
+	region.hi.x = region.lo.x + healthBoxWidth;
+	region.hi.y = region.lo.y + healthBoxHeight;
+
+	return TRUE;
+
+}  // end computeHealthRegion
+
+//-------------------------------------------------------------------------------------------------
+/** Whether this object's private business - what it is building, what is charging up on it - is
+	* ours to see. Yours always is. An observer's is everybody's: watching a match is exactly the
+	* case where "who is building what" is the whole point, and a spectator commands nothing, so
+	* there is nothing to give away. Same test the control bar uses to switch to its observer
+	* scheme, so a defeated player watching the rest of the game out gets it too. */
+//-------------------------------------------------------------------------------------------------
+static Bool showsOwnerDetail( const Object *obj )
+{
+	if( obj->isLocallyControlled() )
+		return TRUE;
+
+	const Player *local = ThePlayerList ? ThePlayerList->getLocalPlayer() : NULL;
+	return local != NULL && !local->isPlayerActive();
+
+}  // end showsOwnerDetail
+
+//-------------------------------------------------------------------------------------------------
+static NameKeyType stickyBombUpdateKey( void )
+{
+	static const NameKeyType key = NAMEKEY( "StickyBombUpdate" );
+	return key;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Whether the object carries a module the icon pass asks for.  Each ask walked every module of
+	* every drawable in view on every pass, and the supply cash, the sticky bomb, the production bar
+	* and the charge bar asked for one each: most of what the post draw cost late in a match.  The
+	* object's modules are made with it, so one walk answers for its whole life. */
+//-------------------------------------------------------------------------------------------------
+Bool Drawable::hasIconModule( IconModule module )
+{
+	if( m_iconModules == 0 )
+	{
+		m_iconModules = ICON_MODULES_KNOWN;
+		for( BehaviorModule **m = getObject()->getBehaviorModules(); *m; ++m )
+		{
+			if( (*m)->getDockUpdateInterface() )
+				m_iconModules |= ICON_MODULE_DOCK;
+			if( (*m)->getModuleNameKey() == stickyBombUpdateKey() )
+				m_iconModules |= ICON_MODULE_STICKY_BOMB;
+			if( (*m)->getProductionUpdateInterface() )
+				m_iconModules |= ICON_MODULE_PRODUCTION;
+			if( (*m)->getSpecialPower() )
+				m_iconModules |= ICON_MODULE_SPECIAL_POWER;
+		}
+	}
+	return ( m_iconModules & module ) != 0;
+}
+
+
+// ------------------------------------------------------------------------------------------------
+
+Bool Drawable::drawsAnyUIText( void )
+{
+	// group numbers are always on (was: only when selected)
+	const Object *obj = getObject();
+	if ( !obj || !obj->isLocallyControlled() )  
+		return FALSE;
+
+	Player *owner = obj->getControllingPlayer();
+	Int groupNum = owner->getSquadNumberForObject(obj);
+
+	if (groupNum > NO_HOTKEY_SQUAD && groupNum < NUM_HOTKEY_SQUADS ) 
+		return TRUE;
+	else
+		m_groupNumber = NULL;
+		
+	if ( obj->getFormationID() != NO_FORMATION_ID )
+		return TRUE;
+
+	return FALSE;
+}
+
+
+// ------------------------------------------------------------------------------------------------
+/** A thin line from an aircraft in the air straight down to the ground under it, because a plane
+	* over a ridge and a plane over your base can sit on the same pixel.  drawablePostDraw has already
+	* turned away what the local player may not see. */
+// ------------------------------------------------------------------------------------------------
+void Drawable::drawAltitudeLine( void )
+{
+	if( !TheGlobalData->m_aircraftAltitudeLine )
+		return;
+
+	const Object *obj = getObject();
+	if( obj == NULL || obj->isEffectivelyDead() )
+		return;
+
+	// The shell map and a mission's cutscene have no interface up.  Asked of the script and not of
+	// getInputEnabled, which setGamePaused also turns off: a paused match keeps its lines.
+	if( TheGameLogic->isInShellGame() || TheScriptEngine->isInputHeldByScript() )
+		return;
+
+	// The height over terrain says nothing on a carrier's deck, which stands far above the sea bed.  The
+	// airborne flag does: a taxi locomotor has no AirborneTargetingHeight, so nothing parked ever sets
+	// it.  KINDOF_AIRCRAFT stays, because boats over deep water, drones, flares and missiles set it too.
+	if( !Drawable_kindWearsAltitudeLine( obj->getTemplate()->getKindOfMask() ) || !obj->isAirborneTarget() )
+		return;
+
+	// An enemy stealth plane cloaking again fades out over a moment on Direct3D 11 and is not hidden
+	// until it is gone. The line and its ring in the owner's colour would hang on at full strength
+	// and give away where it went, so they go the moment it starts to vanish.
+	if( m_stealthLook == STEALTHLOOK_INVISIBLE )
+		return;
+
+	Coord3D top = *obj->getPosition();
+	Coord3D bottom = top;
+	bottom.z = TheTerrainLogic->getLayerHeight( top.x, top.y, obj->getLayer() );
+	Real waterZ;
+	if( TheTerrainLogic->isUnderwater( top.x, top.y, &waterZ ) )
+		bottom.z = MAX( bottom.z, waterZ );		// the surface and not the sea bed; a bridge deck over it stays
+
+	ICoord2D topScreen, bottomScreen;
+	const Bool topOn = TheTacticalView->worldToScreen( &top, &topScreen );
+	const Bool bottomOn = TheTacticalView->worldToScreen( &bottom, &bottomScreen );
+	// ponytail: both ends off draws nothing, so a line taller than the screen goes at full zoom; sample along it if that shows
+	if( !topOn && !bottomOn )
+		return;
+
+	// An end off the screen has no position worth clipping: past the clip planes it projects to (0,0),
+	// and just in front of the near plane far enough to overflow ClipLine2D's Int products.  The frustum
+	// is convex and the line crosses its edge once, so halve the way there.
+	if( topOn != bottomOn )
+	{
+		Real insideZ = topOn ? top.z : bottom.z;
+		Real outsideZ = topOn ? bottom.z : top.z;
+		ICoord2D &edge = topOn ? bottomScreen : topScreen;
+		edge = topOn ? topScreen : bottomScreen;
+		for( Int i = 0; i < 10; ++i )
+		{
+			Coord3D middle = top;
+			middle.z = ( insideZ + outsideZ ) * 0.5f;
+			ICoord2D middleScreen;
+			if( TheTacticalView->worldToScreen( &middle, &middleScreen ) )
+			{
+				insideZ = middle.z;
+				edge = middleScreen;
+			}
+			else
+				outsideZ = middle.z;
+		}
+	}
+
+	//
+	// The line is overlay and the plane is scene, so a line drawn from the plane's pivot ran across its
+	// own fuselage. The pivot sits at the belly, and what lies over the line on the screen is the part
+	// of the hull nearer the camera. So the footprint, a circle the plane's length across at the
+	// pivot's height, is put on the screen and the line starts where it leaves that circle: under the
+	// nose of a plane flying at the camera, right at the belly of one flying across. The rotor is up
+	// in the air and never comes into it, which the bounding sphere used before did, leaving a
+	// Comanche's line hanging a rotor's length under the hull.
+	//
+	Real startX = topScreen.x, startY = topScreen.y;
+	const Real dx = bottomScreen.x - topScreen.x, dy = bottomScreen.y - topScreen.y;
+	const Real length = sqrtf( dx * dx + dy * dy );
+	Real lineLength = length;
+	if( topOn && length > 0.0f )
+	{
+		const GeometryInfo &geom = obj->getGeometryInfo();
+		const Real footprint = MAX( geom.getMajorRadius(), geom.getMinorRadius() ) * 0.85f;
+		Real trim = 0.0f;
+		const Int FOOTPRINT_POINTS = 12;
+		for( Int i = 0; i < FOOTPRINT_POINTS; ++i )
+		{
+			const Real angle = 2.0f * PI * i / FOOTPRINT_POINTS;
+			Coord3D p = top;
+			p.x += footprint * Cos( angle );
+			p.y += footprint * Sin( angle );
+			ICoord2D s;
+			if( !TheTacticalView->worldToScreen( &p, &s ) )
+				continue;		// at the screen's edge the points still on it stand in for the rest
+			const Real along = ( ( s.x - topScreen.x ) * dx + ( s.y - topScreen.y ) * dy ) / length;
+			trim = MAX( trim, along );
+		}
+		lineLength = length - trim;
+		startX = topScreen.x + dx * ( trim / length );
+		startY = topScreen.y + dy * ( trim / length );
+	}
+
+	// The owner's colour on the line, the ring and the disc inside it, so whose plane is over this
+	// spot reads from the ground as well as from the sky. Civilians and anything without a colour
+	// borrow the old white.
+	UnsignedByte ownerR = 255, ownerG = 255, ownerB = 255;
+	const Player *owner = obj->getControllingPlayer();
+	if( owner != NULL && owner->getPlayerColor() != 0 )
+	{
+		UnsignedByte a;
+		GameGetColorComponents( clientPlayerColor( owner ), &ownerR, &ownerG, &ownerB, &a );
+	}
+
+	//
+	// One pixel of the owner's colour inside three of near black, so it holds on snow and sand alike.
+	// Faint where it leaves the plane, firm where it meets the ground: the foot is the answer, the
+	// top is only where the question came from.
+	//
+	const Int SEGMENTS = 8;
+	if( lineLength > 2.0f )
+	{
+		const Real sx = ( bottomScreen.x - startX ) / SEGMENTS, sy = ( bottomScreen.y - startY ) / SEGMENTS;
+		for( Int pass = 0; pass < 2; ++pass )
+		{
+			for( Int i = 0; i < SEGMENTS; ++i )
+			{
+				const Int step = i + 1;
+				const Color color = pass == 0
+					? GameMakeColor( 0, 0, 0, (UnsignedByte)( 20 + ( 120 - 20 ) * step / SEGMENTS ) )
+					: GameMakeColor( ownerR, ownerG, ownerB, (UnsignedByte)( 50 + ( 220 - 50 ) * step / SEGMENTS ) );
+				TheDisplay->drawLine( REAL_TO_INT( startX + sx * i ), REAL_TO_INT( startY + sy * i ),
+															REAL_TO_INT( startX + sx * step ), REAL_TO_INT( startY + sy * step ),
+															pass == 0 ? 3.0f : 1.0f, color );
+			}
+		}
+	}
+
+	//
+	// A ring lying on the ground at the foot. It is flat on the terrain, so the camera squashes it to
+	// an ellipse exactly as it does the ground: a faint disc of the owner's colour, then a two pixel
+	// ring of it inside a dark one a pixel wider on each side.
+	//
+	if( !bottomOn )
+		return;
+
+	const Real ringRadius = MAX( 6.0f, MIN( 18.0f, obj->getGeometryInfo().getMajorRadius() * 0.6f ) );
+	const Int RING_POINTS = 20;
+	ICoord2D ring[ RING_POINTS ];
+	Bool ringOn[ RING_POINTS ];
+	Bool allOn = TRUE;
+	for( Int i = 0; i < RING_POINTS; ++i )
+	{
+		const Real angle = 2.0f * PI * i / RING_POINTS;
+		Coord3D p = bottom;
+		p.x += ringRadius * Cos( angle );
+		p.y += ringRadius * Sin( angle );
+		ringOn[ i ] = TheTacticalView->worldToScreen( &p, &ring[ i ] );
+		allOn = allOn && ringOn[ i ];
+	}
+
+	// the disc, one screen row at a time across the ellipse; it is convex, so each row is one span
+	if( allOn )
+	{
+		Int minY = ring[ 0 ].y, maxY = ring[ 0 ].y;
+		for( Int i = 1; i < RING_POINTS; ++i )
+		{
+			minY = MIN( minY, ring[ i ].y );
+			maxY = MAX( maxY, ring[ i ].y );
+		}
+		const Color discColor = GameMakeColor( ownerR, ownerG, ownerB, 45 );
+		for( Int y = minY; y <= maxY; ++y )
+		{
+			const Real rowY = y + 0.5f;
+			Real left = 1e9f, right = -1e9f;
+			for( Int i = 0; i < RING_POINTS; ++i )
+			{
+				const ICoord2D &a = ring[ i ];
+				const ICoord2D &b = ring[ ( i + 1 ) % RING_POINTS ];
+				if( a.y == b.y || rowY < MIN( a.y, b.y ) || rowY > MAX( a.y, b.y ) )
+					continue;
+				const Real x = a.x + ( rowY - a.y ) * ( b.x - a.x ) / (Real)( b.y - a.y );
+				left = MIN( left, x );
+				right = MAX( right, x );
+			}
+			if( right > left )
+				TheDisplay->drawFillRect( REAL_TO_INT( left ), y, REAL_TO_INT( right - left ), 1, discColor );
+		}
+	}
+
+	// a foot at the screen's edge keeps the part of its ring still on the screen
+	for( Int pass = 0; pass < 2; ++pass )
+	{
+		const Real width = pass == 0 ? 4.0f : 2.0f;
+		const Color color = pass == 0 ? GameMakeColor( 0, 0, 0, 150 ) : GameMakeColor( ownerR, ownerG, ownerB, 230 );
+		for( Int i = 0; i < RING_POINTS; ++i )
+		{
+			const Int j = ( i + 1 ) % RING_POINTS;
+			if( !ringOn[ i ] || !ringOn[ j ] )
+				continue;
+			TheDisplay->drawLine( ring[ i ].x, ring[ i ].y, ring[ j ].x, ring[ j ].y, width, color );
+		}
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+/** This is called as part of the "post draw" phase when drawable a drawable.  It is there
+	* that we should overlay on the screen any 2D elements for purposes of user interface
+	* information (such as a heatlh bar, veterency levels, etc.) */
+// ------------------------------------------------------------------------------------------------
+void Drawable::drawIconUI( void )
+{
+	/* -cinema takes the interface off, and these are interface: the health bar, the rank chevrons a
+		 promotion puts up, the healing cross, the ammo pips, the capture clock and the captions.  The
+		 gate is here rather than on TheGameLogic's own m_drawIconUI because that one is logic state,
+		 saved with the game and carried in the network snapshot; footage must not touch it.
+		 -directorrecord keeps the health bar alone: a cup film has to show who is losing a fight. */
+	const Bool barOnly = CinemaDirector_hidesHud();
+	if( barOnly && !TheGlobalData->m_directorRecord )
+		return;
+
+	if( TheGameLogic->getDrawIconUI() && (TheScriptEngine->getFade()==ScriptEngine::FADE_NONE) )
+	{
+		IRegion2D healthBarRegionStorage;
+		const IRegion2D* healthBarRegion = NULL;
+		if (computeHealthRegion(this, healthBarRegionStorage))
+			healthBarRegion = &healthBarRegionStorage; //both data and a PointerAsFlag for logic in the methods below
+
+		Object *obj = getObject();
+		
+		// we only draw icons drawables with objects, so one bail here -------------------------
+		if ( ! obj )
+			return;
+
+		//Icons that can be drawn on dead things
+		drawHealthBar( healthBarRegion );
+		if( barOnly )
+			return;
+		drawEmoticon( healthBarRegion );                                       
+
+		drawCaption( healthBarRegion );
+		drawConstructPercent( healthBarRegion );
+		drawSupplyCash( healthBarRegion );
+
+		drawAltitudeLine();		// ahead of the bail: the planes a general's power sends over are IGNORED_IN_GUI
+
+		//All Icons Below only draw on ALIVE things, so  bail here -------------------------
+		if( obj->isEffectivelyDead() || obj->isKindOf( KINDOF_IGNORED_IN_GUI )) // object explicitly wants nothing to do with these icons, so...
+			return;
+		drawHealing( healthBarRegion );//call so dead things can kill their healing icons
+		drawBombed( healthBarRegion );
+		drawCaptureProgress();
+	
+	
+		//Disabled for multiplay!
+		//drawBattlePlans( healthBarRegion );
+	
+		if ( drawsAnyUIText() )
+			TheGameClient->addTextBearingDrawable( this );
+
+		drawEnthusiastic( healthBarRegion );                                       
+#ifdef ALLOW_DEMORALIZE
+		drawDemoralized( healthBarRegion );
+#endif
+		drawDisabled( healthBarRegion );
+
+		drawTrays( healthBarRegion );
+
+		//Moved this to last so that it shows up over contained and ammo icons.
+		drawVeterancy( healthBarRegion ); 
+
+#ifdef KRIS_BRUTAL_HACK_FOR_AIRCRAFT_CARRIER_DEBUGGING
+		drawUIText();
+#endif
+	}
+}
+
+//------------------------------------------------------------------------------------------------
+DrawableIconInfo* Drawable::getIconInfo()
+{
+	if (m_iconInfo == NULL)
+		m_iconInfo = newInstance(DrawableIconInfo);
+	return m_iconInfo;
+}
+
+//------------------------------------------------------------------------------------------------
+void Drawable::clearEmoticon()
+{
+	// in order with setEmoticon's work
+	doClientWork( [this]() {
+		if (!hasIconInfo())
+			return;
+
+		killIcon(ICON_EMOTICON);
+	}, WORK_AFTER_APPLIED );
+}
+
+//------------------------------------------------------------------------------------------------
+void Drawable::setEmoticon( const AsciiString &name, Int duration )
+{
+	//A duration of -1 means FOREVER
+	// an Anim2D in the client's collection, made after the tick; the frame it keeps till is the call's
+	const UnsignedInt keepTill = duration >= 0 ? TheGameLogic->getFrame() + duration : FOREVER;
+	doClientWork( [this, name, keepTill]() {
+		clearEmoticon();
+		Anim2DTemplate *animTemplate = TheAnim2DCollection->findTemplate( name );
+		if( animTemplate )
+		{
+			DEBUG_ASSERTCRASH( getIconInfo()->m_icon[ ICON_EMOTICON ] == NULL, ("Drawable::setEmoticon - Emoticon isn't empty, need to refuse to set or destroy the old one in favor of the new one\n") );
+			if( getIconInfo()->m_icon[ ICON_EMOTICON ] == NULL )
+			{
+				getIconInfo()->m_icon[ ICON_EMOTICON ] = newInstance(Anim2D)( animTemplate, TheAnim2DCollection );
+				getIconInfo()->m_keepTillFrame[ ICON_EMOTICON ] = keepTill;
+			}
+		}
+	}, WORK_AFTER_APPLIED );
+}
+
+//------------------------------------------------------------------------------------------------
+void Drawable::drawEmoticon( const IRegion2D *healthBarRegion )
+{
+	if( hasIconInfo() && getIconInfo()->m_icon[ ICON_EMOTICON ] )
+	{
+		UnsignedInt now = TheGameLogic->getFrame();
+		if( healthBarRegion && getIconInfo()->m_keepTillFrame[ ICON_EMOTICON ] >= now )
+		{
+			//Draw the emoticon.
+			Int barWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;
+			//Int barHeight = healthBarRegion.hi.y - healthBarRegion.lo.y;
+			Int frameWidth = getIconInfo()->m_icon[ ICON_EMOTICON ]->getCurrentFrameWidth();
+			Int frameHeight = getIconInfo()->m_icon[ ICON_EMOTICON ]->getCurrentFrameHeight();
+
+#ifdef SCALE_ICONS_WITH_ZOOM_ML
+			// adjust the width to be a % of the health bar region size
+			Int size = REAL_TO_INT( barWidth * 0.3f );
+			frameHeight = REAL_TO_INT((INT_TO_REAL(size) / INT_TO_REAL(frameWidth)) * frameHeight);
+			frameWidth = size;
+#endif			
+			// given our scaled width and height we need to find the top left point to draw the image at
+			ICoord2D screen;
+			screen.x = (Int)(healthBarRegion->lo.x + (barWidth * 0.5f) - (frameWidth * 0.5f));
+			screen.y = healthBarRegion->hi.y - frameHeight;
+			getIconInfo()->m_icon[ ICON_EMOTICON ]->draw( screen.x, screen.y, frameWidth, frameHeight );
+		}
+		else
+		{
+			//Get rid of the emoticon.
+			clearEmoticon();
+		}
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+Int Drawable_lampCellLeft( Int innerWidth, Int capacity, Int index )
+{
+	// a lamp and its gap need three pixels, or the row is a striped smear nobody can count
+	if( capacity <= 0 || innerWidth + 1 < capacity * 3 )
+		return -1;
+
+	// the leftover pixels go one each to lamps spread along the row, so the last lamp ends on the
+	// tray's edge and no two lamps differ by more than a pixel
+	return index * (innerWidth + 1) / capacity;
+}
+
+namespace
+{
+	struct LampTone
+	{
+		Color top, body, shade;
+	};
+
+	LampTone makeLampTone( Int r, Int g, Int b, Int topR, Int topG, Int topB, Int shadeR, Int shadeG, Int shadeB )
+	{
+		LampTone t;
+		t.top = GameMakeColor( topR, topG, topB, 255 );
+		t.body = GameMakeColor( r, g, b, 255 );
+		t.shade = GameMakeColor( shadeR, shadeG, shadeB, 255 );
+		return t;
+	}
+
+	// a lamp lit from above: a light line along its top, the body, a darker line underneath when the
+	// tray is tall enough to spare one - what makes a row read as the panel lamps of the control bar
+	// rather than flat paint
+	void drawLamp( Int x, Int y, Int w, Int h, const LampTone &tone )
+	{
+		if( w <= 0 || h <= 0 )
+			return;
+		TheDisplay->drawFillRect( x, y, w, 1, tone.top );
+		const Int bodyHeight = h >= 3 ? h - 2 : h - 1;
+		if( bodyHeight > 0 )
+			TheDisplay->drawFillRect( x, y + 1, w, bodyHeight, tone.body );
+		if( h >= 3 )
+			TheDisplay->drawFillRect( x, y + h - 1, w, 1, tone.shade );
+	}
+
+	//
+	// The tray the rounds and the seats are counted in: a black glass strip the health bar's width,
+	// two pixels thicker than the bar so a lamp inside has a top, a body and a shade, cut into one
+	// lamp per round or seat with a one pixel black gap between neighbours. The first litA lamps burn
+	// in toneA, the next litB in toneB, the rest are dark glass. When the bar is too short to give
+	// every lamp two pixels (a far zoom, a big load) the lamps merge into one continuous fill with each
+	// tone's share of it, and a single occupant still keeps a pixel of its own.
+	//
+	Int trayHeight( const IRegion2D *bar )
+	{
+		return max( 3, (Int)(bar->hi.y - bar->lo.y) ) + 2;
+	}
+
+	// the first tray's top: two rows under the bar, the selection frame's row and one clear
+	Int trayStackTop( const IRegion2D *bar )
+	{
+		return bar->lo.y + max( 3, (Int)(bar->hi.y - bar->lo.y) ) + 2;
+	}
+
+	// a tray and the two clear rows under it
+	Int traySpan( const IRegion2D *bar )
+	{
+		return trayHeight( bar ) + 2;
+	}
+
+	void drawLampTray( const IRegion2D *bar, Int y, Int capacity, Int litA, const LampTone &toneA,
+										 Int litB, const LampTone &toneB )
+	{
+		const Int x = bar->lo.x;
+		const Int width = bar->hi.x - bar->lo.x;
+		const Int height = trayHeight( bar );
+		const Int innerWidth = width - 2;
+		const Int innerHeight = height - 2;
+		if( capacity <= 0 || innerWidth <= 0 )
+			return;
+
+		litA = max( 0, min( litA, capacity ) );
+		litB = max( 0, min( litB, capacity - litA ) );
+
+		const LampTone dark = makeLampTone( 28, 31, 30,  56, 60, 58,  20, 22, 21 );
+
+		TheDisplay->drawFillRect( x, y, width, height, GameMakeColor( 0, 0, 0, 220 ) );
+
+		if( Drawable_lampCellLeft( innerWidth, capacity, 0 ) >= 0 )
+		{
+			for( Int i = 0; i < capacity; ++i )
+			{
+				const Int left = Drawable_lampCellLeft( innerWidth, capacity, i );
+				const Int right = Drawable_lampCellLeft( innerWidth, capacity, i + 1 ) - 1;
+				const LampTone &tone = i < litA ? toneA : i < litA + litB ? toneB : dark;
+				drawLamp( x + 1 + left, y + 1, right - left, innerHeight, tone );
+			}
+		}
+		else
+		{
+			Int endA = litA > 0 ? max( 1, innerWidth * litA / capacity ) : 0;
+			Int endB = litB > 0 ? max( endA + 1, innerWidth * (litA + litB) / capacity ) : endA;
+			endA = min( endA, innerWidth );
+			endB = min( endB, innerWidth );
+			drawLamp( x + 1, y + 1, endA, innerHeight, toneA );
+			drawLamp( x + 1 + endA, y + 1, endB - endA, innerHeight, toneB );
+			drawLamp( x + 1 + endB, y + 1, innerWidth - endB, innerHeight, dark );
+		}
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+/** The rounds and the seats hang under the health bar, one lamp tray each, rounds on top. EA only
+	* drew the ammo pips for a selected or moused-over unit, which has a bar; an aircraft that shows
+	* them always may have none, and then nothing is drawn. */
+// ------------------------------------------------------------------------------------------------
+void Drawable::drawTrays( const IRegion2D *healthBarRegion )
+{
+	if( !healthBarRegion )
+		return;
+
+	Int y = trayStackTop( healthBarRegion );
+	Int total, full, infantry;
+
+	// rounds burn the reload bar's amber, so a Comanche's rockets and the wait for the next salvo read
+	// as one family; a spent round is dark glass
+	if( ammoTrayCounts( total, full ) )
+	{
+		const LampTone ROUND = makeLampTone( 255, 190, 40,  255, 232, 150,  176, 118, 16 );
+		drawLampTray( healthBarRegion, y, total, full, ROUND, 0, ROUND );
+		y += traySpan( healthBarRegion );
+	}
+
+	//
+	// Infantry first, then everything else, against the seats there are. EA's pure green and pure
+	// blue are kept as the meaning and toned down to sit with the steel of the HUD: a field green for
+	// soldiers, a steel blue for vehicles and anything else aboard.
+	//
+	if( seatTrayCounts( total, infantry, full ) )
+	{
+		const LampTone INFANTRY = makeLampTone( 120, 196, 64,  196, 240, 140,  66, 118, 34 );
+		const LampTone VEHICLE = makeLampTone( 86, 148, 214,  176, 214, 250,  44, 86, 138 );
+		drawLampTray( healthBarRegion, y, total, infantry, INFANTRY, full - infantry, VEHICLE );
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+/** The first free row under this drawable's bar and whatever trays drawTrays hangs from it, for
+	* anything else that draws under the bar: the capture clock, the enthusiasm icon. */
+// ------------------------------------------------------------------------------------------------
+Int Drawable::trayStackBottom( const IRegion2D *healthBarRegion ) const
+{
+	Int y = trayStackTop( healthBarRegion );
+	const Object *obj = getObject();
+	if( obj == NULL || obj->isEffectivelyDead() || obj->isKindOf( KINDOF_IGNORED_IN_GUI ) )
+		return y;		// drawIconUI bails before the trays for these
+
+	Int total, full, infantry;
+	if( ammoTrayCounts( total, full ) )
+		y += traySpan( healthBarRegion );
+	if( seatTrayCounts( total, infantry, full ) )
+		y += traySpan( healthBarRegion );
+	return y;
+}
+
+// ------------------------------------------------------------------------------------------------
+Bool Drawable::ammoTrayCounts( Int &numTotal, Int &numFull ) const
+{
+	const Object *obj = getObject();
+
+	//
+	// Our own aircraft show their load all the time, not just while selected or under the cursor:
+	// how many passes a flight has left decides whether you commit it or let it go home, and you
+	// cannot be selecting it while you watch it fly.
+	//
+	const Bool alwaysShow = obj->isKindOf(KINDOF_AIRCRAFT);
+
+	if (!(
+				TheGlobalData->m_showObjectHealth && 
+				(alwaysShow || isSelected() || (TheInGameUI && (TheInGameUI->getMousedOverDrawableID() == getID()))) &&
+				obj->getControllingPlayer() == ThePlayerList->getLocalPlayer()
+			))
+		return FALSE;
+
+	return obj->getAmmoPipShowingInfo(numTotal, numFull) && numTotal > 0;
+}
+
+// ------------------------------------------------------------------------------------------------
+Bool Drawable::seatTrayCounts( Int &numTotal, Int &numInfantry, Int &numFull ) const
+{
+	const Object *obj = getObject();
+
+	ContainModuleInterface* container = obj->getContain();
+	if (!container)
+		return FALSE;
+
+	// a building being put up cannot hold anyone yet, so its (empty) pips are just noise
+	if (obj->getStatusBits().test( OBJECT_STATUS_UNDER_CONSTRUCTION ))
+		return FALSE;
+
+	// container pips are always on for own objects (was: only when selected or moused over)
+	if (!TheGlobalData->m_showObjectHealth)
+		return FALSE;
+
+	//
+	// ...and a building you can garrison shows them whoever holds it. How many are occupied is the
+	// question you ask before shooting at it, answerable before only by garrisoning it yourself.
+	// A vehicle's load stays private: an enemy transport's contents are real intelligence, a
+	// building's occupancy is what you can already see out of its windows.
+	//
+	if (obj->getControllingPlayer() != ThePlayerList->getLocalPlayer() &&
+			!(obj->isKindOf( KINDOF_STRUCTURE ) && container->isGarrisonable()))
+		return FALSE;
+
+	//
+	// a unit nobody can select carries a load nobody can unload: the plane a Supply Drop Zone or a
+	// paradrop sends over is a 100 slot transport, and it drew a row of 100 empty boxes across the
+	// screen whenever the data left it out of IGNORED_IN_GUI (drawIconUI's bail). Buildings are
+	// exempt, since a civilian house holds a garrison without being selectable.
+	//
+	if (!obj->isKindOf( KINDOF_STRUCTURE ) && !obj->isKindOf( KINDOF_SELECTABLE ))
+		return FALSE;
+
+	if (!container->getContainerPipsToShow(numTotal, numFull) || numTotal <= 0)
+		return FALSE;
+
+	// empty containers still show their (empty) pips, unless the player switched that off for
+	// buildings: a Barracks wears ten empty boxes for the whole match otherwise
+	if (numFull == 0 && !TheGlobalData->m_showEmptyBuildingPips && obj->isKindOf( KINDOF_STRUCTURE ))
+		return FALSE;
+
+	// an empty garrisonable building draws nothing at all: a city with an empty tray over every house
+	// is clutter. Once someone is in, the tray counts them against every window it has.
+	if (numFull == 0 && obj->isKindOf( KINDOF_STRUCTURE ) && container->isGarrisonable())
+		return FALSE;
+
+	numInfantry = 0;
+	const ContainedItemsList* contained = container->getContainedItemsList();
+	if (contained)
+	{
+		for (ContainedItemsList::const_iterator it = contained->begin(); it != contained->end(); ++it)
+		{
+			if ((*it)->isKindOf(KINDOF_INFANTRY))
+				++numInfantry;
+		}
+	}
+	numInfantry = min( numInfantry, numFull );
+	return TRUE;
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::drawBattlePlans( const IRegion2D *healthBarRegion )
+{
+	Object *obj = getObject();
+	if( !obj || !healthBarRegion )
+	{
+		return;
+	}
+
+
+	Player *player = obj->getControllingPlayer();
+	if( player && player->getNumBattlePlansActive() > 0 && player->doesObjectQualifyForBattlePlan( obj ) )
+	{
+		if( player->getBattlePlansActiveSpecific( PLANSTATUS_BOMBARDMENT ) )
+		{
+			if( !getIconInfo()->m_icon[ ICON_BATTLEPLAN_BOMBARD ] )
+			{
+				getIconInfo()->m_icon[ ICON_BATTLEPLAN_BOMBARD ] = newInstance(Anim2D)( s_animationTemplates[ ICON_BATTLEPLAN_BOMBARD ], TheAnim2DCollection );
+			}
+			//Int barHeight = healthBarRegion.hi.y - healthBarRegion.lo.y;
+			Int frameWidth = getIconInfo()->m_icon[ ICON_BATTLEPLAN_BOMBARD ]->getCurrentFrameWidth();
+			Int frameHeight = getIconInfo()->m_icon[ ICON_BATTLEPLAN_BOMBARD ]->getCurrentFrameHeight();
+			
+#ifdef SCALE_ICONS_WITH_ZOOM_ML
+			// adjust the width to be a % of the health bar region size
+			Int barWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;
+			Int size = REAL_TO_INT( barWidth * 0.3f );
+			frameHeight = REAL_TO_INT((INT_TO_REAL(size) / INT_TO_REAL(frameWidth)) * frameHeight);
+			frameWidth = size;
+#endif			
+			// given our scaled width and height we need to find the top left point to draw the image at
+			ICoord2D screen;
+			screen.x = healthBarRegion->lo.x;
+			screen.y = healthBarRegion->lo.y + frameHeight;
+			getIconInfo()->m_icon[ ICON_BATTLEPLAN_BOMBARD ]->draw( screen.x, screen.y, frameWidth, frameHeight );
+		}
+		else
+		{
+			killIcon(ICON_BATTLEPLAN_BOMBARD);
+		}
+
+		if( player->getBattlePlansActiveSpecific( PLANSTATUS_HOLDTHELINE ) )
+		{
+			if( !getIconInfo()->m_icon[ ICON_BATTLEPLAN_HOLDTHELINE ] )
+			{
+				getIconInfo()->m_icon[ ICON_BATTLEPLAN_HOLDTHELINE ] = newInstance(Anim2D)( s_animationTemplates[ ICON_BATTLEPLAN_HOLDTHELINE ], TheAnim2DCollection );
+			}
+			// draw the icon
+			Int frameWidth = getIconInfo()->m_icon[ ICON_BATTLEPLAN_HOLDTHELINE ]->getCurrentFrameWidth();
+			Int frameHeight = getIconInfo()->m_icon[ ICON_BATTLEPLAN_HOLDTHELINE ]->getCurrentFrameHeight();
+			
+#ifdef SCALE_ICONS_WITH_ZOOM_ML
+			// adjust the width to be a % of the health bar region size
+			Int barWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;
+			Int size = REAL_TO_INT( barWidth * 0.3f );
+			frameHeight = REAL_TO_INT((INT_TO_REAL(size) / INT_TO_REAL(frameWidth)) * frameHeight);
+			frameWidth = size;
+#endif			
+			// given our scaled width and height we need to find the top left point to draw the image at
+			ICoord2D screen;
+			screen.x = healthBarRegion->lo.x;
+			screen.y = healthBarRegion->lo.y + frameHeight;
+			getIconInfo()->m_icon[ ICON_BATTLEPLAN_HOLDTHELINE ]->draw( screen.x + frameWidth, screen.y, frameWidth, frameHeight );
+		}
+		else 
+		{
+			killIcon(ICON_BATTLEPLAN_HOLDTHELINE);
+		}
+
+		if( player->getBattlePlansActiveSpecific( PLANSTATUS_SEARCHANDDESTROY ) )
+		{
+			if( !getIconInfo()->m_icon[ ICON_BATTLEPLAN_SEARCHANDDESTROY ] )
+			{
+				getIconInfo()->m_icon[ ICON_BATTLEPLAN_SEARCHANDDESTROY ] = newInstance(Anim2D)( s_animationTemplates[ ICON_BATTLEPLAN_SEARCHANDDESTROY ], TheAnim2DCollection );
+			}
+			// draw the icon
+			Int frameWidth = getIconInfo()->m_icon[ ICON_BATTLEPLAN_SEARCHANDDESTROY ]->getCurrentFrameWidth();
+			Int frameHeight = getIconInfo()->m_icon[ ICON_BATTLEPLAN_SEARCHANDDESTROY ]->getCurrentFrameHeight();
+
+#ifdef SCALE_ICONS_WITH_ZOOM_ML
+			// adjust the width to be a % of the health bar region size
+			Int barWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;
+			Int size = REAL_TO_INT( barWidth * 0.3f );
+			frameHeight = REAL_TO_INT((INT_TO_REAL(size) / INT_TO_REAL(frameWidth)) * frameHeight);
+			frameWidth = size;
+#endif
+
+			// given our scaled width and height we need to find the top left point to draw the image at
+			ICoord2D screen;
+			screen.x = healthBarRegion->lo.x;
+			screen.y = healthBarRegion->lo.y + frameHeight;
+			getIconInfo()->m_icon[ ICON_BATTLEPLAN_SEARCHANDDESTROY ]->draw( screen.x + (frameWidth * 2), screen.y, frameWidth, frameHeight );
+		}
+		else 
+		{
+			killIcon(ICON_BATTLEPLAN_SEARCHANDDESTROY);
+		}
+		
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void Drawable::drawUIText()
+{
+
+	// This gets called by GameClient now
+	// GameClient caches a list of us drawables during Drawablepostdraw()
+	// then our group numbers get spit out last, so they draw in front
+	
+	const IRegion2D* healthBarRegion = NULL;
+	IRegion2D healthBarRegionStorage;
+	if (computeHealthRegion(this, healthBarRegionStorage))
+		healthBarRegion = &healthBarRegionStorage; //both data and a PointerAsFlag for logic in the methods below
+
+	if (!healthBarRegion)
+		return;
+
+	const Object *obj = getObject();
+
+	Player *owner = obj->getControllingPlayer();
+	Int groupNum = owner->getSquadNumberForObject(obj);
+
+	Color color = TheDrawGroupInfo->m_usePlayerColor ? clientPlayerColor( owner ) : TheDrawGroupInfo->m_colorForText;
+
+	if (groupNum > NO_HOTKEY_SQUAD && groupNum < NUM_HOTKEY_SQUADS ) 
+	{
+		Int xPos = healthBarRegion->lo.x;
+		Int yPos = healthBarRegion->lo.y;
+
+		if (TheDrawGroupInfo->m_usingPixelOffsetX) {
+			xPos += TheDrawGroupInfo->m_pixelOffsetX;
+		} else {
+			xPos += (healthBarRegion->width() * TheDrawGroupInfo->m_percentOffsetX);
+		}
+
+		if (TheDrawGroupInfo->m_usingPixelOffsetY) {
+			yPos += TheDrawGroupInfo->m_pixelOffsetY;
+		} else {
+			yPos += (healthBarRegion->width() * TheDrawGroupInfo->m_percentOffsetY);
+		}
+
+		m_groupNumber = TheDisplayStringManager->getGroupNumeralString(groupNum);
+
+		
+		m_groupNumber->draw(xPos, yPos, color, 
+												TheDrawGroupInfo->m_colorForTextDropShadow, 
+												TheDrawGroupInfo->m_dropShadowOffsetX, 
+												TheDrawGroupInfo->m_dropShadowOffsetY);
+	}
+
+
+	if ( obj->getFormationID() != NO_FORMATION_ID )
+	{
+		//draw an F, here
+		Coord3D p;
+		ICoord2D screenCenter;
+		obj->getHealthBoxPosition(p);
+		if( ! TheTacticalView->worldToScreen( &p, &screenCenter ) )
+			return;
+
+		Real healthBoxWidth, healthBoxHeight;
+		if ( ! obj->getHealthBoxDimensions(healthBoxHeight, healthBoxWidth))
+			return;
+
+		Real scale = 1.3f/CLAMP_ICON_ZOOM_FACTOR( TheTacticalView->getZoom() );
+		screenCenter.x += (healthBoxWidth * scale * 0.5f) + 10 ; 
+
+
+		DisplayString *formationMarker = TheDisplayStringManager->getFormationLetterString();
+		//static DisplayString *formationMarker = TheDisplayStringManager->getGroupNumeralString( 5 );
+		if ( formationMarker )
+			formationMarker->draw(screenCenter.x, screenCenter.y, color,
+													TheDrawGroupInfo->m_colorForTextDropShadow, 
+													TheDrawGroupInfo->m_dropShadowOffsetX, 
+													TheDrawGroupInfo->m_dropShadowOffsetY);
+
+	}
+	
+#ifdef KRIS_BRUTAL_HACK_FOR_AIRCRAFT_CARRIER_DEBUGGING
+	if( obj->testStatus( OBJECT_STATUS_DECK_HEIGHT_OFFSET ) )
+	{
+		Object *carrier = TheGameLogic->findObjectByID( obj->getProducerID() );
+		if( carrier )
+		{
+			for (BehaviorModule** i = carrier->getBehaviorModules(); *i; ++i)
+			{
+				ParkingPlaceBehaviorInterface *pp = (*i)->getParkingPlaceBehaviorInterface();
+				if( pp )
+				{
+					Int index = pp->getSpaceIndex( obj->getID() );
+					
+					Int xPos = healthBarRegion->lo.x;
+					Int yPos = healthBarRegion->lo.y;
+
+					if (TheDrawGroupInfo->m_usingPixelOffsetX) {
+						xPos += TheDrawGroupInfo->m_pixelOffsetX;
+					} else {
+						xPos += (healthBarRegion->width() * TheDrawGroupInfo->m_percentOffsetX);
+					}
+
+					if (TheDrawGroupInfo->m_usingPixelOffsetY) {
+						yPos += TheDrawGroupInfo->m_pixelOffsetY;
+					} else {
+						yPos += (healthBarRegion->width() * TheDrawGroupInfo->m_percentOffsetY);
+					}
+
+					m_groupNumber = TheDisplayStringManager->getGroupNumeralString(index);
+
+					
+					m_groupNumber->draw(xPos, yPos, color, 
+															TheDrawGroupInfo->m_colorForTextDropShadow, 
+															TheDrawGroupInfo->m_dropShadowOffsetX, 
+															TheDrawGroupInfo->m_dropShadowOffsetY);
+					break;
+				}
+			}
+		}
+	}
+#endif
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void Drawable::drawHealing(const IRegion2D* healthBarRegion)
+{
+
+	const Object *obj = getObject();			
+
+	// we do show show icons for things that explicitly forbid it
+	if( obj->isKindOf( KINDOF_NO_HEAL_ICON ) || obj->getStatusBits().test( OBJECT_STATUS_SOLD ) )
+		return;
+
+
+	// see if healing has been done to us recently
+	Bool showHealing = FALSE;
+	BodyModuleInterface *body = obj->getBodyModule();
+	if( body->getHealth() != body->getMaxHealth() )
+	{
+//		const DamageInfo* lastDamage = body->getLastDamageInfo();
+//		if( lastDamage != NULL && lastDamage->in.m_damageType == DAMAGE_HEALING 
+//			&&(TheGameLogic->getFrame() - body->getLastHealingTimestamp()) <= HEALING_ICON_DISPLAY_TIME 
+//			)
+		if ( TheGameLogic->getFrame() > HEALING_ICON_DISPLAY_TIME && // because so many things init health early in game
+			(TheGameLogic->getFrame() - body->getLastHealingTimestamp() <= HEALING_ICON_DISPLAY_TIME) )
+
+			showHealing = TRUE;
+	}
+
+	// based on our own kind of we have certain icons to display at a size scale
+	Real scale;
+	DrawableIconType typeIndex;
+	if( isKindOf( KINDOF_STRUCTURE ) )
+	{
+		typeIndex = ICON_STRUCTURE_HEAL;
+		scale = 0.33f;
+	}
+	else if( isKindOf( KINDOF_VEHICLE ) )
+	{
+		typeIndex = ICON_VEHICLE_HEAL;
+		scale = 0.7f;
+	}
+	else
+	{
+		typeIndex = ICON_DEFAULT_HEAL;
+		scale = 0.7f;
+	}
+
+	//
+	// if we are to show healing make sure we have the animation for it allocated, otherwise
+	// free any animation we may have allocated back to the animation memory pool
+	//
+	if( showHealing ) /// @todo HERE, WE NEED TO LEAVE STUFF ALONE, IF WE ARE ALREADY SHOWING HEALING
+	{
+		if (healthBarRegion != NULL)
+		{
+
+			if( getIconInfo()->m_icon[ typeIndex ] == NULL )
+				getIconInfo()->m_icon[ typeIndex ] = newInstance(Anim2D)( s_animationTemplates[ typeIndex ], TheAnim2DCollection );
+
+			// draw the animation if present
+			if( getIconInfo()->m_icon[ typeIndex ] != NULL)
+			{
+				
+				//
+				// we are going to draw the healing icon relative to the size of the health bar region
+				// since that region takes into account hit point size and zoom factor of the camera too
+				//
+				Int barWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;
+
+				Int frameWidth = getIconInfo()->m_icon[ typeIndex ]->getCurrentFrameWidth();
+				Int frameHeight = getIconInfo()->m_icon[ typeIndex ]->getCurrentFrameHeight();
+
+#ifdef SCALE_ICONS_WITH_ZOOM_ML
+				// adjust the width to be a % of the health bar region size
+				Int size = REAL_TO_INT( barWidth * scale );
+				frameHeight = REAL_TO_INT((INT_TO_REAL(size) / INT_TO_REAL(frameWidth)) * frameHeight);
+				frameWidth = size;
+#endif
+				// given our scaled width and height we need to find the top left point to draw the image at
+				ICoord2D screen;
+				screen.x = REAL_TO_INT( healthBarRegion->lo.x + (barWidth * 0.75f) - (frameWidth * 0.5f) );
+				screen.y = REAL_TO_INT( healthBarRegion->lo.y - frameHeight );
+				getIconInfo()->m_icon[ typeIndex ]->draw( screen.x, screen.y, frameWidth, frameHeight );
+								
+			}	
+		}
+	}
+	else
+	{
+		killIcon(typeIndex);
+	}
+
+}
+
+// ------------------------------------------------------------------------------------------------
+/** This enthusiastic effect is TEMPORARY for the multiplayer test */
+// ------------------------------------------------------------------------------------------------
+void Drawable::drawEnthusiastic(const IRegion2D* healthBarRegion)
+{
+
+	const Object *obj = getObject();			
+	//
+	// if we are to show effect make sure we have the animation for it allocated, otherwise
+	// free any animation we may have allocated back to the animation memory pool
+	//
+	// only display if have enthusiasm
+	
+	if( obj->testWeaponBonusCondition( WEAPONBONUSCONDITION_ENTHUSIASTIC ) == TRUE &&
+			healthBarRegion != NULL )
+	{
+
+		DrawableIconType iconIndex = ICON_ENTHUSIASTIC;
+
+		if (obj->testWeaponBonusCondition( WEAPONBONUSCONDITION_SUBLIMINAL ) == TRUE )// unless...
+			iconIndex = ICON_ENTHUSIASTIC_SUBLIMINAL;
+
+
+
+
+		if( getIconInfo()->m_icon[ iconIndex ] == NULL )
+			getIconInfo()->m_icon[ iconIndex ] = newInstance(Anim2D)( s_animationTemplates[ iconIndex ], TheAnim2DCollection );
+
+		// draw the animation if present
+		if( getIconInfo()->m_icon[ iconIndex ] != NULL)
+		{
+			
+			//
+			// we are going to draw the healing icon relative to the size of the health bar region
+			// since that region takes into account hit point size and zoom factor of the camera too
+			//
+			Int barWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;// used for position
+
+			// based on our own kind of we have certain icons to display at a size scale
+			Real scale;
+			if( isKindOf( KINDOF_STRUCTURE ) || isKindOf( KINDOF_HUGE_VEHICLE ) )
+				scale = 1.00f;
+			else if( isKindOf( KINDOF_VEHICLE ) )
+				scale = 0.75f;
+			else
+				scale = 0.5f;
+ 
+			Int frameWidth = getIconInfo()->m_icon[ iconIndex ]->getCurrentFrameWidth() * scale;
+			Int frameHeight = getIconInfo()->m_icon[ iconIndex ]->getCurrentFrameHeight() * scale;
+
+#ifdef SCALE_ICONS_WITH_ZOOM_ML
+			// adjust the width to be a % of the health bar region size
+			Int size = REAL_TO_INT( barWidth * scale );
+			frameHeight = REAL_TO_INT((INT_TO_REAL(size) / INT_TO_REAL(frameWidth)) * frameHeight);
+			frameWidth = size;
+#endif
+			// given our scaled width and height we need to find the bottom left point to draw the image at
+			ICoord2D screen;
+			screen.x = REAL_TO_INT( healthBarRegion->lo.x + (barWidth * 0.25f) - (frameWidth * 0.5f) );
+			screen.y = REAL_TO_INT( healthBarRegion->hi.y + (frameHeight * 0.25) );
+			screen.y = max( (Int)screen.y, trayStackBottom( healthBarRegion ) );	// under a Troop Crawler's seats, not over them
+			getIconInfo()->m_icon[ iconIndex ]->draw( screen.x, screen.y, frameWidth, frameHeight );
+							
+		}	
+	}
+	else
+	{
+		killIcon(ICON_ENTHUSIASTIC);
+		killIcon(ICON_ENTHUSIASTIC_SUBLIMINAL);
+	}
+
+}
+
+#ifdef ALLOW_DEMORALIZE
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void Drawable::drawDemoralized(const IRegion2D* healthBarRegion)
+{
+
+	const Object *obj = getObject();			
+
+
+	//
+	// Demoralized
+	//
+	const AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	if (!ai)
+		return;
+
+	if( ai->isDemoralized() )
+	{
+		// draw the icon
+		if( healthBarRegion )
+		{
+			// create icon if necessary
+			if( getIconInfo()->m_icon[ ICON_DEMORALIZED ] == NULL )
+				getIconInfo()->m_icon[ ICON_DEMORALIZED ] = newInstance(Anim2D)( s_animationTemplates[ ICON_DEMORALIZED ], TheAnim2DCollection );
+			
+			if (getIconInfo()->m_icon[ ICON_DEMORALIZED ])
+			{
+
+				Int frameWidth = getIconInfo()->m_icon[ ICON_DEMORALIZED ]->getCurrentFrameWidth();
+				Int frameHeight = getIconInfo()->m_icon[ ICON_DEMORALIZED ]->getCurrentFrameHeight();
+
+#ifdef SCALE_ICONS_WITH_ZOOM_ML
+				// adjust the width to be a % of the health bar region size
+				Int barWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;
+				Int size = REAL_TO_INT( barWidth * 0.3f );
+				frameHeight = REAL_TO_INT((INT_TO_REAL(size) / INT_TO_REAL(frameWidth)) * frameHeight);
+				frameWidth = size;
+#endif
+				// given our scaled width and height we need to find the top left point to draw the image at
+				ICoord2D screen;
+				screen.x = healthBarRegion->lo.x;
+				screen.y = healthBarRegion->hi.y;
+				getIconInfo()->m_icon[ ICON_DEMORALIZED ]->draw( screen.x, screen.y, frameWidth, frameHeight );
+			}
+		}
+	}
+	else
+	{
+		killIcon(ICON_DEMORALIZED);
+	}
+}
+#endif
+
+enum
+{
+	// The code tries to be below the health bar, but that pus it square under passenger pips.
+	BOMB_ICON_EXTRA_OFFSET = 5
+};
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void Drawable::drawBombed(const IRegion2D* healthBarRegion)
+{
+
+	const Object *obj = getObject();			
+
+
+	UnsignedInt now = TheGameLogic->getFrame();
+
+	if( obj->testWeaponSetFlag( WEAPONSET_CARBOMB ) &&
+				obj->getControllingPlayer() == ThePlayerList->getLocalPlayer())
+	{
+		if( !getIconInfo()->m_icon[ ICON_CARBOMB ] )
+			getIconInfo()->m_icon[ ICON_CARBOMB ] = newInstance(Anim2D)( s_animationTemplates[ ICON_CARBOMB ], TheAnim2DCollection );
+
+		if( getIconInfo()->m_icon[ ICON_CARBOMB ] )
+		{
+			//
+			// we are going to draw the healing icon relative to the size of the health bar region
+			// since that region takes into account hit point size and zoom factor of the camera too
+			//
+			if( healthBarRegion )
+			{
+				Int barWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;
+				Int barHeight = healthBarRegion->hi.y - healthBarRegion->lo.y;
+
+				Int frameWidth = getIconInfo()->m_icon[ ICON_CARBOMB ]->getCurrentFrameWidth();
+				Int frameHeight = getIconInfo()->m_icon[ ICON_CARBOMB ]->getCurrentFrameHeight();
+
+				// adjust the width to be a % of the health bar region size
+				Int size = REAL_TO_INT( barWidth * 0.5f );
+				frameHeight = REAL_TO_INT((INT_TO_REAL(size) / INT_TO_REAL(frameWidth)) * frameHeight);
+				frameWidth = size;
+
+				// given our scaled width and height we need to find the top left point to draw the image at
+				ICoord2D screen;
+				screen.x = REAL_TO_INT( healthBarRegion->lo.x + (barWidth * 0.5f) - (frameWidth * 0.5f) );
+				screen.y = REAL_TO_INT( healthBarRegion->lo.y + barHeight * 0.5f ) + BOMB_ICON_EXTRA_OFFSET;
+
+				getIconInfo()->m_icon[ ICON_CARBOMB ]->draw( screen.x, screen.y, frameWidth, frameHeight );	
+				getIconInfo()->m_keepTillFrame[ ICON_CARBOMB ] = FOREVER;
+			}
+		}
+}
+	else
+	{
+		killIcon(ICON_CARBOMB);
+	}
+
+	//
+	// Bombed?
+	//
+	StickyBombUpdate *update = hasIconModule( ICON_MODULE_STICKY_BOMB )
+		? (StickyBombUpdate*)obj->findUpdateModule( stickyBombUpdateKey() ) : NULL;
+	if( update )
+	{
+		//This case is tricky. The object that is bombed doesn't know it... but the bomb itself does.
+		//So what we do is get it's target, then determine if the target has the icon or not.
+		Object *target = update->getTargetObject();
+		if( target )
+		{
+			if( update->isTimedBomb() )
+			{
+				//Timed bomb
+				if( !getIconInfo()->m_icon[ ICON_BOMB_TIMED ] )
+				{
+					getIconInfo()->m_icon[ ICON_BOMB_REMOTE ] = newInstance(Anim2D)( s_animationTemplates[ ICON_BOMB_REMOTE ], TheAnim2DCollection );
+					getIconInfo()->m_icon[ ICON_BOMB_TIMED ] = newInstance(Anim2D)( s_animationTemplates[ ICON_BOMB_TIMED ], TheAnim2DCollection );
+
+					//Because this is a counter icon that ranges from 0-60 seconds, we need to calculate which frame to 
+					//start the animation from. Because timers are second based -- 1000 ms equal 1 frame. So we simply
+					//calculate the time via detonation frame.
+					//
+					// srj sez: this may sound familiar somehow, but let me reiterate, just in case you missed it:
+					//
+					// hardcoding is bad. 
+					//
+					// the anim got changed and now is only 20 seconds max, so the previous code was wrong. 
+					// 
+					// hey, I've got an idea! why don't we ASK the anim how long it is?
+					//
+					UnsignedInt dieFrame = update->getDetonationFrame();
+					UnsignedInt seconds = ControlBar_secondsFromFrames( (Real)(dieFrame - now) );
+
+					UnsignedInt numFrames = getIconInfo()->m_icon[ ICON_BOMB_TIMED ]->getAnimTemplate()->getNumFrames();
+					// this anim goes from "N" seconds down to zero, so the max seconds we can use is N-1.
+					if (seconds > numFrames - 1)
+						seconds = numFrames - 1;
+					
+					getIconInfo()->m_icon[ ICON_BOMB_TIMED ]->setMinFrame(numFrames - seconds - 1);
+					getIconInfo()->m_icon[ ICON_BOMB_TIMED ]->reset();
+				}
+				if( getIconInfo()->m_icon[ ICON_BOMB_TIMED ] )
+				{
+					//
+					// we are going to draw the healing icon relative to the size of the health bar region
+					// since that region takes into account hit point size and zoom factor of the camera too
+					//
+					if( healthBarRegion )
+					{
+						Int barWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;
+						Int barHeight = healthBarRegion->hi.y - healthBarRegion->lo.y;
+
+						Int frameWidth = getIconInfo()->m_icon[ ICON_BOMB_TIMED ]->getCurrentFrameWidth();
+						Int frameHeight = getIconInfo()->m_icon[ ICON_BOMB_TIMED ]->getCurrentFrameHeight();
+
+						// adjust the width to be a % of the health bar region size
+						Int size = REAL_TO_INT( barWidth * 0.65f );
+						frameHeight = REAL_TO_INT((INT_TO_REAL(size) / INT_TO_REAL(frameWidth)) * frameHeight);
+						frameWidth = size;
+						
+						// given our scaled width and height we need to find the top left point to draw the image at
+						ICoord2D screen;
+						screen.x = REAL_TO_INT( healthBarRegion->lo.x + (barWidth * 0.5f) - (frameWidth * 0.5f) );
+						screen.y = REAL_TO_INT( healthBarRegion->lo.y + barHeight * 0.5f ) + BOMB_ICON_EXTRA_OFFSET;
+
+						getIconInfo()->m_icon[ ICON_BOMB_REMOTE ]->draw( screen.x, screen.y, frameWidth, frameHeight );	
+						getIconInfo()->m_keepTillFrame[ ICON_BOMB_REMOTE ] = now + 1;
+						getIconInfo()->m_icon[ ICON_BOMB_TIMED ]->draw( screen.x, screen.y, frameWidth, frameHeight );	
+						getIconInfo()->m_keepTillFrame[ ICON_BOMB_TIMED ] = now + 1;
+					}
+				}
+			}
+			else
+			{
+				//Remote charge
+				//Timed bomb
+				if( !getIconInfo()->m_icon[ ICON_BOMB_REMOTE ] )
+				{
+					getIconInfo()->m_icon[ ICON_BOMB_REMOTE ] = newInstance(Anim2D)( s_animationTemplates[ ICON_BOMB_REMOTE ], TheAnim2DCollection );
+				}
+				if( getIconInfo()->m_icon[ ICON_BOMB_REMOTE ] )
+				{
+					//
+					// we are going to draw the healing icon relative to the size of the health bar region
+					// since that region takes into account hit point size and zoom factor of the camera too
+					//
+					if( healthBarRegion )
+					{
+						Int barWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;
+						Int barHeight = healthBarRegion->hi.y - healthBarRegion->lo.y;
+
+						Int frameWidth = getIconInfo()->m_icon[ ICON_BOMB_REMOTE ]->getCurrentFrameWidth();
+						Int frameHeight = getIconInfo()->m_icon[ ICON_BOMB_REMOTE ]->getCurrentFrameHeight();
+
+
+						// adjust the width to be a % of the health bar region size
+						Int size = REAL_TO_INT( barWidth * 0.65f );
+						frameHeight = REAL_TO_INT((INT_TO_REAL(size) / INT_TO_REAL(frameWidth)) * frameHeight);
+						frameWidth = size;
+
+						// given our scaled width and height we need to find the top left point to draw the image at
+						ICoord2D screen;
+						screen.x = REAL_TO_INT( healthBarRegion->lo.x + (barWidth * 0.5f) - (frameWidth * 0.5f) );
+						screen.y = REAL_TO_INT( healthBarRegion->lo.y + barHeight * 0.5f ) + BOMB_ICON_EXTRA_OFFSET;
+
+						getIconInfo()->m_icon[ ICON_BOMB_REMOTE ]->draw( screen.x, screen.y, frameWidth, frameHeight );	
+						getIconInfo()->m_keepTillFrame[ ICON_BOMB_REMOTE ] = now + 1;
+					}
+				}
+			}
+		}
+	}
+
+	if (hasIconInfo())
+	{
+		if(getIconInfo()->m_keepTillFrame[ ICON_BOMB_TIMED ] <= now )
+		{
+			killIcon(ICON_BOMB_TIMED);
+		}
+		if(getIconInfo()->m_keepTillFrame[ ICON_BOMB_REMOTE ] <= now )
+		{
+			killIcon(ICON_BOMB_REMOTE);
+		}
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Draw any icon information that needs to be drawn */
+// ------------------------------------------------------------------------------------------------
+void Drawable::drawDisabled(const IRegion2D* healthBarRegion)
+{
+
+	const Object *obj = getObject();			
+
+
+	//
+	// Disabled Emoticon /Lightning
+	//                   7/
+	if( obj->isDisabledByType( DISABLED_HACKED ) 
+		|| obj->isDisabledByType( DISABLED_PARALYZED ) 
+		|| obj->isDisabledByType( DISABLED_EMP ) 
+		|| obj->isDisabledByType( DISABLED_SUBDUED ) 
+		|| obj->isDisabledByType( DISABLED_UNDERPOWERED ) 
+		)
+	{
+		// create icon if necessary
+		if( getIconInfo()->m_icon[ ICON_DISABLED ] == NULL )
+		{
+			getIconInfo()->m_icon[ ICON_DISABLED ] = newInstance(Anim2D)
+			( s_animationTemplates[ ICON_DISABLED ], TheAnim2DCollection );
+		}
+
+		// draw the icon
+		if( healthBarRegion )
+		{
+			Int barHeight = healthBarRegion->hi.y - healthBarRegion->lo.y;
+
+			Int frameWidth = getIconInfo()->m_icon[ ICON_DISABLED ]->getCurrentFrameWidth();
+			Int frameHeight = getIconInfo()->m_icon[ ICON_DISABLED ]->getCurrentFrameHeight();
+
+#ifdef SCALE_ICONS_WITH_ZOOM_ML
+			// adjust the width to be a % of the health bar region size
+			Int barWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;
+			Int size = REAL_TO_INT( barWidth * 0.3f );
+			frameHeight = REAL_TO_INT((INT_TO_REAL(size) / INT_TO_REAL(frameWidth)) * frameHeight);
+			frameWidth = size;
+#endif
+			// given our scaled width and height we need to find the top left point to draw the image at
+			ICoord2D screen;
+			screen.x = healthBarRegion->lo.x;
+			screen.y = healthBarRegion->hi.y - (frameHeight + barHeight);
+			getIconInfo()->m_icon[ ICON_DISABLED ]->draw( screen.x, screen.y, frameWidth, frameHeight );
+
+		}  // end if
+	}  // end if
+	else
+	{
+		// delete icon if necessary
+		killIcon(ICON_DISABLED);
+
+	}  // end if
+
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Draw construction percent for drawables that have objects that are "under construction" */
+//-------------------------------------------------------------------------------------------------
+void Drawable::drawConstructPercent( const IRegion2D *healthBarRegion )
+{
+
+	// this data is in an attached object
+	Object *obj = getObject();
+
+	if( obj == NULL || !obj->getStatusBits().test( OBJECT_STATUS_UNDER_CONSTRUCTION ) ||
+			obj->getStatusBits().test( OBJECT_STATUS_SOLD ) )
+	{
+		// no object, or we are now complete get rid of the string if we have one
+		if( m_constructDisplayString )
+		{
+		
+			TheDisplayStringManager->freeDisplayString( m_constructDisplayString );
+			m_constructDisplayString = NULL;
+		}
+		return;
+	}
+
+	//if( obj->isEffectivelyDead() )
+	//{
+		//Don't render icons for dead things.
+	//	return;
+	//}
+
+	// construction is partially complete, allocate a display string if we need one
+	if( m_constructDisplayString == NULL )
+		m_constructDisplayString = TheDisplayStringManager->newDisplayString();
+
+	// set the string if the value has changed (seconds left, not percent)
+	Int secondsLeft = obj->getConstructionSecondsRemaining();
+	if( m_lastConstructDisplayed != INT_TO_REAL( secondsLeft ) )
+	{
+		UnicodeString buffer;
+		buffer.format( u"%ds", secondsLeft );
+		m_constructDisplayString->setText( buffer );
+
+		// record this value as our last displayed so we don't un-necessarily rebuild the string
+		m_lastConstructDisplayed = INT_TO_REAL( secondsLeft );
+				
+	}  // end if
+
+	// get center position in drawable
+	ICoord2D screen;
+	Coord3D pos;
+	getDrawableGeometryInfo().getCenterPosition(*getPosition(), pos);
+
+	// convert drawable center position to screen coords
+	TheTacticalView->worldToScreen( &pos, &screen );
+
+  if ( screen.x < 1 )
+    return;
+
+	// draw the text
+	Color color = GameMakeColor( 255, 255, 255, 255 );
+	Color dropColor = GameMakeColor( 0, 0, 0, 255 );
+	screen.x -= (m_constructDisplayString->getWidth() / 2);
+	m_constructDisplayString->draw( screen.x, screen.y, color, dropColor );
+
+}  // end drawConstructPercent
+
+//-------------------------------------------------------------------------------------------------
+/** How much money is still in a supply pile, written over it.  The piles were readable only as
+	* art - a full one and a nearly-empty one differ by a few boxes on the model - so deciding which
+	* one to send workers to, or whether an expansion is worth taking, meant guessing.  Written as
+	* cash rather than as boxes because cash is the number the decision is actually about.
+	* Docks and warehouses (400 boxes at the start) show it all the time; the small piles (150 and
+	* 50) litter the map and show it, smaller, only while the cursor is on or near them.  The class
+	* comes from the starting box count, so a big source does not turn small as it drains. */
+//-------------------------------------------------------------------------------------------------
+void Drawable::drawSupplyCash( const IRegion2D *healthBarRegion )
+{
+	Object *obj = getObject();
+	DockUpdateInterface *dock = obj && hasIconModule( ICON_MODULE_DOCK ) ? obj->getDockUpdateInterface() : NULL;
+	Int cash = dock ? dock->getSupplyCashValue() : -1;
+
+	if( cash <= 0 )
+	{
+		// not a supply source, or picked clean - drop the string rather than leave "$0" behind
+		if( m_supplyCashDisplayString )
+		{
+			TheDisplayStringManager->freeDisplayString( m_supplyCashDisplayString );
+			m_supplyCashDisplayString = NULL;
+			m_lastSupplyCashDisplayed = -1;
+		}
+		return;
+	}
+
+	// shrouded ground keeps its secrets: what was there when you last looked is not news
+	if( getShroudForDraw() != OBJECTSHROUD_CLEAR )
+		return;
+
+	// only a SupplyWarehouseDockUpdate answers getSupplyCashValue with cash, so this finds one
+	static const NameKeyType warehouseModuleKey = TheNameKeyGenerator->nameToKey( "SupplyWarehouseDockUpdate" );
+	const SupplyWarehouseDockUpdate *warehouse = (const SupplyWarehouseDockUpdate *)obj->findUpdateModule( warehouseModuleKey );
+	const Bool largeSource = warehouse->getStartingBoxes() >= 300;
+
+	Coord3D pos;
+	obj->getHealthBoxPosition( pos );
+	ICoord2D screen;
+	if( !TheTacticalView->worldToScreen( &pos, &screen ) )
+		return;
+
+	if( !largeSource && TheInGameUI->getMousedOverDrawableID() != getID() )
+	{
+		// near enough counts too: a small pile's model is a narrow target to land the cursor on
+		const ICoord2D &mouse = TheMouse->getMouseStatus()->pos;
+		Int dx = mouse.x - screen.x;
+		Int dy = mouse.y - screen.y;
+		const Int nearPixels = 60;
+		if( dx * dx + dy * dy > nearPixels * nearPixels )
+			return;
+	}
+
+	if( m_supplyCashDisplayString == NULL )
+	{
+		Int pointSize = TheInGameUI->getDrawableCaptionPointSize();
+		if( !largeSource )
+			pointSize -= 2;
+		m_supplyCashDisplayString = TheDisplayStringManager->newDisplayString();
+		m_supplyCashDisplayString->setFont( TheFontLibrary->getFont( TheInGameUI->getDrawableCaptionFontName(),
+											TheGlobalLanguageData->adjustFontSize( pointSize ),
+											TheInGameUI->isDrawableCaptionBold() ) );
+	}
+
+	if( m_lastSupplyCashDisplayed != cash )
+	{
+		UnicodeString buffer;
+		buffer.format( u"$%d", cash );
+		m_supplyCashDisplayString->setText( buffer );
+		m_lastSupplyCashDisplayed = cash;
+	}
+
+	Int width, height;
+	m_supplyCashDisplayString->getSize( &width, &height );
+	screen.x -= width / 2;
+	screen.y -= height;
+
+	m_supplyCashDisplayString->draw( screen.x, screen.y,
+																	 GameMakeColor( 90, 220, 90, 255 ),
+																	 GameMakeColor( 0, 0, 0, 255 ) );
+
+}  // end drawSupplyCash
+
+//-------------------------------------------------------------------------------------------------
+/** Draw caption */
+//-------------------------------------------------------------------------------------------------
+void Drawable::drawCaption( const IRegion2D *healthBarRegion )
+{
+	if (!m_captionDisplayString)
+		return;
+
+	// get center position in drawable
+	ICoord2D screen;
+	Coord3D pos;
+	getDrawableGeometryInfo().getCenterPosition(*getPosition(), pos);
+
+	// convert drawable center position to screen coords
+	TheTacticalView->worldToScreen( &pos, &screen );
+	screen.x -= (m_captionDisplayString->getWidth() / 2);
+
+	// draw background
+	{
+		Int width, xPos;
+		Int height, yPos;
+		m_captionDisplayString->getSize(&width,&height);
+		xPos = screen.x - 1;
+		yPos = screen.y - 1;
+
+		TheDisplay->drawFillRect(xPos, yPos, width + 2,height + 2, GameMakeColor(0,0,0,125));
+		TheDisplay->drawOpenRect(xPos, yPos, width + 2,height + 2, 1.0, GameMakeColor(20,20,20,255));
+	}
+
+	// draw the text
+	Color color = TheInGameUI->getDrawableCaptionColor();
+	Color dropColor = GameMakeColor( 0, 0, 0, 255 );
+	m_captionDisplayString->draw( screen.x, screen.y, color, dropColor );
+
+}  // end drawCaption
+
+// ------------------------------------------------------------------------------------------------
+/** Draw any veterency markers that should be displayed */
+// ------------------------------------------------------------------------------------------------
+void Drawable::drawVeterancy( const IRegion2D *healthBarRegion )
+{
+	// get object from drawble
+	Object* obj = getObject();
+
+	if( obj->getExperienceTracker() == NULL )
+	{
+		//Only objects with experience trackers can possibly have veterancy.
+		return;
+	}
+
+	VeterancyLevel level = obj->getVeterancyLevel();
+	const Image* image = s_veterancyImage[level];
+	if (!image)
+		return;
+
+	Real scale = 1.3f/CLAMP_ICON_ZOOM_FACTOR( TheTacticalView->getZoom() );
+#ifdef SCALE_ICONS_WITH_ZOOM_ML
+	Real objScale = scale * 1.55f;
+#else
+	Real objScale = 1.0f;
+#endif
+
+
+	Real vetBoxWidth  = image->getImageWidth()*objScale;
+	Real vetBoxHeight = image->getImageHeight()*objScale;
+
+	//
+	// With a bar, the chevrons stand just past its right end, centred on it. EA hung them from the
+	// bar's middle over its right end, which is where the ammo and seat trays now run: an amber
+	// chevron on the last amber round. Beside the bar nothing else is drawn.
+	//
+	if( healthBarRegion )
+	{
+		const Int barHeight = max( 3, (Int)(healthBarRegion->hi.y - healthBarRegion->lo.y) );
+		const Int x = healthBarRegion->hi.x + 2;
+		const Int y = healthBarRegion->lo.y + barHeight / 2 - REAL_TO_INT( vetBoxHeight * 0.5f );
+		TheDisplay->drawImage( image, x, y, x + REAL_TO_INT( vetBoxWidth ), y + REAL_TO_INT( vetBoxHeight ) );
+		return;
+	}
+
+	//
+	// take the center position of the object, go down to it's bottom extent, and project
+	// that point to the screen, that will be the "center" of our veterancy box
+	//
+
+	Coord3D p;
+	ICoord2D screenCenter;
+	obj->getHealthBoxPosition(p);
+	if( !TheTacticalView->worldToScreen( &p, &screenCenter ) )
+		return;
+
+	Real healthBoxWidth, healthBoxHeight;
+	if (!obj->getHealthBoxDimensions(healthBoxHeight, healthBoxWidth))
+		return;
+
+	screenCenter.x += healthBoxWidth * scale * 0.5f;
+
+	// draw the image
+	TheDisplay->drawImage(image, screenCenter.x + 1, screenCenter.y + 1, screenCenter.x + 1 + vetBoxWidth, screenCenter.y + 1 + vetBoxHeight);
+
+}  // end drawVeterancy
+
+// ------------------------------------------------------------------------------------------------
+/** The capture clock, drawn under the health bar of the building being taken.
+	*
+	* A capture is a man standing at a door for several seconds and a building that flashes while it
+	* happens. The flash says somebody is taking it; it does not say whether that is nearly over or
+	* barely started, so the choice between driving over to shoot him and carrying on with the fight
+	* was made blind. The bar says how long is left.
+	*
+	* Drawn by the man rather than by the building, because he is the one who knows: a building being
+	* captured is told nothing about it until it changes hands. So this runs in the captor's icon
+	* pass and puts its rectangle under the target's health bar, in the capturing player's colour -
+	* whose capture it is, is the other half of the question.
+	*/
+// ------------------------------------------------------------------------------------------------
+void Drawable::drawCaptureProgress( void )
+{
+	const Object *obj = getObject();
+	if( obj == NULL || !obj->isKindOf( KINDOF_INFANTRY ) )
+		return;
+
+	ObjectID targetID = INVALID_ID;
+	Real progress = 0.0f;
+	if( !obj->getCaptureProgress( &targetID, &progress ) )
+		return;
+
+	const Object *target = TheGameLogic->findObjectByID( targetID );
+	const Drawable *targetDraw = target ? target->getDrawable() : NULL;
+	if( targetDraw == NULL )
+		return;
+
+	IRegion2D healthBarRegion;
+	if( !computeHealthRegion( targetDraw, healthBarRegion ) )
+		return;
+
+	const Real barWidth = healthBarRegion.hi.x - healthBarRegion.lo.x;
+	const Real barHeight = max( 3, healthBarRegion.hi.y - healthBarRegion.lo.y );
+	// clear of the health bar and its outline, and of the ammo and seat trays under it: a Bunker or a
+	// garrisoned house being taken wears both
+	const Real barTop = max( (Int)healthBarRegion.hi.y + 2, targetDraw->trayStackBottom( &healthBarRegion ) );
+
+	Color fillColor = GameMakeColor( 255, 255, 255, 255 );
+	const Player *owner = obj->getControllingPlayer();
+	if( owner != NULL && owner->getPlayerColor() != 0 )
+	{
+		UnsignedByte r, g, b, a;
+		GameGetColorComponents( clientPlayerColor( owner ), &r, &g, &b, &a );
+		fillColor = GameMakeColor( r, g, b, 255 );
+	}
+
+	TheDisplay->drawOpenRect( healthBarRegion.lo.x, barTop, barWidth, barHeight,
+														1.0f, GameDarkenColor( fillColor, 60 ) );
+	TheDisplay->drawFillRect( healthBarRegion.lo.x + 1, barTop + 1,
+														(barWidth - 2) * progress, barHeight - 2, fillColor );
+
+}  // end drawCaptureProgress
+
+// ------------------------------------------------------------------------------------------------
+/** Draw health bar information for drawable */
+// ------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+/** Seconds left, drawn just above a bar. The line belongs to this drawable. One string shared by
+	* every building in view was set to a different countdown for each of them, and every change
+	* built a new text texture, so a base full of timers paid that cost every frame. */
+//-------------------------------------------------------------------------------------------------
+static void freeOwnCountdown( DisplayString *&countdown )
+{
+	if( countdown == NULL )
+		return;
+
+	TheDisplayStringManager->freeDisplayString( countdown );
+	countdown = NULL;
+}
+
+static void drawOwnCountdown( DisplayString *&countdown, Int seconds, Int x, Int y )
+{
+	if( countdown == NULL )
+	{
+		countdown = TheDisplayStringManager->newDisplayString();
+		if( countdown == NULL )
+			return;
+
+		countdown->setFont( TheFontLibrary->getFont( TheInGameUI->getDrawableCaptionFontName(),
+							TheGlobalLanguageData->adjustFontSize( TheInGameUI->getDrawableCaptionPointSize() - 2 ),
+							FALSE ) );
+	}
+
+	UnicodeString text;
+	text.format( u"%ds", seconds );
+	countdown->setText( text );
+
+	Int textW, textH;
+	countdown->getSize( &textW, &textH );
+	countdown->draw( x, y - textH, GameMakeColor( 255, 255, 255, 255 ), GameMakeColor( 0, 0, 0, 255 ) );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Whether a weapon is slow enough to earn a reload bar, from its data alone: the time a full clip
+	* takes to fire and reload, divided by the shots in it, has to come to more than three seconds a
+	* shot. A clip of 0 is endless and its delay between shots is the whole wait.
+	*
+	* Every direct-fire tank gun in the game waits two (the Laser General's Crusader 2.3). Above the
+	* line sit the guns whose wait is the decision: the Nuke Cannon's ten seconds, the Inferno Cannon,
+	* the artillery platform, the SCUD and Tomahawk launchers, the Scorpion's missile and the
+	* Comanche's anti-tank missiles. Below it go the weapons that empty a quick clip and then reload
+	* it - the Rocket Buggy's six rockets, the Comanche's rocket pods, the Paladin's point defence
+	* laser - which fire about as often as a tank does. The old test was the
+	* length of whichever wait was running, and those clip reloads all ran past three seconds, so a
+	* Paladin that touched an infantryman with its laser wore an amber bar for the next four.
+	*
+	* A weapon of DamageType DISARM is not a gun at all. The Dozer's mine-clearing scoop is one shot
+	* and a four-second reload, so the Dozer wore an amber bar after every mine it lifted. The
+	* Worker's clearing weapon is DISARM too, and those two are the only DISARM weapons in the data. */
+//-------------------------------------------------------------------------------------------------
+Bool Drawable_weaponWearsReloadBar( Int clipSize, UnsignedInt delayFrames, UnsignedInt clipReloadFrames, Bool disarms )
+{
+	const UnsignedInt RELOAD_BAR_MIN_FRAMES = 3 * LOGICFRAMES_PER_SECOND;
+	if( disarms )
+		return FALSE;
+
+	if( clipSize <= 0 )
+		return delayFrames > RELOAD_BAR_MIN_FRAMES;
+
+	return clipSize * delayFrames + clipReloadFrames > (UnsignedInt)clipSize * RELOAD_BAR_MIN_FRAMES;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** How far a wait from `started` to `ready` has come at `now`, 0 to 1, or -1 when it is not one
+	* worth a bar. `longest` is the longest wait the weapon's data allows. The start frame is only
+	* written when this weapon fires or reloads, so a launcher sharing its reload with another slot,
+	* or a Combat Bike handing its gun to a new rider, is told when it can fire next and keeps an old
+	* start - a wait that looked a minute long. The span is held to what the data allows. */
+//-------------------------------------------------------------------------------------------------
+Real Drawable_reloadBarFraction( UnsignedInt now, UnsignedInt started, UnsignedInt ready, UnsignedInt longest )
+{
+	const UnsignedInt RELOAD_BAR_MIN_FRAMES = 3 * LOGICFRAMES_PER_SECOND;
+
+	// 0x7fffffff is an empty clip that does not reload itself (a jet waiting for its airfield)
+	if( ready <= now || ready == 0x7fffffff )
+		return -1.0f;
+
+	UnsignedInt span = ready > started ? ready - started : longest;
+	if( span > longest )
+		span = longest;
+	if( span < ready - now )
+		span = ready - now;
+	if( span <= RELOAD_BAR_MIN_FRAMES )
+		return -1.0f;
+
+	return 1.0f - INT_TO_REAL( ready - now ) / INT_TO_REAL( span );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** The slowest long reload on this object, 0 to 1, or -1 when none is running.
+	*
+	* A weapon that does less than one point of damage is a dummy that only drives an animation
+	* (the Battle Bus and Troop Crawler passengers' ten-second one, the angry mob's) and the SCUD
+	* Storm's, whose launch already has its own charge bar; none of those is a reload anyone waits on.
+	*
+	* This reads frame numbers and template values and nothing else. Weapon::getStatus() writes
+	* m_status and WeaponTemplate::getDelayBetweenShots() draws from the logic random stream, so
+	* calling either from a draw would be the client writing logic state. */
+//-------------------------------------------------------------------------------------------------
+static Real reloadBarFraction( const Object *obj )
+{
+	const UnsignedInt now = TheGameLogic->getFrame();
+	Real least = -1.0f;
+
+	for( Int i = 0; i < WEAPONSLOT_COUNT; ++i )
+	{
+		const Weapon *weapon = obj->getWeaponInWeaponSlot( (WeaponSlotType)i );
+		if( weapon == NULL )
+			continue;
+		const WeaponTemplate *tmpl = weapon->getTemplate();
+		if( tmpl->getPrimaryDamage( WeaponBonus() ) < 1.0f )
+			continue;
+
+		const UnsignedInt delay = (UnsignedInt)tmpl->getMaxDelayBetweenShots();
+		const UnsignedInt clipReload = (UnsignedInt)tmpl->getClipReloadTime( WeaponBonus() );
+		if( !Drawable_weaponWearsReloadBar( tmpl->getClipSize(), delay, clipReload, tmpl->getDamageType() == DAMAGE_DISARM ) )
+			continue;
+
+		const UnsignedInt longest = tmpl->getClipSize() > 0 && clipReload > delay ? clipReload : delay;
+		const Real fraction = Drawable_reloadBarFraction( now, weapon->getLastReloadStartedFrame(),
+																											weapon->getPossibleNextShotFrame(), longest );
+		if( fraction >= 0.0f && ( least < 0.0f || fraction < least ) )
+			least = fraction;
+	}
+
+	return least;
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::drawHealthBar(const IRegion2D* healthBarRegion)
+{
+	if (!healthBarRegion)
+		return;
+
+	// m_showObjectHealth is the debug master switch (a cheat key toggles it); which units wear a bar
+	// while it is on is the player's HealthBars setting, applied further down once the health is known
+	if( TheGlobalData->m_showObjectHealth )
+	{
+		Object *obj = getObject();
+
+		// if no object, nothing to do
+		if( obj == NULL )
+			return;
+
+		// effect objects, scenery and death puppets wear none (Drawable_kindShowsHealthBar)
+		if( !Drawable_kindShowsHealthBar( obj->getTemplate()->getKindOfMask() ) )
+			return;
+
+		if( obj->isKindOf( KINDOF_STRUCTURE ) )
+		{
+			const ContainModuleInterface *contain = obj->getContain();
+			const Bool isBridge = obj->isKindOf( KINDOF_BRIDGE ) ||
+														obj->isKindOf( KINDOF_LANDMARK_BRIDGE ) ||
+														obj->isKindOf( KINDOF_BRIDGE_TOWER );
+			//
+			// "nobody's" is a side test, not a player-pointer test: a map hands its houses either to
+			// the neutral player or to a Civilian-faction player of its own, and both are equally not
+			// in the match. Every faction anyone plays is a playable side, so a captured tech building
+			// or a rebuilt GLA hole is owned the moment it changes hands.
+			//
+			const Player *owner = obj->getControllingPlayer();
+			const Bool isUnowned = owner == NULL || !owner->isPlayableSide();
+
+			if( !Drawable_structureShowsHealthBar( isBridge, isUnowned,
+																						 contain != NULL && contain->isGarrisonable(),
+																						 obj->isKindOf( KINDOF_CAPTURABLE ) ) )
+				return;
+		}
+
+		// get body module of object
+		BodyModuleInterface *body = obj->getBodyModule();
+
+		// get the health and max health
+		Real health = body->getHealth();
+		Real maxHealth = body->getMaxHealth();
+
+		// if no max health or health at all we will draw nothing
+		if( maxHealth == 0.0f || health == 0.0f )
+			return;
+
+		// the player's setting decides who wears one.  It is tested here rather than at the top of the
+		// function because smart mode needs the health, and the health needs the body module.
+		if( !Drawable_healthBarModeShows( TheGlobalData->m_healthBarMode,
+																			isSelected(),
+																			TheInGameUI != NULL &&
+																				TheInGameUI->getMousedOverDrawableID() == getID(),
+																			health < maxHealth ) )
+			return;
+
+		// what is our health ratio
+		Real healthRatio = health / maxHealth;
+
+		//
+		// what color will we use for the health bar based on our ratio, this makes it
+		// slowly go from green to red, (or from blue to cyan if disabled)
+		//
+
+		Color color, outlineColor;
+		if( Drawable_disabledShowsBlueHealthBar( obj->getDisabledFlags() ) )
+		{
+			color = GameMakeColor( 0, healthRatio * 255.0f, 255, 255 );//blue to cyan
+			outlineColor = GameMakeColor( 0, healthRatio * 128.0f, 128, 255 );//dark blue to dark cyan
+
+		}
+		else if( TheGlobalData->m_healthBarColors == 1 &&
+						 obj->getControllingPlayer() != NULL &&
+						 obj->getControllingPlayer()->getPlayerColor() != 0 )
+		{
+			// HealthBarColors 1: the bar wears its owner's colour, the one the minimap and the selection
+			// rings use, and the bar's length alone says how hurt it is.  The outline is the same colour
+			// darkened, so a light player colour still reads against light ground.  Civilians, crates
+			// and anything else with no colour to borrow keep the ramp below.
+			UnsignedByte r, g, b, a;
+			GameGetColorComponents( clientPlayerColor( obj->getControllingPlayer() ), &r, &g, &b, &a );
+
+			color = GameMakeColor( r, g, b, 255 );				// the stored colour's alpha is not ours to trust
+			outlineColor = GameDarkenColor( color, 60 );
+		}
+		else //retail's ramp for every owner: green at full health, through yellow, to red
+		{
+
+			RGBColor inColor, outColor;
+			inColor.blue = 0; // health bars do not display blue...
+			outColor.blue = 0; // health bars do not display blue...
+
+			if( healthRatio >= 0.5f )
+			{
+				inColor.red = 1.0f - ((healthRatio - 0.5f) / 0.5f);
+				inColor.green = 1.0f;
+//				color = GameMakeColor       (  255 - ((healthRatio - 0.5f) / 0.5f) * 255, 255, 0, 255 );
+//				outlineColor = GameMakeColor( (255 - ((healthRatio - 0.5f) / 0.5f) * 255) * 0.5, 255 * 0.5, 0, 255 );
+			}
+			else
+			{
+				inColor.red = 1.0f;
+				inColor.green = 1.0f - ((0.5f - healthRatio) / 0.5f);
+//				color = GameMakeColor( 255, 255 - ((0.5f - healthRatio) / 0.5f) * 255, 0, 255 );
+//				outlineColor = GameMakeColor( 255 * 0.5, (255 - ((0.5f - healthRatio) / 0.5f) * 255) * 0.5, 0, 255 );
+			}
+
+			outColor.red = inColor.red * 0.5f;
+			outColor.green =inColor.green * 0.5f;
+
+			if( m_conditionState.test( MODELCONDITION_REALLY_DAMAGED ) == TRUE )
+			{//average the above color with red
+				inColor.red = (1.0f + inColor.red) * 0.5f;
+				inColor.green *= 0.5f;
+			}
+			else if ( m_conditionState.test( MODELCONDITION_DAMAGED ) == FALSE )
+			{//average the above color with green
+				inColor.green = (1.0f + inColor.green) * 0.5f;
+				inColor.red *= 0.5f;
+			}
+
+			color =        GameMakeColor( 255.0 * inColor.red, 255.0 * inColor.green, 255.0 * inColor.blue, 255);
+			outlineColor = GameMakeColor( 255.0 * outColor.red, 255.0 * outColor.green, 255.0 * outColor.blue, 255);
+		
+		
+		}
+
+
+
+
+///		Real scale = 1.3f / TheTacticalView->getZoom();
+		Real healthBoxWidth = healthBarRegion->hi.x - healthBarRegion->lo.x;
+			
+		Real healthBoxHeight = max(3, healthBarRegion->hi.y - healthBarRegion->lo.y);
+		Real healthBoxOutlineSize = 1.0f;
+
+		//
+		// past every bail-out above, so this drawable really is wearing a bar this frame: hand the
+		// rectangle to the client so a click that lands on it can find its way back here.  The bar is
+		// 2D overlay and the pick ray only knows about the 3D scene, so without this a click on a bar
+		// hits nothing at all.
+		//
+		TheGameClient->addHealthBarPickRegion( this, *healthBarRegion );
+
+		// draw the health box outline
+		TheDisplay->drawOpenRect( healthBarRegion->lo.x, healthBarRegion->lo.y, healthBoxWidth, healthBoxHeight,
+															healthBoxOutlineSize, outlineColor );
+
+		// a selected drawable wears a white frame one pixel outside its bar, so a selection still
+		// reads in a crowd where every unit carries a bar, without reserving a row above the bar for
+		// a marker. It sits outside rather than replacing the outline, so the bar keeps its owner
+		// colour all the way round.
+		if( isSelected() )
+			TheDisplay->drawOpenRect( healthBarRegion->lo.x - 1, healthBarRegion->lo.y - 1,
+																healthBoxWidth + 2, healthBoxHeight + 2,
+																healthBoxOutlineSize, GameMakeColor( 255, 255, 255, 255 ) );
+
+		// draw a filled bar for the health
+		const Int healthFillWidth = (Int)((healthBoxWidth - 2) * healthRatio);
+		TheDisplay->drawFillRect( healthBarRegion->lo.x + 1, healthBarRegion->lo.y + 1,
+															healthFillWidth, healthBoxHeight - 2,
+															color );
+
+		// the health already lost is a near black slot rather than bare ground, so the length of the
+		// fill reads at a glance on a thin bar, and in owner colour on a map of the same colour
+		TheDisplay->drawFillRect( healthBarRegion->lo.x + 1 + healthFillWidth, healthBarRegion->lo.y + 1,
+															(healthBoxWidth - 2) - healthFillWidth, healthBoxHeight - 2,
+															GameMakeColor( 10, 10, 10, 190 ) );
+
+		// bars stack upwards from just above the health bar, each clearing what is drawn over the one below it
+		Int stackY = healthBarRegion->lo.y - 3;
+
+		// own producers show a white production-progress bar above the health bar
+		ProductionUpdateInterface *pu = hasIconModule( ICON_MODULE_PRODUCTION ) && showsOwnerDetail( obj )
+			? obj->getProductionUpdateInterface() : NULL;
+		const ProductionEntry *pe = pu ? pu->firstProduction() : NULL;
+		if( pe )
+		{
+			Int prodY = stackY - healthBoxHeight;
+			// the entry keeps counting past 100% while the finished unit waits for a free exit door, so clamp
+			Real pct = pe->getPercentComplete();
+			if( pct > 100.0f )
+				pct = 100.0f;
+			else if( pct < 0.0f )
+				pct = 0.0f;
+			TheDisplay->drawOpenRect( healthBarRegion->lo.x, prodY, healthBoxWidth, healthBoxHeight,
+																healthBoxOutlineSize, GameMakeColor( 255, 255, 255, 255 ) );
+			TheDisplay->drawFillRect( healthBarRegion->lo.x + 1, prodY + 1,
+																(healthBoxWidth - 2) * pct * 0.01f, healthBoxHeight - 2,
+																GameMakeColor( 255, 255, 255, 255 ) );
+
+			stackY = prodY - 3;
+
+			//
+			// One white square over the bar's right end for each entry waiting behind the one being made.
+			// The squares share a black outline, so they stay apart on any ground, follow the bar's own
+			// thickness up the screen sizes, and start a new row when a far zoom makes the bar too short.
+			//
+			const Int waiting = (Int)pu->getProductionCount() - 1;
+			if( waiting > 0 )
+			{
+				const Int side = (Int)healthBoxHeight + 2;
+				const Int pitch = side - 1;
+				const Int perRow = max( 1, ((Int)healthBoxWidth - 1) / pitch );
+				const Int bottom = prodY - 1 - side;
+				for( Int i = 0; i < waiting; ++i )
+				{
+					const Int x = healthBarRegion->lo.x + (Int)healthBoxWidth - side - (i % perRow) * pitch;
+					const Int y = bottom - (i / perRow) * pitch;
+					TheDisplay->drawFillRect( x, y, side, side, GameMakeColor( 0, 0, 0, 255 ) );
+					TheDisplay->drawFillRect( x + 1, y + 1, side - 2, side - 2, GameMakeColor( 255, 255, 255, 255 ) );
+				}
+				stackY = bottom - ((waiting - 1) / perRow) * pitch - 3;
+			}
+		}
+
+		//
+		// A weapon on a long reload, on a unit of ours the player is looking at: selected or under
+		// the cursor, the same two cases the ammo pips go by. Nothing else on screen said when a
+		// Nuke Cannon could fire again; it just sat there for ten seconds after every shell. The
+		// fill is amber rather than white so it does not read as production or a superweapon.
+		//
+		if( showsOwnerDetail( obj ) &&
+				( isSelected() || ( TheInGameUI != NULL && TheInGameUI->getMousedOverDrawableID() == getID() ) ) )
+		{
+			const Real reload = reloadBarFraction( obj );
+			if( reload >= 0.0f )
+			{
+				Int reloadY = stackY - healthBoxHeight;
+				TheDisplay->drawOpenRect( healthBarRegion->lo.x, reloadY, healthBoxWidth, healthBoxHeight,
+																	healthBoxOutlineSize, GameMakeColor( 255, 255, 255, 255 ) );
+				TheDisplay->drawFillRect( healthBarRegion->lo.x + 1, reloadY + 1,
+																	(healthBoxWidth - 2) * reload, healthBoxHeight - 2,
+																	GameMakeColor( 255, 190, 40, 255 ) );
+				stackY = reloadY - 3;
+			}
+		}
+
+		//
+		// A superweapon charging gets the same white bar the production queue uses - stacked above
+		// it rather than on top of it,
+		// which is what a Chinese nuclear silo researching an upgrade while its missile charges used
+		// to draw: two bars and two countdowns in the same row of pixels. Only powers that carry a public timer count -
+		// that is the flag the superweapon list in the corner goes by.
+		//
+		// A power only counts while it is really counting down towards something the player can
+		// fire. Every command centre carries one public-timer power from the first frame of the
+		// game (crate drop, napalm strike, black market nuke), all of them locked behind a general's
+		// promotion nobody has bought yet and all of them charging away regardless - so the main
+		// base wore a permanent bar that stood for nothing. A power whose science the player does
+		// not own is skipped, and so is one that has finished charging: a full bar that never
+		// empties is the same clutter in a different colour.
+		//
+		if( hasIconModule( ICON_MODULE_SPECIAL_POWER ) && showsOwnerDetail( obj ) &&
+				!obj->getStatusBits().test( OBJECT_STATUS_UNDER_CONSTRUCTION ) &&
+				!obj->getStatusBits().test( OBJECT_STATUS_SOLD ) )
+		{
+			const UnsignedInt now = TheGameLogic->getFrame();
+			Real chargePct = -1.0f;
+			UnsignedInt chargeFramesLeft = 0;		// for the seconds written over the bar
+
+			const Player *owner = obj->getControllingPlayer();
+
+			for( BehaviorModule** m = obj->getBehaviorModules(); *m; ++m )
+			{
+				SpecialPowerModuleInterface* sp = (*m)->getSpecialPower();
+				if( sp == NULL || sp->isReady() )
+					continue;
+				const SpecialPowerTemplate *tmpl = sp->getSpecialPowerTemplate();
+				if( tmpl == NULL || !tmpl->hasPublicTimer() )
+					continue;
+
+				ScienceType needed = sp->getRequiredScience();
+				if( needed != SCIENCE_INVALID && (owner == NULL || !owner->hasScience( needed )) )
+					continue;
+
+				Real full = INT_TO_REAL( owner ? owner->getSpecialPowerReloadTime( tmpl ) : tmpl->getReloadTime() );
+				if( full <= 0.0f )
+					continue;
+
+				UnsignedInt ready = sp->getReadyFrame();
+				if( ready <= now )
+					continue;
+				Real pct = 100.0f * (1.0f - INT_TO_REAL( ready - now ) / full);
+				if( pct < 0.0f ) pct = 0.0f;
+				if( pct > 100.0f ) pct = 100.0f;
+				if( chargePct < 0.0f || pct < chargePct )
+				{
+					chargePct = pct;
+					chargeFramesLeft = ready - now;
+				}
+			}
+
+			if( chargePct >= 0.0f )
+			{
+				Int chargeY = stackY - healthBoxHeight;
+				TheDisplay->drawOpenRect( healthBarRegion->lo.x, chargeY, healthBoxWidth, healthBoxHeight,
+																	healthBoxOutlineSize, GameMakeColor( 255, 255, 255, 255 ) );
+				TheDisplay->drawFillRect( healthBarRegion->lo.x + 1, chargeY + 1,
+																	(healthBoxWidth - 2) * chargePct * 0.01f, healthBoxHeight - 2,
+																	GameMakeColor( 255, 255, 255, 255 ) );
+
+				// ... and how long that is, the same way a production bar says it
+				drawOwnCountdown( m_chargeTimeDisplayString,
+													ControlBar_secondsFromFrames( INT_TO_REAL( chargeFramesLeft ) ),
+													healthBarRegion->lo.x, chargeY );
+			}
+			else
+				freeOwnCountdown( m_chargeTimeDisplayString );
+		}
+		else
+			freeOwnCountdown( m_chargeTimeDisplayString );
+
+	}  // end if
+
+}  // end drawHealthBar
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+void Drawable::clearAndSetModelConditionState( ModelConditionFlagType clr, ModelConditionFlagType set )
+{
+	ModelConditionFlags c, s;
+	if (clr != MODELCONDITION_INVALID)
+		c.set(clr);
+	if (set != MODELCONDITION_INVALID)
+		s.set(set);
+	clearAndSetModelConditionFlags(c, s);
+}
+
+//-------------------------------------------------------------------------------------------------
+DrawModule** Drawable::getDrawModulesNonDirty() 
+{ 
+	DrawModule** dm = (DrawModule**)getModuleList(MODULETYPE_DRAW); 
+	return dm;
+}
+
+//-------------------------------------------------------------------------------------------------
+DrawModule** Drawable::getDrawModules() 
+{ 
+	DrawModule** dm = (DrawModule**)getModuleList(MODULETYPE_DRAW);
+#ifdef DIRTY_CONDITION_FLAGS
+	// LOGIC-THREAD.md phase 3, step 3b: inside the overlap window the tick may be setting this drawable's
+	// conditions; W3DDisplay's takeReadsForRender flushed the client's at the sync point
+	if (LogicThread::isInsideWindow())
+		return dm;
+	if (m_isModelDirty)
+	{
+		if (TheGameLogic->isInGameLogicUpdate())
+			deferModelConditionFlush();
+		else
+			flushModelCondition( FALSE );
+	}
+#endif
+	return dm;
+}
+
+//-------------------------------------------------------------------------------------------------
+DrawModule const** Drawable::getDrawModules() const 
+{ 
+	DrawModule const** dm = (DrawModule const**)getModuleList(MODULETYPE_DRAW);
+#ifdef DIRTY_CONDITION_FLAGS
+	if (LogicThread::isInsideWindow())
+		return dm;
+	if (m_isModelDirty)
+	{
+		if (TheGameLogic->isInGameLogicUpdate())
+			deferModelConditionFlush();
+		else
+			flushModelCondition( FALSE );
+	}
+#endif
+	return dm;
+}
+
+//-------------------------------------------------------------------------------------------------
+/* LOGIC-THREAD.md phase 2, M1.  Inside a logic tick a drawable takes its new transform and model
+	condition bits at once, so everything logic reads stays as it was, but the work they cause on the
+	draw modules (render object transforms, tread edges, model and render object swaps) waits for
+	LogicThread::runTick, which calls flushPendingClientWork right after the tick on the main thread.
+	It keys on isInGameLogicUpdate rather than on the thread, so -logicthread 0 and 1 run one path. */
+static std::vector<DrawableID> s_clientWorkQueue;
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::queueClientWork() const
+{
+	if (m_clientWorkQueued)
+		return;
+	m_clientWorkQueued = TRUE;
+	s_clientWorkQueue.push_back( getID() );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** The map load makes, places and throws away the batched trees and props in one go, and builds
+	its loading screen and every render object of the map on the main thread anyway (LogicThread's
+	tickNeedsMainThread), so it keeps the drawable lifetime it always had. */
+Bool Drawable::tickDefersLifetime()
+{
+	return TheGameLogic != NULL && TheGameLogic->isInGameLogicUpdate() && !TheGameLogic->isLoadingMap();
+}
+
+//-------------------------------------------------------------------------------------------------
+/** The second half of the constructor: what the draw modules make on the device, the asset manager
+	and the scene, and the construction percent's string.  The census counts it from the logic
+	thread, where only an on-demand flush of a shell inside the tick can run it. */
+void Drawable::buildRenderObjects()
+{
+	LOGIC_CENSUS( CENSUS_NEW_DRAWABLE );
+	const Bool madeInTick = m_renderPending;
+	m_renderPending = FALSE;
+
+	//Added By Sadullah Nader
+	//Fix for the building percent
+	m_constructDisplayString = TheDisplayStringManager->newDisplayString();
+	m_constructDisplayString->setFont(TheFontLibrary->getFont(TheInGameUI->getDrawableCaptionFontName(),
+																TheGlobalLanguageData->adjustFontSize(TheInGameUI->getDrawableCaptionPointSize()),
+																TheInGameUI->isDrawableCaptionBold() ));
+
+	for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		(*dm)->buildRenderObjects( madeInTick );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** The state the drawable holds now, as the next step, unless the last state step already is it. */
+void Drawable::recordConditionStep() const
+{
+	for (size_t i = m_pendingSteps.size(); i-- > 0; )
+	{
+		if (m_pendingSteps[i].work)
+			continue;
+		if (m_pendingSteps[i].condition == m_conditionState)
+			return;
+		break;
+	}
+	PendingStep step;
+	step.condition = m_conditionState;
+	step.movesBones = FALSE;
+	m_pendingSteps.push_back( step );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Where a flush used to run inside the tick, the state it would have applied is kept, so the flush
+	after the tick walks the same states in the same order and W3DModelDraw picks the same transition
+	animations (a door, a deploy, an unpack set A then B in one tick) as an immediate flush did. */
+void Drawable::deferModelConditionFlush() const
+{
+	recordConditionStep();
+	queueClientWork();
+}
+
+//-------------------------------------------------------------------------------------------------
+/** The drawable whose step's work is running: a doClientWork it calls on itself in turn is already
+	in its place in the order and runs at once. */
+static const Drawable* s_clientWorkOwner = NULL;
+
+//-------------------------------------------------------------------------------------------------
+/** The model condition flush, and phase 2 M3's deferred client work in its place between the states.
+	The census counts it from the logic thread: on its own channel when a caller asked for it on
+	demand, under modelcondition when anything else made it run there. */
+void Drawable::flushModelCondition( Bool onDemand ) const
+{
+	// a work that sets a condition and then reaches getDrawModules: the state goes to the end of
+	// the walk below rather than ahead of the older steps still in it
+	if (s_clientWorkOwner == this)
+	{
+		recordConditionStep();
+		m_isModelDirty = false;
+		return;
+	}
+	// a shell another drawable's work reaches before its own turn in the flush: the render objects
+	// come first, as they did in the constructor
+	if (m_renderPending)
+		const_cast<Drawable*>(this)->buildRenderObjects();
+	LogicThread::census( onDemand ? LogicThread::CENSUS_ON_DEMAND_FLUSH : LogicThread::CENSUS_MODEL_CONDITION );
+	if (s_modelLockCount > 0)
+	{
+		DEBUG_CRASH(("Should not need to update dirty stuff while locked-for-iteration. Ignoring."));
+		// this shouldn't happen, but if it does, just return the current (dirty) scenario.
+		// we must NOT update the condition state, as someone is relying on the current
+		// list of W3D render objects not being munged. (srj)
+		return;
+	}
+	// the states a flush inside the tick would have applied first, then the one the tick ended on
+	if (m_isModelDirty)
+		recordConditionStep();
+	m_isModelDirty = false;
+	// a caller inside the tick that reads bones or barrels needs the states and the work that moves
+	// bones; everything else stays for after the tick, in its order, on the newest state
+	const Bool keepForLater = onDemand && TheGameLogic->isInGameLogicUpdate();
+	std::vector<PendingStep> kept;
+	// yeah, yeah, yeah... I know (srj)
+	while (!m_pendingSteps.empty())
+	{
+		std::vector<PendingStep> steps;
+		steps.swap( m_pendingSteps );
+		for (size_t i = 0; i < steps.size(); ++i)
+		{
+			if (steps[i].work && keepForLater && !steps[i].movesBones)
+			{
+				kept.push_back( steps[i] );
+				continue;
+			}
+			if (steps[i].work)
+			{
+				// client work on the logic thread: a bone read inside the tick needed it, which is the
+				// on-demand flush's count, or it ran there for no reader, which is a push
+				LogicThread::census( onDemand ? LogicThread::CENSUS_ON_DEMAND_FLUSH : LogicThread::CENSUS_DRAWABLE_PUSH );
+				LatchRestore<const Drawable*> inWork( s_clientWorkOwner, this );
+				steps[i].work();
+				continue;
+			}
+			for (DrawModule** dm = (DrawModule**)getModuleList(MODULETYPE_DRAW); *dm; ++dm)
+			{
+				ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+				if (di)
+					di->replaceModelConditionState( steps[i].condition );
+			}
+		}
+	}
+	m_pendingSteps.swap( kept );
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::doPendingClientWork( Bool onDemand )
+{
+	if (m_renderPending)
+		buildRenderObjects();
+	if (m_isModelDirty || !m_pendingSteps.empty())
+		flushModelCondition( onDemand );
+	flushPendingTransform( onDemand );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** LOGIC-THREAD.md phase 2, M3.  What logic tells a drawable keeps landing in the drawable's own
+	fields at once, so a read from logic sees it; what that does to the draw modules, the render
+	objects, the selection and the audio goes into the step list where the order puts it, and runs
+	after the tick.  The census counts a work that runs on the logic thread all the same. */
+void Drawable::doClientWork( const std::function<void()>& work, ClientWorkOrder order, Bool movesBones )
+{
+	if (s_clientWorkOwner == this)
+	{
+		work();
+		return;
+	}
+	if (TheGameLogic->isInGameLogicUpdate())
+	{
+		PendingStep step;
+		step.work = work;
+		step.movesBones = movesBones;
+		if (order == WORK_BEFORE_STATES)
+		{
+			size_t at = 0;
+			while (at < m_pendingSteps.size() && m_pendingSteps[at].work)
+				++at;
+			m_pendingSteps.insert( m_pendingSteps.begin() + at, step );
+		}
+		else
+		{
+			if (order == WORK_AFTER_FLUSH && m_isModelDirty)
+				recordConditionStep();
+			m_pendingSteps.push_back( step );
+		}
+		queueClientWork();
+		return;
+	}
+	LOGIC_CENSUS( CENSUS_DRAWABLE_PUSH );
+	if (order == WORK_AFTER_FLUSH)
+		getDrawModules();
+	work();
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::flushPendingTransform( Bool onDemand )
+{
+	if (m_transformPending)
+	{
+		m_transformPending = FALSE;
+		LogicThread::census( onDemand ? LogicThread::CENSUS_ON_DEMAND_FLUSH : LogicThread::CENSUS_DRAWABLE );
+		// no draw module reads the old transform, so the one the tick ended on stands in for it
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+			(*dm)->reactToTransformChange( getTransformMatrix(), getPosition(), getOrientation() );
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+/** The draw modules with whatever the tick has deferred applied now.  For the callers inside a tick
+	that act on the render object as it stands (animation timing, weapon fire FX, live bones, ghost
+	snapshots): the census counts these on their own channel, the list phase 3 has to resolve.
+	Inside the overlap window the render asks too (a rider's model on its container's bone, an
+	attach-to-bone model, both from doDrawModule), and the tick beside it may be adding steps to this
+	same drawable: flushing there swapped m_pendingSteps out from under the logic thread's push_back,
+	and flushAfterTick then ran a step whose work had been freed.  As getDrawModules does, the window
+	reads the render objects as the sync point left them; flushAfterTick applies the rest. */
+DrawModule** Drawable::getDrawModulesFlushed()
+{
+	if (!LogicThread::isInsideWindow())
+		doPendingClientWork( TRUE );
+	return getDrawModulesNonDirty();
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::flushPendingClientWork()
+{
+	for (size_t i = 0; i < s_clientWorkQueue.size(); ++i)
+	{
+		Drawable* draw = TheGameClient->findDrawableByID( s_clientWorkQueue[i] );
+		if (draw == NULL)
+			continue;		// destroyed in the tick
+		draw->m_clientWorkQueued = FALSE;
+		draw->doPendingClientWork( FALSE );
+	}
+	s_clientWorkQueue.clear();
+	// LogicThread's flushAfterTick deletes the drawables the tick destroyed after this and the
+	// tick's effects, so a work above or an effect that holds one runs before it is deleted
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::markModelDirty()
+{
+	m_isModelDirty = true;
+	if (TheGameLogic->isInGameLogicUpdate())
+		queueClientWork();
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+void Drawable::clearAndSetModelConditionFlags(const ModelConditionFlags& clr, const ModelConditionFlags& setf)
+{
+	ModelConditionFlags oldFlags = m_conditionState;
+
+	m_conditionState.clearAndSet(clr, setf);
+
+	if (m_conditionState == oldFlags)
+		return;
+
+#ifdef DIRTY_CONDITION_FLAGS
+	markModelDirty();
+#else
+	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+		if (di)
+			di->replaceModelConditionState( m_conditionState );
+	}
+#endif
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void Drawable::replaceModelConditionFlags( const ModelConditionFlags &flags, Bool forceReplace )
+{
+
+	//
+	// this is a no-op if the new flags are the same as our existing flags (unless we
+	// have the forceReplace parameter set, in which case we will force the setting of the
+	// new flags)
+	//
+	if( forceReplace == FALSE && m_conditionState == flags )
+		return;
+		
+	m_conditionState = flags;
+#ifdef DIRTY_CONDITION_FLAGS
+	// when forcing a replace we won't use dirty flags, we will immediately do an update now
+	if( forceReplace == TRUE )
+	{
+		if (!m_pendingSteps.empty())
+			flushModelCondition( FALSE );
+		for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di)
+				di->replaceModelConditionState( m_conditionState );
+		}
+		m_isModelDirty = false;
+	}
+	else
+		markModelDirty();
+#else
+	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+		if (di)
+			di->replaceModelConditionState( m_conditionState );
+	}
+#endif
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::setIndicatorColor(Color color)
+{
+	// The one gate the model tint goes through, whoever asked for it. Garrison, cave, stealth and
+	// the disguise code all live in GameLogic and hand a player colour straight down here, so the
+	// scheme is applied on this side of the fence rather than in any of them: they keep passing the
+	// colour the match agreed on and only the picture changes. A colour that belongs to no player
+	// comes back untouched.
+	m_indicatorColorAsked = color;
+	color = clientColor( color );
+
+	// in front of the tick's condition states, as since 1f213c44: replaceIndicatorColor rebuilds the
+	// current state and drops a transition the states have started
+	doClientWork( [this, color]() {
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di)
+				di->replaceIndicatorColor(color);
+		}
+	}, WORK_BEFORE_STATES, TRUE );
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::refreshIndicatorColor( void )
+{
+	if( m_indicatorColorAsked != 0 )
+	{
+		setIndicatorColor( m_indicatorColorAsked );
+		return;
+	}
+
+	// nobody has ever set one, so the model built itself from the object's own colour
+	const Object *obj = getObject();
+	if( obj != NULL )
+	{
+		setIndicatorColor( TheGlobalData->m_timeOfDay == TIME_OF_DAY_NIGHT
+													? obj->getNightIndicatorColor()
+													: obj->getIndicatorColor() );
+		m_indicatorColorAsked = 0;		// still nothing anybody asked for, so keep following the object
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+const GeometryInfo& Drawable::getDrawableGeometryInfo() const 
+{ 
+	return getObject() ? getObject()->getGeometryInfo() : getTemplate()->getTemplateGeometryInfo(); 
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Set the id for this drawable */
+// ------------------------------------------------------------------------------------------------
+void Drawable::setID( DrawableID id )
+{
+
+	// if id hasn't changed do nothing
+	if( m_id == id )
+		return;
+
+	// remove this objects previous id from the lookup table
+	if( m_id != INVALID_DRAWABLE_ID )
+		TheGameClient->removeDrawableFromLookupTable( this );
+
+	// assign new id
+	m_id = id;
+
+	// add new id to lookup table
+	if( m_id != INVALID_DRAWABLE_ID )
+	{
+		TheGameClient->addDrawableToLookupTable( this );
+		if (m_ambientSound)
+			m_ambientSound->m_event.setDrawableID(m_id);
+	}
+
+}  // end setID
+
+// ------------------------------------------------------------------------------------------------
+/** Return drawable ID, this ID is only good on the client */
+// ------------------------------------------------------------------------------------------------
+DrawableID Drawable::getID( void ) const
+{
+
+	// we should never be getting the ID of a drawable who doesn't yet have and ID assigned to it
+	DEBUG_ASSERTCRASH( m_id != 0, ("Drawable::getID - Using ID before it was assigned!!!!\n") );
+
+	return m_id;
+
+}  // end get ID
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::friend_bindToObject( Object *obj ) ///< bind this drawable to an object ID
+{
+	m_object = obj;
+	if (getObject())
+	{
+		if (TheGlobalData->m_timeOfDay == TIME_OF_DAY_NIGHT)
+			setIndicatorColor(getObject()->getNightIndicatorColor());
+		else
+			setIndicatorColor(getObject()->getIndicatorColor());
+
+		if (getObject()->isKindOf(KINDOF_FS_FAKE))
+		{
+			Relationship rel=ThePlayerList->getLocalPlayer()->getRelationship(getObject()->getTeam());
+			if (rel == ALLIES || rel == NEUTRAL)
+				setTerrainDecal(TERRAIN_DECAL_SHADOW_TEXTURE);
+			else
+				setTerrainDecal(TERRAIN_DECAL_NONE);
+		}
+	}
+
+	doClientWork( [this]() {
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+			(*dm)->onDrawableBoundToObject();
+	}, WORK_AFTER_FLUSH );
+}
+//-------------------------------------------------------------------------------------------------
+	// when our Object changes teams, it calls us to let us know, so
+	// we can update our model, etc., if necessary. NOTE, we don't guarantee
+	// that the new team is different from the old team, nor do we guarantee
+	// that the team is nonnull.
+void Drawable::changedTeam()
+{
+	Object *object = getObject();
+	if( object )
+	{
+		if (TheGlobalData->m_timeOfDay == TIME_OF_DAY_NIGHT)
+			setIndicatorColor( object->getNightIndicatorColor() );
+		else
+			setIndicatorColor( object->getIndicatorColor() );
+
+		if (object->isKindOf(KINDOF_FS_FAKE))
+		{
+			Relationship rel=ThePlayerList->getLocalPlayer()->getRelationship(object->getTeam());
+			if (rel == ALLIES || rel == NEUTRAL)
+				setTerrainDecal(TERRAIN_DECAL_SHADOW_TEXTURE);
+			else
+				setTerrainDecal(TERRAIN_DECAL_NONE);
+		}
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::setPosition(const Coord3D *pos) 
+{
+	// extend
+	Thing::setPosition(pos);
+
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::reactToTransformChange(const Matrix3D* oldMtx, const Coord3D* oldPos, Real oldAngle)
+{
+	if (TheGameLogic->isInGameLogicUpdate())
+	{
+		m_transformPending = TRUE;
+		if (m_isModelDirty)
+			deferModelConditionFlush();		// the getDrawModules below flushed here
+		else
+			queueClientWork();
+		return;
+	}
+	LOGIC_CENSUS( CENSUS_DRAWABLE );
+	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		(*dm)->reactToTransformChange(oldMtx, oldPos, oldAngle);
+	}
+} 
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::reactToGeometryChange()
+{
+	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		(*dm)->reactToGeometryChange();
+	}
+} 
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::handleWeaponFireFX(WeaponSlotType wslot, Int specificBarrelToUse, const FXList* fxl, Real weaponSpeed, Real recoilAmount, Real recoilAngle, const Coord3D* victimPos, Real damageRadius, Bool fxAtVictim)
+{
+	// adjust recoil from absolute to relative, against the way the object faced when it fired
+	if (recoilAmount != 0.0f && getObject())
+		recoilAngle -= getObject()->getOrientation();
+	const Coord3D victim = *victimPos;
+
+	// After the tick, in its place among the condition states the tick set: the barrels, muzzle flash
+	// and FX bone are the state the shot set, and the tick never flushes a render object to read them
+	// (LOGIC-THREAD.md phase 3).  A drawable made in this tick has its render objects by then.
+	doClientWork([=]()
+	{
+		if (recoilAmount != 0.0f && m_locoInfo)
+		{
+			// flip direction 180 degrees.
+			const Real angle = recoilAngle + PI;
+			m_locoInfo->m_accelerationPitchRate += recoilAmount * Cos(angle);
+			m_locoInfo->m_accelerationRollRate += recoilAmount * Sin(angle);
+		}
+
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di && di->handleWeaponFireFX(wslot, specificBarrelToUse, fxl, weaponSpeed, &victim, damageRadius))
+				return;
+		}
+
+		// bah. just play it at the drawable's pos.
+		if (fxl)
+			FXList::doFXPos(fxl, fxAtVictim ? &victim : getPosition(), getTransformMatrix(), weaponSpeed, &victim, damageRadius);
+	}, WORK_AFTER_FLUSH, TRUE );
+}
+
+//-------------------------------------------------------------------------------------------------
+Int Drawable::getBarrelCount(WeaponSlotType wslot) const
+{
+	for (const DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		if (skipsForLogic(*dm))
+			continue;
+		const ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+		Int count = di ? di->getBarrelCount(wslot) : 0;
+		if (count != 0)
+			return count;
+	}
+	return 0;
+} 
+
+//-------------------------------------------------------------------------------------------------
+/** Set the Drawable's instance transform */
+//-------------------------------------------------------------------------------------------------
+void Drawable::setInstanceMatrix( const Matrix3D *instance ) 
+{ 
+	if (instance)
+	{
+		m_instance = *instance; 
+		m_instanceIsIdentity = false;
+	}
+	else
+	{
+		m_instance.Make_Identity();
+		m_instanceIsIdentity = true;
+	}
+}
+
+
+//-------------------------------------------------------------------------------------------------
+/** R1, smooth motion: at the start of a render pass, after a new logic tick, move the last position into
+	m_smoothPrevPos and take the current one.  The blend is allowed only across one tick, with no marked
+	discontinuity and no step longer than a unit could travel (the same 60 world units as the models'
+	rule, W3DSmoothMotion.h's SMOOTH_SNAP_DISTANCE_UNITS). */
+void Drawable::smoothMotionCapturePosition( UnsignedInt clientFrame )
+{
+	if (clientFrame == m_smoothFrame)
+		return;
+	const Bool nextTick = m_smoothFrame != 0xFFFFFFFFu && clientFrame == m_smoothFrame + 1;
+	m_smoothPrevPos = m_smoothCurPos;
+	m_smoothCurPos = *getPosition();
+	const Real dx = m_smoothCurPos.x - m_smoothPrevPos.x;
+	const Real dy = m_smoothCurPos.y - m_smoothPrevPos.y;
+	const Real dz = m_smoothCurPos.z - m_smoothPrevPos.z;
+	const Real SNAP_DISTANCE = 60.0f;
+	m_smoothHavePrev = nextTick && !m_motionDiscontinuity && (dx * dx + dy * dy + dz * dz) <= SNAP_DISTANCE * SNAP_DISTANCE;
+	m_smoothFrame = clientFrame;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** R1: where the picture shows this drawable, `alpha` of the way from its previous logic position to its
+	current one.  The logic position, and FALSE, when there is no blend. */
+Bool Drawable::getSmoothMotionPosition( Real alpha, Coord3D *pos ) const
+{
+	*pos = *getPosition();
+	if (!m_smoothHavePrev)
+		return FALSE;
+	pos->x = m_smoothPrevPos.x + (m_smoothCurPos.x - m_smoothPrevPos.x) * alpha;
+	pos->y = m_smoothPrevPos.y + (m_smoothCurPos.y - m_smoothPrevPos.y) * alpha;
+	pos->z = m_smoothPrevPos.z + (m_smoothCurPos.z - m_smoothPrevPos.z) * alpha;
+	return TRUE;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** 
+ * Return the Drawable's world transform.
+ * If this Drawable is attached to an Object, return the Object's transform instead.
+ */
+const Matrix3D *Drawable::getTransformMatrix( void ) const
+{
+	const Object *obj = getObject();
+
+	if (obj)
+		return obj->getTransformMatrix();
+	else
+		return Thing::getTransformMatrix();
+}
+
+//-------------------------------------------------------------------------------------------------
+/** 
+ * Set and clear the drawable's caption text
+ */
+//-------------------------------------------------------------------------------------------------
+void Drawable::setCaptionText( const UnicodeString& captionText )
+{
+	if (captionText.isEmpty())
+	{
+		clearCaptionText();
+		return;
+	}
+
+	// a display string and a font: a beacon's text arrives in the tick's message dispatch
+	doClientWork( [this, captionText]() {
+		UnicodeString sanitizedString = captionText;
+		TheLanguageFilter->filterLine(sanitizedString);
+
+		if( m_captionDisplayString == NULL )
+		{
+			m_captionDisplayString = TheDisplayStringManager->newDisplayString();
+			GameFont *font = TheFontLibrary->getFont(
+				TheInGameUI->getDrawableCaptionFontName(),
+				TheGlobalLanguageData->adjustFontSize(TheInGameUI->getDrawableCaptionPointSize()),
+				TheInGameUI->isDrawableCaptionBold() );
+			m_captionDisplayString->setFont( font );
+			m_captionDisplayString->setText( sanitizedString );
+		}
+		else
+		{
+			// set the string if the value has changed
+			if( m_captionDisplayString->getText().compare(sanitizedString) != 0 )
+			{
+				m_captionDisplayString->setText( sanitizedString );
+			}
+		}
+	}, WORK_AFTER_APPLIED );
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::clearCaptionText( void )
+{
+	doClientWork( [this]() {
+		if (m_captionDisplayString)
+			TheDisplayStringManager->freeDisplayString(m_captionDisplayString);
+		m_captionDisplayString = NULL;
+	}, WORK_AFTER_APPLIED );
+}
+
+//-------------------------------------------------------------------------------------------------
+UnicodeString Drawable::getCaptionText( void )
+{
+	if (m_captionDisplayString)
+		return m_captionDisplayString->getText();
+
+	return UnicodeString::TheEmptyString;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Attach and start playing an ambient sound to this drawable */
+//-------------------------------------------------------------------------------------------------
+void	Drawable::setTimeOfDay(TimeOfDay tod)
+{
+	BodyDamageType dt = BODY_PRISTINE;
+	if (getObject() && getObject()->getBodyModule())
+		dt = getObject()->getBodyModule()->getDamageState();
+
+	startAmbientSound(dt, tod);
+
+	ModelConditionFlags c = m_conditionState;
+	c.set(MODELCONDITION_NIGHT, (tod == TIME_OF_DAY_NIGHT) ? 1 : 0);
+	replaceModelConditionFlags(c);
+}
+
+
+/** 
+ * If you wish to change some parameters of the default ambient sound, but keep the rest, 
+ * this function will give you the default ambient sound's info
+ */
+const AudioEventInfo * Drawable::getBaseSoundAmbientInfo() const
+{
+  const AudioEventRTS * baseAmbient = getTemplate()->getSoundAmbient();
+  if ( baseAmbient )
+    return baseAmbient->getAudioEventInfo();
+
+  return NULL;
+}
+
+/** 
+ * Produce a unique-across-entire-level name for this audio event
+ */
+void Drawable::mangleCustomAudioName( DynamicAudioEventInfo * audioToMangle ) const
+{
+  AsciiString customizedName;
+  customizedName.format( " CUSTOM %d ", (Int)getID() ); // Note space at beginning prevents collision with any names from INI file
+  customizedName.concat( audioToMangle->m_audioName );
+  audioToMangle->overrideAudioName( customizedName );
+}
+
+/** 
+ * Force the Drawable to not ever get an ambient sound attached to it (except possibly for RUBBLE)
+ */
+void Drawable::setCustomSoundAmbientOff()
+{
+  clearCustomSoundAmbient( false );
+  
+  m_customSoundAmbientInfo = getNoSoundMarker();  
+}
+
+/** 
+ * Force the Drawable to use the sound described by customAmbientInfo as its ambient sound.
+ * The Drawable expects TheAudio to own the actual info pointer
+ */
+void Drawable::setCustomSoundAmbientInfo( DynamicAudioEventInfo * customAmbientInfo )
+{
+  clearCustomSoundAmbient( false );
+
+  // This is mostly to make sure no one delete's the no sound marker, causing it to be 
+  // recycled as a new no sound marker
+  DEBUG_ASSERTCRASH( customAmbientInfo != getNoSoundMarker(), ("No sound marker passed as custom ambient") );
+
+  // Set name to something different so we don't get confused
+ 
+  m_customSoundAmbientInfo = customAmbientInfo;
+
+  startAmbientSound(); // Note: checks for enabled flag
+}
+
+/** 
+ * Return to using default ambient sound
+ */
+void Drawable::clearCustomSoundAmbient( bool restartSound )
+{
+  if ( m_ambientSound )
+  {
+    // Make sure sound doesn't keep a reference to the deleted pointer
+    m_ambientSound->m_event.setAudioEventInfo( NULL );
+  }
+
+  // Stop using old info
+  stopAmbientSound();
+
+  m_customSoundAmbientInfo = NULL;
+  
+  if ( restartSound )
+  {
+    startAmbientSound(); // Note: checks for enabled flag
+  }
+}
+
+
+//-------------------------------------------------------------------------------------------------
+/** Attach and start playing an ambient sound to this drawable */
+//-------------------------------------------------------------------------------------------------
+void Drawable::startAmbientSound(BodyDamageType dt, TimeOfDay tod, Bool onlyIfPermanent)
+{
+	// where the drawable stood at the call: one made in the tick is still at the origin here
+	const Coord3D callPos = *getPosition();
+	doClientWork( [this, dt, tod, onlyIfPermanent, callPos]() {
+	stopAmbientSound();
+
+  Bool trySound = FALSE;
+
+  // Look for customized sound info
+  if ( dt != BODY_RUBBLE && m_customSoundAmbientInfo != NULL )
+  {
+    if ( m_customSoundAmbientInfo != getNoSoundMarker() )
+    {
+      if (m_ambientSound == NULL)
+        m_ambientSound = newInstance(DynamicAudioEventRTS);
+
+      // Make sure m_event will accept the custom info
+      m_ambientSound->m_event.setEventName( m_customSoundAmbientInfo->m_audioName );
+      m_ambientSound->m_event.setAudioEventInfo( m_customSoundAmbientInfo );
+      trySound = TRUE;
+    }       
+  }
+  else
+  {
+    // Didn't get customized sound
+    //Get the specific ambient sound for the damage type.
+	  const AudioEventRTS& audio = getAmbientSoundByDamage(dt);
+	  if( audio.getEventName().isNotEmpty() )
+	  {
+		  if (m_ambientSound == NULL)
+			  m_ambientSound = newInstance(DynamicAudioEventRTS);
+
+		  (m_ambientSound->m_event) = audio;
+		  trySound = TRUE;
+	  }
+	  else if( dt != BODY_PRISTINE && dt != BODY_RUBBLE )
+	  {
+		  //If the ambient sound was absent in the case of non-pristine damage types,
+		  //try getting the pristine one. Most of our cases actually specify just the
+		  //pristine sound and want to use it for all states (except dead/rubble).
+		  const AudioEventRTS& pristineAudio = getAmbientSoundByDamage( BODY_PRISTINE );
+		  if( pristineAudio.getEventName().isNotEmpty() )
+		  {
+			  if (m_ambientSound == NULL)
+				  m_ambientSound = newInstance(DynamicAudioEventRTS);
+			  (m_ambientSound->m_event) = pristineAudio;
+			  trySound = TRUE;
+		  }
+	  }
+  }
+  
+	
+	if( trySound && m_ambientSound )
+	{
+		const AudioEventInfo *info = m_ambientSound->m_event.getAudioEventInfo();
+		if( info )
+		{
+      if ( !onlyIfPermanent || info->isPermanentSound() )
+      {
+			  if( BitTest( info->m_type, ST_GLOBAL) || info->m_priority == AP_CRITICAL )
+			  {
+				  //Play it anyways.
+				  m_ambientSound->m_event.setDrawableID(getID());
+				  m_ambientSound->m_event.setTimeOfDay(tod);
+				  m_ambientSound->m_event.setPlayingHandle(TheAudio->addAudioEvent( &m_ambientSound->m_event ));
+			  }
+			  else
+			  {
+				  //Check if it's close enough to try playing (optimization)
+				  Coord3D vector = callPos;
+				  vector.sub( TheAudio->getListenerPosition() );
+				  Real distSqr = vector.lengthSqr();
+				  if( distSqr < sqr( info->m_maxDistance ) )
+				  {
+					  m_ambientSound->m_event.setDrawableID(getID());
+					  m_ambientSound->m_event.setTimeOfDay(tod);
+					  m_ambientSound->m_event.setPlayingHandle(TheAudio->addAudioEvent( &m_ambientSound->m_event ));
+				  }
+			  }
+      }
+		}
+		else
+		{
+			DEBUG_CRASH( ("Ambient sound %s missing! Skipping...", m_ambientSound->m_event.getEventName().str() ) );
+			m_ambientSound->deleteInstance();
+			m_ambientSound = NULL;
+		}
+	}
+	}, WORK_AFTER_APPLIED );
+}
+
+//-------------------------------------------------------------------------------------------------
+// Attach and start playing an ambient sound to this drawable. Calculates states automatically.
+//-------------------------------------------------------------------------------------------------
+void Drawable::startAmbientSound( Bool onlyIfPermanent )
+{
+  // Must go through enableAmbientSound() if sound is disabled
+  if ( !m_ambientSoundEnabled || !m_ambientSoundEnabledFromScript )
+    return;
+  
+  stopAmbientSound();
+	BodyDamageType bodyCondition = BODY_PRISTINE;
+	Object *obj = getObject();
+	if( obj )
+	{
+		bodyCondition = obj->getBodyModule()->getDamageState();
+	}
+	startAmbientSound( bodyCondition, TheGlobalData->m_timeOfDay, onlyIfPermanent );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Stop playing the drawables ambient sound if it has one */
+//-------------------------------------------------------------------------------------------------
+void	Drawable::stopAmbientSound( void )
+{
+	doClientWork( [this]() {
+	if (m_ambientSound)
+  {
+		TheAudio->removeAudioEvent(m_ambientSound->m_event.getPlayingHandle());
+  }
+	}, WORK_AFTER_APPLIED );
+}
+
+//-------------------------------------------------------------------------------------------------
+// Enable and disable ambient sound from the game logic
+void Drawable::enableAmbientSound( Bool enable )
+{
+	if( m_ambientSoundEnabled == enable )
+	{
+		return;
+	}
+
+	m_ambientSoundEnabled = enable;
+	if( enable )
+	{
+    if ( m_ambientSoundEnabledFromScript )
+    {
+      startAmbientSound();
+    }
+	}
+	else
+	{
+		stopAmbientSound();
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+// Enable and disable sound because the map designer wants us too
+void Drawable::enableAmbientSoundFromScript( Bool enable )
+{
+  // Note: deliberately skipping if( m_ambientSoundEnabledFromScript == enable ) check here
+  // Allow ENABLE_OBJECT_SOUND to trigger one-shot attached sound multiple times
+
+  m_ambientSoundEnabledFromScript = enable;
+  if( enable )
+  {
+    if ( m_ambientSoundEnabled )
+    {
+      startAmbientSound();
+    }
+  }
+  else
+  {
+    stopAmbientSound();
+  }
+}
+
+
+//-------------------------------------------------------------------------------------------------
+/** add self to the linked list */
+//-------------------------------------------------------------------------------------------------
+void Drawable::prependToList(Drawable **pListHead)
+{
+	// add the object to the global list
+	m_prevDrawable = NULL;
+	m_nextDrawable = *pListHead;
+	if (*pListHead)
+		(*pListHead)->m_prevDrawable = this;
+	*pListHead = this;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** remove self from the linked list */
+//-------------------------------------------------------------------------------------------------
+void Drawable::removeFromList(Drawable **pListHead)
+{
+	if (m_nextDrawable)
+		m_nextDrawable->m_prevDrawable = m_prevDrawable;
+
+	if (m_prevDrawable)
+		m_prevDrawable->m_nextDrawable = m_nextDrawable;
+	else
+		*pListHead = m_nextDrawable;
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+void Drawable::updateHiddenStatus()
+{
+	Bool hidden = m_hidden || m_hiddenByStealth;
+	doClientWork( [this, hidden]() {
+		if( hidden )
+		{
+			if( isSelected() )
+				TheInGameUI->holdSelectionThroughTunnel( this );
+			TheInGameUI->deselectDrawable( this );
+		}
+		else
+			TheInGameUI->restoreSelectionAfterTunnel( this );
+
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di)
+				di->setHidden(hidden != 0);
+		}
+	}, WORK_AFTER_FLUSH );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Hide or un-hide drawable */
+//-------------------------------------------------------------------------------------------------
+void Drawable::setDrawableHidden( Bool hidden )
+{
+	if (hidden != m_hidden)
+	{
+		m_hidden = hidden;
+		updateHiddenStatus();
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::updateDrawableClipStatus( UnsignedInt shotsRemaining, UnsignedInt maxShots, WeaponSlotType slot )
+{
+	// every armed object asks every frame; only a model with projectile bones on this slot answers,
+	// so the rest queue nothing. Those that do still ask every frame, which is what shows the bones
+	// again after a model state change rebuilt the render object
+	if ((m_clipFeedbackSlots & (1 << slot)) == 0)
+		return;
+	doClientWork( [this, shotsRemaining, maxShots, slot]() {
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di)
+				di->updateProjectileClipStatus(shotsRemaining, maxShots, slot);
+		}
+	}, WORK_AFTER_APPLIED );
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::updateDrawableSupplyStatus( Int maxSupply, Int currentSupply )
+{
+	// a model draw answers with the CARRYING condition, a condition like any other and so set here at
+	// once, after the flush the call made, rather than by the draw module when the work runs after the
+	// tick; the work (W3DSupplyDraw's bones) follows that flush and no new state, as it did in retail
+	Bool modelDraw = FALSE;
+	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+		modelDraw = modelDraw || (*dm)->getObjectDrawInterface() != NULL;
+	if( modelDraw )
+	{
+		if( currentSupply > 0 )
+			setModelConditionState( MODELCONDITION_CARRYING );
+		else
+			clearModelConditionState( MODELCONDITION_CARRYING );
+	}
+
+	doClientWork( [this, maxSupply, currentSupply]() {
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di)
+				di->updateDrawModuleSupplyStatus( maxSupply, currentSupply );
+		}
+	}, WORK_AFTER_APPLIED );
+}
+
+//-------------------------------------------------------------------------------------------------
+void Drawable::notifyDrawableDependencyCleared()
+{
+	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+	{
+		ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+		if (di)
+			di->notifyDrawModuleDependencyCleared();
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Set as selectable or not. */
+//-------------------------------------------------------------------------------------------------
+void Drawable::setSelectable( Bool selectable )
+{
+	// onto the render object the tick's model condition builds; setModelState takes it from the template
+	doClientWork( [this, selectable]() {
+		// unselct drawable if it is no longer selectable.
+		if( !selectable )
+			TheInGameUI->deselectDrawable( this );
+
+		for (DrawModule** dm = getDrawModulesNonDirty(); *dm; ++dm)
+		{
+			ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
+			if (di)
+				di->setSelectable(selectable);
+		}
+	}, WORK_AFTER_FLUSH );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Return whether or not this Drawable is selectable. */
+//-------------------------------------------------------------------------------------------------
+Bool Drawable::isSelectable( void ) const
+{
+	return getObject() && getObject()->isSelectable();
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Return whether or not this Drawable is selectable as part of a group. */
+//-------------------------------------------------------------------------------------------------
+Bool Drawable::isMassSelectable( void ) const
+{
+	// structures group too; SelectionXlat keeps them out of a selection of units
+	return getObject() && getObject()->isMassSelectable();
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Preload all our assets that we can for all our possible states in this time of day */
+//-------------------------------------------------------------------------------------------------
+void Drawable::preloadAssets( TimeOfDay timeOfDay )
+{
+
+	/// walk all our modules and preload any assets we need to
+	for( Int i = 0; i < NUM_DRAWABLE_MODULE_TYPES; ++i )
+		for( Module** m = m_modules[i]; m && *m; ++m )
+			(*m)->preloadAssets( timeOfDay );
+
+}  // end preloadAssets
+
+//-------------------------------------------------------------------------------------------------
+// Simply searches for the first occurrence of a specified client update module.
+//-------------------------------------------------------------------------------------------------
+ClientUpdateModule* Drawable::findClientUpdateModule( NameKeyType key )
+{
+	ClientUpdateModule **clientModules = getClientUpdateModules();
+	if( clientModules )
+	{
+		while( *clientModules )
+		{
+			if( (*clientModules)->getModuleNameKey() == key )
+			{
+				return *clientModules;
+			}
+		}
+	}
+	return NULL;
+}
+
+// ------------------------------------------------------------------------------------------------
+/** CRC */
+// ------------------------------------------------------------------------------------------------
+void Drawable::crc( Xfer *xfer )
+{
+
+}  // end crc
+
+// ------------------------------------------------------------------------------------------------
+/** Xfer the drawable modules
+	* Version Info:
+	* 1: Initial version */
+// ------------------------------------------------------------------------------------------------
+void Drawable::xferDrawableModules( Xfer *xfer )
+{
+
+	// version
+	const XferVersion currentVersion = 1;
+	XferVersion version = currentVersion;
+	xfer->xferVersion( &version, currentVersion );
+
+	//
+	// when using dirty condition flags ... we want to make sure that the modules are updated to
+	// the current state of the drawable
+	//
+#ifdef DIRTY_CONDITION_FLAGS
+	if( xfer->getXferMode() == XFER_SAVE )
+		getDrawModulesFlushed();  // will re-evaluate modules that are dirty and update them
+#endif
+
+	// xfer number of module types
+	UnsignedShort moduleTypes = NUM_DRAWABLE_MODULE_TYPES;
+	xfer->xferUnsignedShort( &moduleTypes );
+
+	// xfer each set of modules for each type
+	AsciiString moduleIdentifier;
+	for( UnsignedShort curModuleType = 0; curModuleType < moduleTypes; ++curModuleType )
+	{
+
+		// how many modules are here for this type
+		Module **m;
+		UnsignedShort moduleCount = 0;
+		for( m = m_modules[ curModuleType ]; m && *m; ++m )
+			moduleCount++;
+		xfer->xferUnsignedShort( &moduleCount );
+
+		// xfer each module data
+		if( xfer->getXferMode() == XFER_SAVE )
+		{
+
+			// save each module
+			for( m = m_modules[ curModuleType ]; m && *m; ++m )
+			{
+
+				// write module identifier
+				moduleIdentifier = TheNameKeyGenerator->keyToName( (*m)->getModuleTagNameKey() );
+				DEBUG_ASSERTCRASH( moduleIdentifier != AsciiString::TheEmptyString,
+													 ("Drawable::xferDrawableModules - module name key does not translate to a string!\n") );
+				xfer->xferAsciiString( &moduleIdentifier );
+
+				// begin data block
+				xfer->beginBlock();
+
+				// xfer data
+				xfer->xferSnapshot( *m );
+
+				// end data block
+				xfer->endBlock();
+
+			}  // end for, m
+
+		}  // end if, save
+		else
+		{
+			// read each module
+			for( UnsignedShort j = 0; j < moduleCount; ++j )
+			{
+
+				// read module identifier
+				xfer->xferAsciiString( &moduleIdentifier );
+				NameKeyType moduleIdentifierKey = TheNameKeyGenerator->nameToKey(moduleIdentifier);
+
+				// find module in the drawable module list
+				Module* module = NULL;
+				for( Module **m = m_modules[curModuleType]; m && *m; ++m )
+				{
+					if (moduleIdentifierKey == (*m)->getModuleTagNameKey())
+					{
+
+						module = *m;
+						break;  // exit for m
+
+					}  // end if
+
+				}  // end for, m
+
+				// new block of data
+				Int dataSize = xfer->beginBlock();
+
+				//
+				// if we didn't find the module, it's quite possible that we have removed
+				// it from the object definition in a future patch, if that is so, we need to
+				// skip the module data in the file
+				//
+				if( module == NULL )
+				{
+
+					// for testing purposes, this module better be found
+					DEBUG_CRASH(( "Drawable::xferDrawableModules - Module '%s' was indicated in file, but not found on Drawable %s %d\n",
+												moduleIdentifier.str(), getTemplate()->getName().str(),getID() ));
+
+					// skip this data in the file
+					xfer->skip( dataSize );
+
+				}  // end if
+				else
+				{
+
+					// xfer the data into this module
+					xfer->xferSnapshot( module );
+
+				}  // end else
+
+				// end of data block
+				xfer->endBlock();
+
+			}  // end for j
+
+		}  // end else, load
+
+	}  // end for curModuleType
+
+}  // end xferDrawableModules
+
+// ------------------------------------------------------------------------------------------------
+/** Xfer method
+	* Version Info;
+	* 1: Initial version
+	* 2: Moved condition state xfer before module xfer so we can restore anim frame 
+	*    during the module xfer (CBD)
+	* 4: Added m_ambientSoundEnabled flag
+	* 5: save full mtx, not pos+orient.
+  * 6: Added m_ambientSoundEnabledFromScript flag
+  * 7: Save the customize ambient sound info
+	*/
+// ------------------------------------------------------------------------------------------------
+void Drawable::xfer( Xfer *xfer )
+{
+
+	// version
+	const XferVersion currentVersion = 7;
+	XferVersion version = currentVersion;
+	xfer->xferVersion( &version, currentVersion );
+
+	//Wow, because the constructor creates the ambient sound, the xfer can
+	//change the ID the sound points to, therefore, we must remove it now
+	//and restore it in loadPostProcess().
+	if( xfer->getXferMode() == XFER_LOAD && m_ambientSound )
+	{
+		TheAudio->killAudioEventImmediately( m_ambientSound->m_event.getPlayingHandle() );
+		m_ambientSound->deleteInstance();
+		m_ambientSound = NULL;
+	}
+
+	// drawable id
+	DrawableID id = getID();
+	xfer->xferDrawableID( &id );
+	setID( id );
+
+	// condition state, note that when we're loading we need to force a replace of these flags
+	if( version >= 2 )
+	{
+
+		m_conditionState.xfer( xfer );
+		if( xfer->getXferMode() == XFER_LOAD	)
+			replaceModelConditionFlags( m_conditionState, TRUE );
+
+	}  // end if
+
+	if( version >= 3 )
+	{
+		if (version >= 5)
+		{
+			Matrix3D mtx = *getTransformMatrix();
+			xfer->xferMatrix3D(&mtx);
+
+			// as in Object::xfer: a save has nothing to set, and a replay checkpoint is a save taken
+			// mid-playback, which must leave the cached angle as it found it
+			if( xfer->getXferMode() == XFER_LOAD )
+				setTransformMatrix(&mtx);
+		}
+		else
+		{
+			// position
+			Coord3D pos = *getPosition();
+			xfer->xferCoord3D( &pos );
+			setPosition( &pos );
+
+			// orientation
+			Real orientation = getOrientation();
+			xfer->xferReal( &orientation );
+			setOrientation( orientation );
+		}
+	}
+
+	// selection flash envelope
+	Bool selFlash = (m_selectionFlashEnvelope != NULL);
+	xfer->xferBool( &selFlash );
+	if( selFlash )
+	{
+
+		// allocate selection flash envelope if we need to
+		if( m_selectionFlashEnvelope == NULL )
+			m_selectionFlashEnvelope = newInstance( TintEnvelope );
+
+		// xfer
+		xfer->xferSnapshot( m_selectionFlashEnvelope );
+
+	}  // end if
+
+	// color tint envelope
+	Bool colFlash = (m_colorTintEnvelope != NULL);
+	xfer->xferBool( &colFlash );
+	if( colFlash )
+	{
+
+		// allocate envelope if we need to
+		if( m_colorTintEnvelope == NULL )
+			m_colorTintEnvelope = newInstance( TintEnvelope );
+
+		// xfer
+		xfer->xferSnapshot( m_colorTintEnvelope );
+
+	}  // end if
+
+	// terrain decal type
+	TerrainDecalType decal = getTerrainDecalType();
+	xfer->xferUser( &decal, sizeof( TerrainDecalType ) );
+	if( xfer->getXferMode() == XFER_LOAD )
+		setTerrainDecal( decal );
+
+	// explicit opacity
+	xfer->xferReal( &m_explicitOpacity );
+
+	// stealth opacity
+	xfer->xferReal( &m_stealthOpacity );
+
+	// effective stealth opacity
+	xfer->xferReal( &m_effectiveStealthOpacity );
+
+	// decalOpacityFadeTarget
+	xfer->xferReal( &m_decalOpacityFadeTarget );
+
+	// decalOpacityFadeRate
+	xfer->xferReal( &m_decalOpacityFadeRate );
+
+	// decalOpacityFadeRate
+	xfer->xferReal( &m_decalOpacity );
+
+	// object (if present)
+	ObjectID objectID = m_object ? m_object->getID() : INVALID_ID;
+	xfer->xferObjectID( &objectID );
+	// sanity
+	if( xfer->getXferMode() == XFER_LOAD )
+	{
+
+		if( m_object )
+		{
+
+			if( objectID != m_object->getID() )
+			{
+			
+				DEBUG_CRASH(( "Drawable::xfer - Drawable '%s' is attached to wrong object '%s'\n",
+											getTemplate()->getName().str(), m_object->getTemplate()->getName().str() ));
+				throw SC_INVALID_DATA;
+
+			}  // end if
+
+
+		}  // end if
+		else
+		{
+
+			if( objectID != INVALID_ID )
+			{
+#ifdef DEBUG_CRASHING
+				Object *obj = TheGameLogic->findObjectByID( objectID );
+
+				DEBUG_CRASH(( "Drawable::xfer - Drawable '%s' is not attached to an object but should be attached to object '%s' with id '%d'\n",
+											getTemplate()->getName().str(),
+											obj ? obj->getTemplate()->getName().str() : "Unknown",
+											objectID ));
+#endif
+				throw SC_INVALID_DATA;
+
+			}  // end if
+
+		}  // end else
+
+	}  // end if
+
+
+	// particle
+	// we don't need to worry about this, the particle itself will set it upon loading 
+
+	// selected
+	// we won't worry about selection, we'll let TheInGameUI take care of it all
+
+	// status
+	xfer->xferUnsignedInt( &m_status );
+
+	// tint status
+	xfer->xferUnsignedInt( &m_tintStatus );
+
+	// prev tint status
+	xfer->xferUnsignedInt( &m_prevTintStatus );
+
+	// fading mode
+	xfer->xferUser( &m_fadeMode, sizeof( FadingMode ) );
+
+	// time elapsed fade
+	xfer->xferUnsignedInt( &m_timeElapsedFade );
+
+	// time to fade
+	xfer->xferUnsignedInt( &m_timeToFade );
+
+	Bool hasLocoInfo = (m_locoInfo != NULL);
+	xfer->xferBool( &hasLocoInfo );
+	if (hasLocoInfo)
+	{
+		if( xfer->getXferMode() == XFER_LOAD && m_locoInfo == NULL	)
+			m_locoInfo = newInstance(DrawableLocoInfo);
+
+		// pitch
+		xfer->xferReal( &m_locoInfo->m_pitch );
+
+		// pitch rate
+		xfer->xferReal( &m_locoInfo->m_pitchRate );
+
+		// roll
+		xfer->xferReal( &m_locoInfo->m_roll );
+
+		// roll rate
+		xfer->xferReal( &m_locoInfo->m_rollRate );
+
+		// yaw
+		xfer->xferReal( &m_locoInfo->m_yaw );
+
+		// acceleration pitch
+		xfer->xferReal( &m_locoInfo->m_accelerationPitch );
+
+		// acceleration pitch rate
+		xfer->xferReal( &m_locoInfo->m_accelerationPitchRate );
+
+		// acceleration roll
+		xfer->xferReal( &m_locoInfo->m_accelerationRoll );
+
+		// acceleration roll rate
+		xfer->xferReal( &m_locoInfo->m_accelerationRollRate );
+
+		// overlap z vel
+		xfer->xferReal( &m_locoInfo->m_overlapZVel );
+
+		// overlap z
+		xfer->xferReal( &m_locoInfo->m_overlapZ );
+
+		// wobble
+		xfer->xferReal( &m_locoInfo->m_wobble );
+
+		// wheel info
+		xfer->xferReal( &m_locoInfo->m_wheelInfo.m_frontLeftHeightOffset );
+		xfer->xferReal( &m_locoInfo->m_wheelInfo.m_frontRightHeightOffset );
+		xfer->xferReal( &m_locoInfo->m_wheelInfo.m_rearLeftHeightOffset );
+		xfer->xferReal( &m_locoInfo->m_wheelInfo.m_rearRightHeightOffset );
+		xfer->xferReal( &m_locoInfo->m_wheelInfo.m_wheelAngle );
+		xfer->xferInt( &m_locoInfo->m_wheelInfo.m_framesAirborneCounter );
+		xfer->xferInt( &m_locoInfo->m_wheelInfo.m_framesAirborne );
+	}
+
+	// modules
+	xferDrawableModules( xfer );
+
+	// stealth look
+	xfer->xferUser( &m_stealthLook, sizeof( StealthLookType ) );
+
+
+	// flash count
+	xfer->xferInt( &m_flashCount );
+
+	// flash color
+	xfer->xferColor( &m_flashColor );
+
+	// hidden
+	xfer->xferBool( &m_hidden );
+
+	// hidden by stealth
+	xfer->xferBool( &m_hiddenByStealth );
+
+	// heat vision opacity
+	xfer->xferReal( &m_secondMaterialPassOpacity );
+
+	// instance is identity
+	xfer->xferBool( &m_instanceIsIdentity );
+
+	// instance matrix
+	xfer->xferUser( &m_instance, sizeof( Matrix3D ) );
+
+	// instance scale
+	xfer->xferReal( &m_instanceScale );
+
+	// drawable Info - mostly hold FOW related data.
+	xfer->xferObjectID(&m_drawableInfo.m_shroudStatusObjectID);
+
+	// we do not need to save m_drawableInfo
+	// m_drawableInfo <--- do nothing with this
+
+	// condition state used to be here so we must keep it here for compatibility
+	if( version < 2 )
+	{
+
+		// sanity, we don't write old versions we can only read them
+		DEBUG_ASSERTCRASH( xfer->getXferMode() == XFER_LOAD, 
+											 ("Drawable::xfer - Writing an old format!!!\n") );
+
+		// condition state, note that when we're loading we need to force a replace of these flags
+		m_conditionState.xfer( xfer );
+		if( xfer->getXferMode() == XFER_LOAD	)
+			replaceModelConditionFlags( m_conditionState, TRUE );
+
+	}  // end if
+
+	// expiration date
+	xfer->xferUnsignedInt( &m_expirationDate );
+
+	// icon count
+	UnsignedByte iconCount = 0;
+	if (hasIconInfo())
+	{
+		for( UnsignedByte i = 0; i < MAX_ICONS; ++i )
+			if( getIconInfo()->m_icon[ i ] )
+				iconCount++;
+	}
+	xfer->xferUnsignedByte( &iconCount );
+
+	// icon data
+	AsciiString iconIndexName;
+	AsciiString iconTemplateName;
+	UnsignedInt iconKeepFrame;
+	if( xfer->getXferMode() == XFER_SAVE )
+	{
+
+		for( UnsignedByte i = 0; i < MAX_ICONS; ++i )
+		{
+
+			// skip empty icon slots
+			if( !hasIconInfo() || getIconInfo()->m_icon[ i ] == NULL )
+				continue;
+
+			// icon index name
+			iconIndexName.set( drawableIconIndexToName( (DrawableIconType)i ) );
+			xfer->xferAsciiString( &iconIndexName );
+
+			// keep till frame
+			iconKeepFrame = getIconInfo()->m_keepTillFrame[ i ];
+			xfer->xferUnsignedInt( &iconKeepFrame );
+
+			// icon template name
+			iconTemplateName = getIconInfo()->m_icon[ i ]->getAnimTemplate()->getName();
+			xfer->xferAsciiString( &iconTemplateName );
+
+			// icon data
+			xfer->xferSnapshot( getIconInfo()->m_icon[ i ] );
+
+		}  // end for, i
+
+	}  // end if, save
+	else
+	{
+		Int i;
+
+		// destroy any icons that might be present right now in favor of what we'll load from the file
+		if (hasIconInfo())
+			getIconInfo()->clear();
+
+		// read each data segment from the file
+		DrawableIconType iconIndex;
+		Anim2DTemplate *animTemplate;
+		for( i = 0; i < iconCount; ++i )
+		{
+
+			// icon index name
+			xfer->xferAsciiString( &iconIndexName );
+			iconIndex = drawableIconNameToIndex( iconIndexName.str() );
+
+			// keep till frame
+			xfer->xferUnsignedInt( &iconKeepFrame );
+			getIconInfo()->m_keepTillFrame[ iconIndex ] = iconKeepFrame;
+
+			// icon template name
+			xfer->xferAsciiString( &iconTemplateName );
+			animTemplate = TheAnim2DCollection->findTemplate( iconTemplateName );
+			if( animTemplate == NULL )
+			{
+
+				DEBUG_CRASH(( "Drawable::xfer - Unknown icon template '%s'\n", iconTemplateName.str() ));
+				throw SC_INVALID_DATA;
+
+			}  // end if
+
+			// create icon
+			getIconInfo()->m_icon[ iconIndex ] = newInstance(Anim2D)( animTemplate, TheAnim2DCollection );
+
+			// icon data
+			xfer->xferSnapshot( getIconInfo()->m_icon[ iconIndex ] );
+
+		}  // end for, i
+
+	}  // end else, load
+
+	if( xfer->getXferMode() == XFER_LOAD )
+	{
+		// On load, we want to set it to none, because stealthlook updates
+		// when it changes.  So in the next stealth update, it will be set to 
+		// it's correct value, and the drawable updated (hide shadows and such).  jba.
+		m_stealthLook = STEALTHLOOK_NONE;
+		m_stealthDrawnLook = STEALTHLOOK_NONE;
+		m_stealthFade = 0.0f;
+		// Also, need to update the hidden status for all sub-modules.
+		if (m_hidden || m_hiddenByStealth) {
+			updateHiddenStatus();
+		}
+	}
+
+
+	//
+	// when saving we should never have dirty modules, but when loading we will force the modules
+	// to be dirty just to be sure that they get re-evaluated after the load
+	//
+#ifdef DIRTY_CONDITION_FLAGS
+	if( xfer->getXferMode() == XFER_SAVE )
+		DEBUG_ASSERTCRASH( m_isModelDirty == FALSE, ("Drawble::xfer - m_isModelDirty is not FALSE!\n") );
+	else
+		m_isModelDirty = TRUE;
+#endif
+
+  if( xfer->getXferMode() == XFER_LOAD )
+  {
+    stopAmbientSound(); // Restarted in loadPostProcess()
+  }
+
+  if( version >= 4 )
+	{
+		xfer->xferBool( &m_ambientSoundEnabled );
+	}
+
+  if( version >= 6 )
+  {
+    xfer->xferBool( &m_ambientSoundEnabledFromScript );
+  }
+
+
+  if ( version >= 7 )
+  {
+    Bool customized = ( m_customSoundAmbientInfo != NULL );
+    xfer->xferBool( &customized );
+
+    if ( customized )
+    {
+      Bool customizedToSilence = ( m_customSoundAmbientInfo == getNoSoundMarker() );
+
+      xfer->xferBool( &customizedToSilence );
+      if ( xfer->getXferMode() == XFER_LOAD )
+      {
+        if ( customizedToSilence )
+        {
+          setCustomSoundAmbientOff();
+        }
+        else
+        {
+          AsciiString baseInfoName;
+          xfer->xferAsciiString( &baseInfoName );
+
+          const AudioEventInfo * baseInfo = TheAudio->findAudioEventInfo( baseInfoName );
+          DynamicAudioEventInfo * customizedInfo;
+          Bool successfulLoad = true;
+
+          if ( baseInfo == NULL )
+          {
+            DEBUG_CRASH( ( "Load failed to load customized ambient sound because sound '%s' no longer exists", baseInfoName.str() ) );
+            
+            // Keep trying to load if we possibly can... Don't completely ruin save files just because an old sound
+            // entry in the INI files was removed or renamed
+            customizedInfo = newInstance( DynamicAudioEventInfo );
+            successfulLoad = false;
+          }
+          else
+          {
+            customizedInfo = newInstance( DynamicAudioEventInfo )( *baseInfo );
+          }
+
+          try
+          {
+            // Get custom name back
+            mangleCustomAudioName( customizedInfo );
+        
+            customizedInfo->xferNoName( xfer );
+
+            if ( successfulLoad )
+            {
+              TheAudio->addAudioEventInfo( customizedInfo );
+
+              clearCustomSoundAmbient( false );
+              m_customSoundAmbientInfo = customizedInfo;
+              
+              customizedInfo = NULL; // Belongs to TheAudio now
+            }
+            else
+            {
+              customizedInfo->deleteInstance();
+              customizedInfo = NULL;
+            }
+          }
+          catch( ... )
+          {
+            // since Xfer can throw exceptions -- don't leak memory!
+            if ( customizedInfo != NULL ) 
+              customizedInfo->deleteInstance();
+
+            throw; //rethrow
+          }
+        }
+      }
+      else // else we are saving...
+      {
+        if ( !customizedToSilence )
+        {
+          AsciiString baseInfoName = m_customSoundAmbientInfo->getOriginalName();
+          xfer->xferAsciiString( &baseInfoName );
+          m_customSoundAmbientInfo->xferNoName( xfer );
+        }
+      }
+    }
+  }
+}  // end xfer
+
+// ------------------------------------------------------------------------------------------------
+/** Load post process */
+// ------------------------------------------------------------------------------------------------
+void Drawable::loadPostProcess( void )
+{
+		// if we have an object, we don't need to save/load the pos, just restore it.
+		// if we don't, we'd better save it!
+	if (m_object != NULL)
+	{
+		setTransformMatrix(m_object->getTransformMatrix());
+	}
+	
+	if( m_ambientSoundEnabled && m_ambientSoundEnabledFromScript )
+	{
+    // Do we actually want to start the ambient sound up? 
+    // If it is a permanent sound, then yes; but if it is
+    // a one-shot sound, we don't want to start it even
+    // if it's enabled (because the sound might have finished
+    // playing long ago). This is what the "onlyIfPermanent"
+    // parameter does -- almost like it was added just for
+    // this special case! 
+    startAmbientSound( true );
+	}
+	else
+	{
+		stopAmbientSound();
+	}
+
+}  // end loadPostProcess
+
+//=================================================================================================
+//=================================================================================================
+#ifdef DIRTY_CONDITION_FLAGS
+/*static*/ void Drawable::friend_lockDirtyStuffForIteration()
+{
+	// the walk ran at the sync point, and the tick reads s_modelLockCount beside the render
+	if (LogicThread::isInsideWindow())
+		return;
+	if (s_modelLockCount == 0)
+	{
+		if (TheGameClient)	// WB has no GameClient!
+		{
+			for (Drawable* d = TheGameClient->firstDrawable(); d != NULL; d = d->getNextDrawable())
+			{
+				// this will force us to update stuff.
+				d->getDrawModules();
+			}
+		}
+	}
+	++s_modelLockCount;
+}
+#endif
+
+//=================================================================================================
+//=================================================================================================
+#ifdef DIRTY_CONDITION_FLAGS
+/*static*/ void Drawable::friend_unlockDirtyStuffForIteration()
+{
+	if (LogicThread::isInsideWindow())
+		return;
+	if (s_modelLockCount > 0)
+		--s_modelLockCount;
+}
+#endif
+
+//=================================================================================================
+//=================================================================================================
+TintEnvelope::TintEnvelope(void)
+{
+	m_attackRate.Set(0,0,0);
+	m_decayRate.Set(0,0,0);
+	m_peakColor.Set(0,0,0);
+	m_currentColor.Set(0,0,0);
+	m_envState = ENVELOPE_STATE_REST;
+	m_sustainCounter = 0;
+	m_affect = FALSE;
+}
+
+//-------------------------------------------------------------------------------------------------
+const Real FADE_RATE_EPSILON = (0.001f);
+
+//-------------------------------------------------------------------------------------------------
+void TintEnvelope::play(const RGBColor *peak, UnsignedInt atackFrames, UnsignedInt decayFrames, UnsignedInt sustainAtPeak )    
+{
+	setPeakColor( peak );
+
+	setAttackFrames( atackFrames );
+	setDecayFrames( decayFrames );
+
+	m_envState = ENVELOPE_STATE_ATTACK;
+	m_sustainCounter = sustainAtPeak;
+	m_affect = TRUE;
+
+	Vector3 delta;
+	Vector3::Subtract(m_currentColor, m_peakColor, &delta);
+
+	if ( delta.Length() <= FADE_RATE_EPSILON ) // we are practically already at this color
+		m_envState = ENVELOPE_STATE_SUSTAIN;
+
+}
+
+//-------------------------------------------------------------------------------------------------
+void TintEnvelope::setAttackFrames(UnsignedInt frames) 
+{
+	Real recipFrames = 1.0f / (Real)MAX(1,frames);
+	m_attackRate.Set( m_currentColor );
+	Vector3::Subtract( m_peakColor, m_attackRate, &m_attackRate);
+	m_attackRate.Scale( Vector3(recipFrames, recipFrames, recipFrames) );
+}
+
+//-------------------------------------------------------------------------------------------------
+void TintEnvelope::setDecayFrames( UnsignedInt frames )
+{
+	Real recipFrames = ( -1.0f ) / (Real)MAX(1,frames);
+	m_decayRate.Set( m_peakColor );
+	m_decayRate.Scale( Vector3(recipFrames, recipFrames, recipFrames) );
+}
+
+//-------------------------------------------------------------------------------------------------
+void TintEnvelope::release(void)
+{
+	/* play() aims the decay at the peak it was given, which is only right when the tint got there.
+		 An EMP running out under a Frenzy starts the frenzy red from the disabled grey, and a frenzy
+		 that ends before that attack finishes decayed the grey along the red: away from zero, into a
+		 cyan that never met the rest test. Decay from the colour we are at, at the same pace. */
+	const Real peakLength = m_peakColor.Length();
+	if (peakLength > FADE_RATE_EPSILON)
+		m_decayRate = m_currentColor * ( -m_decayRate.Length() / peakLength );
+	m_envState = ENVELOPE_STATE_DECAY;
+}
+
+//-------------------------------------------------------------------------------------------------
+void TintEnvelope::update(void)
+{
+	switch ( m_envState )
+	{
+		case ( ENVELOPE_STATE_REST ) : //most likely case
+		{
+			m_currentColor.Set(0,0,0);
+			m_affect = FALSE;
+			break;
+		}
+		case ( ENVELOPE_STATE_DECAY ) : // much more likely than attack
+		{
+			if (m_decayRate.Length() > m_currentColor.Length() || m_currentColor.Length() <= FADE_RATE_EPSILON) //we are at rest
+			{
+				m_envState = ENVELOPE_STATE_REST;
+				m_affect = FALSE;
+			}
+			else
+			{
+				Vector3::Add( m_decayRate, m_currentColor, &m_currentColor );//Add the decayRate to the current color;
+				m_affect = TRUE;
+			}
+			break;
+		}
+		case ( ENVELOPE_STATE_ATTACK ) : 
+		{
+			Vector3 delta;
+			Vector3::Subtract(m_currentColor, m_peakColor, &delta);
+			
+			if (m_attackRate.Length() > delta.Length() || delta.Length() <= FADE_RATE_EPSILON) //we are at the peak
+			{
+				if ( m_sustainCounter )
+				{
+					m_envState = ENVELOPE_STATE_SUSTAIN;
+				}
+				else
+				{
+					m_envState = ENVELOPE_STATE_DECAY;
+				}
+
+			}
+			else
+			{
+				Vector3::Add( m_attackRate, m_currentColor, &m_currentColor );//Add the attackRate to the current color;
+				m_affect = TRUE;
+			}
+			
+			break;
+		}
+		case ( ENVELOPE_STATE_SUSTAIN ) :
+		{
+			if ( m_sustainCounter > 0 )
+				--m_sustainCounter;
+			else
+				release();
+				
+			break;
+		}
+		default:
+		{
+			//do nothing, we are sustaining until externally triggered to release (decay)
+			break;
+		}
+	}
+	// here we transition the color from current to peak to release, according to 
+
+}
+
+// ------------------------------------------------------------------------------------------------
+/** CRC */
+// ------------------------------------------------------------------------------------------------
+void TintEnvelope::crc( Xfer *xfer )
+{
+
+}  // end crc
+
+// ------------------------------------------------------------------------------------------------
+/** Xfer Method
+	* Version Info;
+	* 1: Initial version */
+// ------------------------------------------------------------------------------------------------
+void TintEnvelope::xfer( Xfer *xfer )
+{
+
+	// version 
+	XferVersion currentVersion = 1;
+	XferVersion version = currentVersion;
+	xfer->xferVersion( &version, currentVersion );
+
+	// attack rate
+	xfer->xferUser( &m_attackRate, sizeof( Vector3 ) );
+
+	// decay rate
+	xfer->xferUser( &m_decayRate, sizeof( Vector3 ) );
+
+	// peak color
+	xfer->xferUser( &m_peakColor, sizeof( Vector3 ) );
+
+	// current color
+	xfer->xferUser( &m_currentColor, sizeof( Vector3 ) );
+
+	// sustain counter
+	xfer->xferUnsignedInt( &m_sustainCounter );
+
+	// affect
+	xfer->xferBool( &m_affect );
+
+	// state
+	xfer->xferByte( &m_envState );
+
+}  // end xfer
+
+// ------------------------------------------------------------------------------------------------
+/** Load Post Process */
+// ------------------------------------------------------------------------------------------------
+void TintEnvelope::loadPostProcess( void )
+{
+
+}  // end loadPostProcess
+

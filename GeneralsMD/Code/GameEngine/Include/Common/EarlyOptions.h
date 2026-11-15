@@ -1,0 +1,581 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2026 by İlyas Akın for the macOS/Linux port; see NOTICE.md and the git history.
+
+#pragma once
+
+// EarlyOptions.h
+//
+// Options.ini, read before the engine exists.  EarlyCommandLine.h's twin.
+//
+// Almost every setting can wait for TheGlobalData, and should.  One cannot: the window style is
+// fixed by CreateWindow in WinMain, which runs before the memory manager, before the file system
+// and long before anything has parsed a preferences file.  A window born with a caption cannot
+// lose it later without flickering through a restyle, and borderless has to be born without one.
+//
+// So this reads the file the hard way - the user data directory out of the shell and the registry,
+// then fopen and fgets - and answers one key at a time.  It is deliberately not a cache and not a
+// parser: three lookups reopen the file three times, which costs microseconds once per process.
+//
+// The format is UserPreferences': "key = value", one per line, '=' separating, whitespace ignored
+// around both halves.  A file the engine writes is always in that shape, so the two agree without
+// sharing code.
+
+#if defined(_WIN32)
+#include <windows.h>
+#include <shlobj.h>
+#else
+#include <pwd.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+#include "Platform/MSVCCompat.h"	// strcasecmp and strncasecmp, taught to MSVC
+#include "zhio.h"		// zh_fopen: the user data directory's path is spelled the Windows way (C1, D4)
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/** Where this user's Documents folder is.
+	*
+	* SHGetSpecialFolderPath writes into a MAX_PATH buffer and fails outright when the folder has
+	* been redirected somewhere longer than that - a network share, or the long OneDrive path a lot
+	* of machines have now. The whole user data directory then comes back empty and the saves, the
+	* replays, Options.ini and the crash log all go somewhere else without a word.
+	* SHGetKnownFolderPath has no such limit. It is Vista and later, so it is bound at run time and
+	* the old call is still the fallback. The GUID is spelled out here rather than taken from
+	* KnownFolders.h so that nothing has to link another lib for one constant. */
+#if defined(_WIN32)
+inline bool findDocumentsFolderA( char *out, size_t outSize )
+{
+	if (out == NULL || outSize == 0)
+		return false;
+	out[0] = 0;
+
+	// FOLDERID_Documents {FDD39AD0-238F-46AF-ADB4-6C85480369C7}
+	static const GUID kFolderIdDocuments =
+		{ 0xFDD39AD0, 0x238F, 0x46AF, { 0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7 } };
+
+	typedef HRESULT (WINAPI *GetKnownFolderPathFn)( const GUID &, DWORD, HANDLE, PWSTR * );
+
+	HMODULE shell = ::GetModuleHandleA( "shell32.dll" );
+	if (shell == NULL)
+		shell = ::LoadLibraryA( "shell32.dll" );
+
+	if (shell != NULL)
+	{
+		GetKnownFolderPathFn getKnownFolderPath =
+			(GetKnownFolderPathFn)::GetProcAddress( shell, "SHGetKnownFolderPath" );
+
+		if (getKnownFolderPath != NULL)
+		{
+			PWSTR wide = NULL;
+			if (SUCCEEDED( getKnownFolderPath( kFolderIdDocuments, 0, NULL, &wide ) ) && wide != NULL)
+			{
+				const int written = ::WideCharToMultiByte( CP_ACP, 0, wide, -1,
+																									 out, (int)outSize, NULL, NULL );
+				::CoTaskMemFree( wide );
+				if (written > 0)
+					return true;
+				out[0] = 0;		// the path did not fit this buffer; fall through and try the old way
+			}
+		}
+	}
+
+	char documents[MAX_PATH];
+	if (!::SHGetSpecialFolderPathA( NULL, documents, CSIDL_PERSONAL, TRUE ))
+		return false;
+
+	if (strlen( documents ) + 1 > outSize)
+		return false;
+
+	strcpy( out, documents );
+	return true;
+}
+
+/** Whether a file can be created in this directory, which is made first if it is missing.
+	*
+	* Windows' Controlled Folder Access, the ransomware protection in Defender, refuses an unknown
+	* program any write under Documents, and a new generals.exe is an unknown program.  The first
+	* write the game makes there is a debugging CRC file just after the shell map loads, and it
+	* threw; the crash report meant to explain that could not be written either, so v2.0.0 players
+	* got "Technical Difficulties" five seconds in with nothing to send.  The probe deletes itself. */
+inline bool isDirectoryWritable( const char *directory )
+{
+	::CreateDirectoryA( directory, NULL );
+
+	char probe[MAX_PATH * 2];
+	if (::_snprintf( probe, sizeof( probe ), "%szhr-write-test.tmp", directory ) < 0)
+		return false;
+	probe[sizeof( probe ) - 1] = 0;
+
+	HANDLE file = ::CreateFileA( probe, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+		FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL );
+	if (file == INVALID_HANDLE_VALUE)
+		return false;
+	::CloseHandle( file );
+	return true;
+}
+
+/** The directory the game keeps Options.ini, replays and save games in.
+	*
+	* Documents plus a leaf name the installer writes into the registry.  WinMain needs it before
+	* the engine exists and GlobalData sets m_userDataDir from it, so the two cannot disagree.  When
+	* nothing can be written there the same leaf under %LOCALAPPDATA% is used instead, which no
+	* folder protection covers; the settings the player had in Documents are then left behind, but
+	* a game that cannot save settings could not have kept them anyway. */
+inline bool findUserDataDirectory( char *out, size_t outSize )
+{
+	if (outSize == 0)
+		return false;
+	out[0] = 0;
+
+	// ZH_USER_DATA_DIR, when set, is the directory itself, as off Windows: for tests, which bring their own
+	// Options.ini, and never set by a player.  Made when missing, one level deep.
+	const char *forced = ::getenv( "ZH_USER_DATA_DIR" );
+	if (forced != NULL && forced[0] != 0)
+	{
+		const size_t length = ::strlen( forced );
+		const bool slashed = forced[length - 1] == '\\' || forced[length - 1] == '/';
+		if (::_snprintf( out, outSize, slashed ? "%s" : "%s\\", forced ) < 0)
+		{
+			out[0] = 0;
+			return false;
+		}
+		out[outSize - 1] = 0;
+		::CreateDirectoryA( forced, NULL );
+		return true;
+	}
+
+	char documents[MAX_PATH * 2];
+	if (!findDocumentsFolderA( documents, sizeof( documents ) ))
+		return false;
+
+	char leaf[MAX_PATH] = "Command and Conquer Generals Zero Hour Data";
+
+	// HKCU first, then HKLM: the same two hives in the same order that GetStringFromRegistry walks.
+	// A localized install renames the folder here, and reading only one hive would send this at the
+	// English folder while the engine writes to the translated one. The order has to match the
+	// engine's or these two read different directories.
+	const HKEY hives[2] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
+	for (int hive = 0; hive < 2; ++hive)
+	{
+		HKEY key;
+		if (::RegOpenKeyExA( hives[hive],
+				"SOFTWARE\\Electronic Arts\\EA Games\\Command and Conquer Generals Zero Hour",
+				0, KEY_READ, &key ) != ERROR_SUCCESS)
+			continue;
+
+		DWORD type = 0;
+		char value[MAX_PATH];
+		DWORD size = sizeof( value );
+		const bool got = ::RegQueryValueExA( key, "UserDataLeafName", NULL, &type, (LPBYTE)value, &size ) == ERROR_SUCCESS
+										&& type == REG_SZ && size > 1;
+		::RegCloseKey( key );
+
+		if (got)
+		{
+			value[(size < sizeof( value )) ? size : sizeof( value ) - 1] = 0;
+			::strncpy( leaf, value, sizeof( leaf ) - 1 );
+			leaf[sizeof( leaf ) - 1] = 0;
+			break;
+		}
+	}
+
+	if (::_snprintf( out, outSize, "%s\\%s\\", documents, leaf ) < 0)
+	{
+		out[0] = 0;
+		return false;
+	}
+	out[outSize - 1] = 0;
+
+	// The answer is worked out once a process: WinMain and GlobalData both ask, and a probe that
+	// passed the first time and failed the second would split them between two folders.
+	static char s_chosen[MAX_PATH * 2] = "";
+	if (s_chosen[0] == 0)
+	{
+		::strncpy( s_chosen, out, sizeof( s_chosen ) - 1 );
+		const char *localAppData = ::getenv( "LOCALAPPDATA" );
+		if (!isDirectoryWritable( out ) && localAppData != NULL && localAppData[0] != 0)
+		{
+			char fallback[MAX_PATH * 2];
+			if (::_snprintf( fallback, sizeof( fallback ), "%s\\%s\\", localAppData, leaf ) >= 0)
+			{
+				fallback[sizeof( fallback ) - 1] = 0;
+				if (isDirectoryWritable( fallback ))
+					::strncpy( s_chosen, fallback, sizeof( s_chosen ) - 1 );
+			}
+		}
+	}
+	if (::strlen( s_chosen ) + 1 > outSize)
+	{
+		out[0] = 0;
+		return false;
+	}
+	::strcpy( out, s_chosen );
+	return true;
+}
+#else
+/* Off Windows (C1, decision D5): the platform's place for an application's own data, under the same
+	 leaf Windows uses by default.  There is no installer registry here, so no localized leaf name.
+	   - macOS: ~/Library/Application Support/Command and Conquer Generals Zero Hour Data
+	   - Linux: $XDG_DATA_HOME/Command and Conquer Generals Zero Hour Data, $XDG_DATA_HOME defaulting
+	     to ~/.local/share as the XDG base directory specification says
+	   - ZH_USER_DATA_DIR, when set, is the directory itself (a POSIX path), for tests and portable
+	     installs.
+	 The directory and any missing parents are made.  The answer ends in '\' as Windows' does, so
+	 every `+ "Save\"` and `endsWith("\")` works unchanged: the engine's paths keep their
+	 Windows spelling and are resolved where they reach the operating system (posixpath.h).
+	 Documents, where Windows keeps it, was considered for macOS and set aside: Apple's guidelines
+	 keep an application's own data in Application Support (C1, D5). */
+
+/** This user's home directory: $HOME, or the password database's entry when $HOME is unset. */
+inline bool findHomeDirectory( char *out, size_t outSize )
+{
+	if (outSize == 0)
+		return false;
+	out[0] = 0;
+	const char *home = ::getenv( "HOME" );
+	if (home == NULL || home[0] != '/')
+	{
+		const struct passwd *entry = ::getpwuid( ::getuid() );
+		home = (entry != NULL) ? entry->pw_dir : NULL;
+	}
+	if (home == NULL || home[0] != '/' || ::strlen( home ) + 1 > outSize)
+		return false;
+	::strcpy( out, home );
+	return true;
+}
+
+/** Makes every missing directory along `path`; whether it is a directory afterwards. */
+inline bool makeDirectoryPath( const char *path )
+{
+	char prefix[4096];
+	const size_t length = ::strlen( path );
+	if (length == 0 || length + 1 > sizeof( prefix ))
+		return false;
+	for (size_t at = 1; at <= length; ++at)
+	{
+		if (at == length || path[at] == '/')
+		{
+			::memcpy( prefix, path, at );
+			prefix[at] = 0;
+			::mkdir( prefix, 0777 );	// one that exists already is the usual case, and fine
+		}
+	}
+	struct stat status;
+	return ::stat( path, &status ) == 0 && S_ISDIR( status.st_mode );
+}
+
+/** The two conventions for where an application keeps its data: Apple's Application Support, and
+	* the XDG base directories every Linux desktop follows.  A parameter rather than an #if, so each is
+	* testable on the other's machine; findUserDataDirectory passes this platform's. */
+enum UserFolderConvention
+{
+	USER_FOLDERS_APPLE,
+	USER_FOLDERS_XDG
+};
+
+#if defined(__APPLE__)
+static const UserFolderConvention PLATFORM_USER_FOLDERS = USER_FOLDERS_APPLE;
+#else
+static const UserFolderConvention PLATFORM_USER_FOLDERS = USER_FOLDERS_XDG;
+#endif
+
+/** The user data directory these inputs name, without the trailing separator: `override` if it is
+	* set, and otherwise the convention's place under `home` or, for XDG, `dataHome` ($XDG_DATA_HOME).
+	* Pure, so a test can check it without the process's own answer being fixed by the first call. */
+inline bool composeUserDataDirectory( UserFolderConvention convention, const char *override, const char *home,
+	const char *dataHome, char *out, size_t outSize )
+{
+	if (outSize == 0)
+		return false;
+	out[0] = 0;
+	const char *leaf = "Command and Conquer Generals Zero Hour Data";
+	int written = -1;
+	if (override != NULL && override[0] != 0)
+		written = ::snprintf( out, outSize, "%s", override );
+	else if (convention == USER_FOLDERS_APPLE && home != NULL && home[0] == '/')
+		written = ::snprintf( out, outSize, "%s/Library/Application Support/%s", home, leaf );
+	else if (convention == USER_FOLDERS_XDG && dataHome != NULL && dataHome[0] == '/')	// a relative one is ignored, as the specification says
+		written = ::snprintf( out, outSize, "%s/%s", dataHome, leaf );
+	else if (convention == USER_FOLDERS_XDG && home != NULL && home[0] == '/')
+		written = ::snprintf( out, outSize, "%s/.local/share/%s", home, leaf );
+	if (written <= 0 || (size_t)written >= outSize)
+	{
+		out[0] = 0;
+		return false;
+	}
+	size_t length = (size_t)written;
+	while (length > 1 && (out[length - 1] == '/' || out[length - 1] == '\\'))
+		out[--length] = 0;
+	return true;
+}
+
+inline bool findUserDataDirectory( char *out, size_t outSize )
+{
+	if (outSize == 0)
+		return false;
+	out[0] = 0;
+
+	// Worked out once a process, as on Windows: WinMain, GlobalData and registry.cpp all ask.
+	static char s_chosen[4096] = "";
+	static bool s_decided = false;
+	if (!s_decided)
+	{
+		s_decided = true;
+		char home[4096];
+		char directory[4096];
+		if (composeUserDataDirectory( PLATFORM_USER_FOLDERS, ::getenv( "ZH_USER_DATA_DIR" ),
+					findHomeDirectory( home, sizeof( home ) ) ? home : NULL,
+					::getenv( "XDG_DATA_HOME" ), directory, sizeof( directory ) )
+				&& ::strlen( directory ) + 2 <= sizeof( s_chosen ) && makeDirectoryPath( directory ))
+			::snprintf( s_chosen, sizeof( s_chosen ), "%s\\", directory );
+	}
+	if (s_chosen[0] == 0 || ::strlen( s_chosen ) + 1 > outSize)
+		return false;
+	::strcpy( out, s_chosen );
+	return true;
+}
+
+/** Registry.ini, which stands in for the registry off Windows (registry.cpp): the user data directory
+	* plus the leaf, spelled as the engine spells paths.  Open it with zh_fopen.  Every reader and writer
+	* of the file takes its path from here (C1 (d): registry.cpp and WWDownload included). */
+inline bool findRegistryFile( char *out, size_t outSize )
+{
+	if (!findUserDataDirectory( out, outSize ))
+		return false;
+	if (::strlen( out ) + ::strlen( "Registry.ini" ) + 1 > outSize)
+	{
+		out[0] = 0;
+		return false;
+	}
+	::strcat( out, "Registry.ini" );		// the directory ends in its separator, as on Windows
+	return true;
+}
+
+/** The value of `key` (XDG_DESKTOP_DIR and the like) in an open xdg-user-dirs file, with a leading
+	* "$HOME" replaced by `home`.  The file's lines are `KEY="$HOME/Desktop"` or `KEY="/absolute"`.
+	* Split out so a test can hand it a file of its own. */
+inline bool findXdgUserDirIn( FILE *fp, const char *key, const char *home, char *out, size_t outSize )
+{
+	if (outSize == 0)
+		return false;
+	out[0] = 0;
+	const size_t keyLen = ::strlen( key );
+	char line[4096];
+	bool found = false;
+	while (::fgets( line, sizeof( line ), fp ) != NULL)
+	{
+		const char *at = line;
+		while (*at == ' ' || *at == '\t')
+			++at;
+		if (::strncmp( at, key, keyLen ) != 0 || at[keyLen] != '=')
+			continue;
+		at += keyLen + 1;
+		if (*at == '"')
+			++at;
+		char value[4096];
+		size_t i = 0;
+		while (*at != 0 && *at != '"' && *at != '\r' && *at != '\n' && i + 1 < sizeof( value ))
+			value[i++] = *at++;
+		value[i] = 0;
+		int written;
+		if (::strncmp( value, "$HOME", 5 ) == 0 && (value[5] == '/' || value[5] == 0))
+			written = ::snprintf( out, outSize, "%s%s", home, value + 5 );
+		else if (value[0] == '/')
+			written = ::snprintf( out, outSize, "%s", value );
+		else
+			continue;		// the specification allows only those two forms
+		found = written > 0 && (size_t)written < outSize;
+		if (!found)
+			out[0] = 0;
+		// keep reading: the last assignment wins, as it would in the shell that sources this file
+	}
+	return found;
+}
+
+/** Where xdg-user-dirs keeps its file: $XDG_CONFIG_HOME/user-dirs.dirs, $XDG_CONFIG_HOME defaulting
+	* to ~/.config. */
+inline bool composeUserDirsFile( const char *home, const char *configHome, char *out, size_t outSize )
+{
+	int written;
+	if (configHome != NULL && configHome[0] == '/')
+		written = ::snprintf( out, outSize, "%s/user-dirs.dirs", configHome );
+	else
+		written = ::snprintf( out, outSize, "%s/.config/user-dirs.dirs", home );
+	return written > 0 && (size_t)written < outSize;
+}
+
+/** Where this user's Desktop is, for a convention and a home directory: ~/Desktop for Apple; for XDG
+	* the Desktop that xdg-user-dirs names (XDG_DESKTOP_DIR), falling back to ~/Desktop.  Without a
+	* trailing separator, as SHGetPathFromIDList gives it. */
+inline bool composeDesktopDirectory( UserFolderConvention convention, const char *home, const char *configHome,
+	char *out, size_t outSize )
+{
+	if (outSize == 0)
+		return false;
+	out[0] = 0;
+	if (home == NULL || home[0] != '/')
+		return false;
+	char dirsFile[4096];
+	if (convention == USER_FOLDERS_XDG && composeUserDirsFile( home, configHome, dirsFile, sizeof( dirsFile ) ))
+	{
+		FILE *fp = ::fopen( dirsFile, "r" );
+		if (fp != NULL)
+		{
+			const bool found = findXdgUserDirIn( fp, "XDG_DESKTOP_DIR", home, out, outSize );
+			::fclose( fp );
+			if (found)
+				return true;
+		}
+	}
+	const int written = ::snprintf( out, outSize, "%s/Desktop", home );
+	if (written <= 0 || (size_t)written >= outSize)
+	{
+		out[0] = 0;
+		return false;
+	}
+	return true;
+}
+
+/** Where this user's Desktop is: the replay menu's "copy" button puts a replay there.  Windows asks
+	* the shell (ReplayMenu.cpp). */
+inline bool findDesktopDirectory( char *out, size_t outSize )
+{
+	char home[4096];
+	if (!findHomeDirectory( home, sizeof( home ) ))
+	{
+		if (outSize != 0)
+			out[0] = 0;
+		return false;
+	}
+	return composeDesktopDirectory( PLATFORM_USER_FOLDERS, home, ::getenv( "XDG_CONFIG_HOME" ), out, outSize );
+}
+#endif
+
+/** Where the value starts if this preferences line sets `key` - "key = value", the key in any case,
+	* blanks around either - and NULL if it does not.  The value runs to the line's end; the caller cuts
+	* the line ending and trailing blanks.  findEarlyOptionValueIn reads with it, and Registry.ini's
+	* writer (registry.cpp) finds the line it replaces with it, so the two agree on which line is a key's. */
+inline const char *earlyOptionLineValue( const char *line, const char *key )
+{
+	const size_t keyLen = ::strlen( key );
+	const char *at = line;
+	while (*at == ' ' || *at == '\t')
+		++at;
+
+	if (::strncasecmp( at, key, keyLen ) != 0)
+		return NULL;
+
+	const char *after = at + keyLen;
+	while (*after == ' ' || *after == '\t')
+		++after;
+	if (*after != '=')
+		return NULL;	// a longer key that merely starts the same way
+
+	++after;
+	while (*after == ' ' || *after == '\t')
+		++after;
+	return after;
+}
+
+/** The value stored under this key in an already-open preferences file.
+	*
+	* Split out from findEarlyOptionValue so the parsing can be tested against a file the test wrote
+	* itself.  The real one reads the player's Options.ini, which a test has no business opening. */
+inline bool findEarlyOptionValueIn( FILE *fp, const char *key, char *out, size_t outSize )
+{
+	if (outSize == 0)
+		return false;
+	out[0] = 0;
+
+	bool found = false;
+	char line[1024];
+	while (::fgets( line, sizeof( line ), fp ) != NULL)
+	{
+		const char *after = earlyOptionLineValue( line, key );
+		if (after == NULL)
+			continue;
+
+		size_t i = 0;
+		while (*after != 0 && *after != '\r' && *after != '\n' && i + 1 < outSize)
+			out[i++] = *after++;
+		while (i > 0 && (out[i - 1] == ' ' || out[i - 1] == '\t'))
+			--i;
+		out[i] = 0;
+
+		found = (i > 0);
+		// keep reading: UserPreferences::write dumps a std::map, so a duplicated key can only come
+		// from a hand-edited file, and the last one wins is the rule the engine's own loader follows
+	}
+
+	return found;
+}
+
+/** The value stored under this key in Options.ini, or false if the file or the key is not there. */
+inline bool findEarlyOptionValue( const char *key, char *out, size_t outSize )
+{
+	if (outSize == 0)
+		return false;
+	out[0] = 0;
+
+	char path[MAX_PATH];
+	if (!findUserDataDirectory( path, sizeof( path ) ))
+		return false;
+	::strncat( path, "Options.ini", sizeof( path ) - ::strlen( path ) - 1 );
+
+	FILE *fp = zh_fopen( path, "r" );
+	if (fp == NULL)
+		return false;	// no preferences file yet, which is the state every fresh install is in
+
+	const bool found = findEarlyOptionValueIn( fp, key, out, outSize );
+	::fclose( fp );
+	return found;
+}
+
+/** The value stored under this key, as a whole number, clamped to [lo,hi]. */
+inline int getEarlyOptionInt( const char *key, int defaultValue, int lo, int hi )
+{
+	char value[64];
+	if (!findEarlyOptionValue( key, value, sizeof( value ) ))
+		return defaultValue;
+
+	const int parsed = ::atoi( value );
+	if (parsed < lo)
+		return lo;
+	if (parsed > hi)
+		return hi;
+	return parsed;
+}
+
+/** A stored yes or no, read as leniently as the options catalog reads it, so the two never disagree
+	* about the same line of the file. */
+inline bool isEarlyOptionYes( const char *value )
+{
+	return ::strcasecmp( value, "yes" ) == 0 || ::strcasecmp( value, "true" ) == 0
+		|| ::strcasecmp( value, "on" ) == 0 || ::strcasecmp( value, "y" ) == 0
+		|| ::strcasecmp( value, "t" ) == 0 || ::strcasecmp( value, "1" ) == 0;
+}
+
+inline bool getEarlyOptionBool( const char *key, bool defaultValue )
+{
+	char value[64];
+	if (!findEarlyOptionValue( key, value, sizeof( value ) ))
+		return defaultValue;
+	return isEarlyOptionYes( value );
+}

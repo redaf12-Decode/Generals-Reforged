@@ -1,0 +1,156 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Linux: Build Release",
+      "type": "process",
+      "command": "${workspaceFolder}/build-linux.sh",
+      "args": ["Release"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "CC": "gcc-16",
+          "CXX": "g++-16"
+        }
+      },
+      "problemMatcher": ["$gcc"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Linux: Build Release executable only",
+      "type": "process",
+      "command": "${workspaceFolder}/build-linux.sh",
+      "args": ["Release", "generals"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "CC": "gcc-16",
+          "CXX": "g++-16"
+        }
+      },
+      "problemMatcher": ["$gcc"],
+      "presentation": {
+        "panel": "dedicated",
+        "close": true,
+        "showReuseMessage": false
+      }
+    },
+    {
+      "label": "Linux: Make portable release zip (this machine)",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/GeneralsMD/Code/Tools/linux-portable.sh",
+        "--host",
+        "--zip",
+        "--no-art",
+        "--build",
+        "${workspaceFolder}/build-linux/release-build",
+        "--out",
+        "${workspaceFolder}/build-linux/release/ZeroHourReforged-linux-x86_64"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "CC": "gcc-16",
+          "CXX": "g++-16"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "showReuseMessage": false
+      }
+    },
+    {
+      "label": "Linux: Publish thin executable",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/GeneralsMD/Code/Tools/publish-linux-executable.sh",
+        "${workspaceFolder}/build-linux/generals",
+        "${env:HOME}/Games/ZeroHourReforged/bin/generals"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": "Linux: Build Release executable only",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "close": true,
+        "showReuseMessage": false
+      }
+    },
+    {
+      "label": "Zero Hour: Play (no debugger)",
+      "type": "process",
+      "command": "${workspaceFolder}/build-linux/ZeroHourReforged/bin/generals",
+      "args": [
+        "-root",
+        "${workspaceFolder}/build-linux/play-root",
+        "-quickstart",
+        "-noshellmap",
+        "-multiInstance"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "ZH_USER_DATA_DIR": "${workspaceFolder}/build-linux/vscode-user"
+        }
+      },
+      "dependsOn": "Linux: Build Release",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Zero Hour: AI skirmish (no debugger)",
+      "type": "process",
+      "command": "${workspaceFolder}/build-linux/ZeroHourReforged/bin/generals",
+      "args": [
+        "-root",
+        "${workspaceFolder}/build-linux/play-root",
+        "-quickstart",
+        "-noshellmap",
+        "-multiInstance",
+        "-randommap",
+        "0",
+        "2",
+        "-autoskirmish",
+        "2",
+        "-aidiff",
+        "brutal",
+        "-seed",
+        "0",
+        "-observer",
+        "-autocamera",
+        "10",
+        "-showHudOverlay",
+        "-maxframes",
+        "12000"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "ZH_USER_DATA_DIR": "${workspaceFolder}/build-linux/vscode-user"
+        }
+      },
+      "dependsOn": "Linux: Build Release",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    }
+  ]
+}

@@ -1,0 +1,534 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2025-2026 by Olcay Seygan for Zero Hour Reforged; see the git history.
+// Modified 2026 by İlyas Akın for the macOS/Linux port; see NOTICE.md and the git history.
+
+////////////////////////////////////////////////////////////////////////////////
+//																																						//
+//  (c) 2001-2003 Electronic Arts Inc.																				//
+//																																						//
+////////////////////////////////////////////////////////////////////////////////
+
+// RandomValue.cpp
+// Pseudo-random number generators 
+// Author: Michael S. Booth, January 1998
+
+#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/LogicThread.h"
+
+
+#include "Lib/BaseType.h"
+#include "Common/RandomValue.h"
+#include "Common/crc.h"
+#include "Common/Debug.h"
+#include "GameLogic/GameLogic.h"
+
+//#define DETERMINISTIC				// to allow repetition for debugging
+
+#ifdef _INTERNAL
+// for occasional debugging...
+//#pragma optimize("", off)
+//#pragma MESSAGE("************************************** WARNING, optimization disabled for debugging purposes")
+#endif
+
+#undef DEBUG_RANDOM_CLIENT
+#undef DEBUG_RANDOM_LOGIC
+#undef DEBUG_RANDOM_AUDIO
+
+//#define DEBUG_RANDOM_CLIENT
+//#define DEBUG_RANDOM_LOGIC
+//#define DEBUG_RANDOM_AUDIO
+
+static const Real theMultFactor = 1.0f / 4294967295.0f;	///< 2^32 - 1, the largest UnsignedInt
+
+// Initial seed values.
+static UnsignedInt theGameClientSeed[6] =
+{
+    0xf22d0e56L, 0x883126e9L, 0xc624dd2fL, 0x702c49cL, 0x9e353f7dL, 0x6fdf3b64L
+};
+
+/* LOGIC-THREAD.md phase 2, M8.  The client draws a tick makes (a burning bone picked, a scorch
+	 picked, a building's shudder, a floating number's jitter) come from a stream of their own, so the
+	 tick never moves the seed the client draws from beside it.  These draws only place effects; no
+	 machine has to agree on them and nothing in logic reads them. */
+static UnsignedInt theTickClientSeed[6] =
+{
+    0xf22d0e56L, 0x883126e9L, 0xc624dd2fL, 0x702c49cL, 0x9e353f7dL, 0x6fdf3b64L
+};
+
+/** The tick's own stream inside a tick, the client's everywhere else; the census counts a tick draw
+	* that still reaches the client's. */
+static UnsignedInt *clientSeed( void )
+{
+	if( LogicThread::defersEffects() )
+		return theTickClientSeed;
+	LOGIC_CENSUS( CENSUS_CLIENT_RANDOM );
+	return theGameClientSeed;
+}
+
+static UnsignedInt theGameAudioSeed[6] =
+{
+    0xf22d0e56L, 0x883126e9L, 0xc624dd2fL, 0x702c49cL, 0x9e353f7dL, 0x6fdf3b64L
+};
+
+static UnsignedInt theGameLogicBaseSeed = 0;
+static UnsignedInt theGameLogicSeed[6] =
+{
+    0xf22d0e56L, 0x883126e9L, 0xc624dd2fL, 0x702c49cL, 0x9e353f7dL, 0x6fdf3b64L
+};
+
+// Add with carry. SUM is replaced with A + B + C, C is replaced with 1  if there was a carry, 0 if there wasn't. A carry occurred if the sum is  less than one of the inputs. This is addition, so carry can never be  more than one.
+#define ADC(SUM, A, B, C)   SUM = (A) + (B) + (C); C = ((SUM < (A)) || (SUM < (B)))
+
+static UnsignedInt randomValue(UnsignedInt *seed)
+{
+	UnsignedInt ax;
+	UnsignedInt c = 0;
+	
+	
+	ADC(ax, seed[5], seed[4], c);   /*  mov     ax,seed+20  */
+	/*  add     ax,seed+16  */
+	seed[4] = ax;                   /*  mov     seed+8,ax   */
+	
+	ADC(ax, ax, seed[3], c);        /*  adc     ax,seed+12  */
+	seed[3] = ax;                   /*  mov     seed+12,ax  */
+	
+	ADC(ax, ax, seed[2], c);        /*  adc     ax,seed+8   */
+	seed[2] = ax;                   /*  mov     seed+8,ax   */
+	
+	ADC(ax, ax, seed[1], c);        /*  adc     ax,seed+4   */
+	seed[1] = ax;                   /*  mov     seed+4,ax   */
+	
+	ADC(ax, ax, seed[0], c);        /*  adc     ax,seed+0   */
+	seed[0] = ax;                   /*  mov     seed+0,ax   */
+	
+	/* Increment seed array, bubbling up the carries. */
+	if (!++seed[5])
+	{
+		if (!++seed[4])
+		{
+			if (!++seed[3])
+			{
+				if (!++seed[2])
+				{
+					if (!++seed[1])
+					{
+						++seed[0];
+						++ax;
+					}
+				}
+			}
+		}
+	}
+	return(ax);
+}
+
+static void seedRandom(UnsignedInt SEED, UnsignedInt *seed)
+{
+	UnsignedInt ax;
+
+	ax = SEED;                      /* mov     eax,SEED                     */
+	ax += 0xf22d0e56;               /* add     eax,0f22d0e56h               */
+	seed[0] = ax;                   /* mov     seed,eax                     */
+	ax += 0x883126e9 - 0xf22d0e56;  /* add     eax,0883126e9h-0f22d0e56h    */
+	seed[1] = ax;                   /* mov     seed+4,eax                   */
+	ax += 0xc624dd2f - 0x883126e9;  /* add     eax,0c624dd2fh-0883126e9h    */
+	seed[2] = ax;                   /* mov     seed+8,eax                   */
+	ax += 0x0702c49c - 0xc624dd2f;  /* add     eax,00702c49ch-0c624dd2fh    */
+	seed[3] = ax;                   /* mov     seed+12,eax                  */
+	ax += 0x9e353f7d - 0x0702c49c;  /* add     eax,09e353f7dh-00702c49ch    */
+	seed[4] = ax;                   /* mov     seed+16,eax                  */
+	ax += 0x6fdf3b64 - 0x9e353f7d;  /* add     eax,06fdf3b64h-09e353f7dh    */
+	seed[5] = ax;                   /* mov     seed+20,eax                  */
+}
+
+//
+// It is necessary to separate the GameClient and GameLogic usage of random
+// values to ensure that the GameLogic remains deterministic, regardless
+// of the effects displayed on the GameClient.
+//
+
+UnsignedInt GetGameLogicRandomSeed( void )
+{
+	return theGameLogicBaseSeed;
+}
+
+UnsignedInt GetGameLogicRandomSeedCRC( void )
+{
+	CRC c;
+	c.computeCRC(theGameLogicSeed, 6*sizeof(UnsignedInt));
+	return c.get();
+}
+
+/* The logic stream exactly as it stands, for a replay's rewind checkpoint.  A save game never wrote
+	 it down - a loaded game only has to go on playing, not play the same game it would have - but a
+	 rewound replay has to draw the same numbers the recording drew. */
+GameLogicRandomState GetGameLogicRandomState( void )
+{
+	GameLogicRandomState state;
+	memcpy( state.seed, theGameLogicSeed, sizeof( state.seed ) );
+	state.baseSeed = theGameLogicBaseSeed;
+	return state;
+}
+
+void SetGameLogicRandomState( const GameLogicRandomState &state )
+{
+	memcpy( theGameLogicSeed, state.seed, sizeof( theGameLogicSeed ) );
+	theGameLogicBaseSeed = state.baseSeed;
+}
+
+void InitRandom( void )
+{
+#ifdef DETERMINISTIC
+	// needs to be the same every time
+	seedRandom(0, theGameClientSeed);
+	seedRandom(0, theTickClientSeed);
+	seedRandom(0, theGameAudioSeed);
+	seedRandom(0, theGameLogicSeed);
+	theGameLogicBaseSeed = 0;
+#else
+	time_t seconds = time( NULL );
+
+	seedRandom(seconds, theGameAudioSeed);
+	seedRandom(seconds, theGameClientSeed);
+	seedRandom(seconds, theTickClientSeed);
+	seedRandom(seconds, theGameLogicSeed);
+	theGameLogicBaseSeed = seconds;
+#endif
+}
+
+//
+// Starting a game seeds all three streams from the one number.  It used to seed only the logic
+// stream (InitGameLogicRandom, now gone): the client and audio streams kept whatever the process
+// had been running on since startup, which is a time_t, so they held a different value on every
+// machine in the room and a different one again on every playback of the same replay.  The logic
+// stream lands in exactly the same place either way - this costs the simulation nothing - but any
+// draw that leaks out of the client stream into something the simulation can see now reads the
+// same on every machine instead of being a divergence waiting for a chance.
+//
+void InitRandom( UnsignedInt seed )
+{
+	seedRandom(seed, theGameAudioSeed);
+	seedRandom(seed, theGameClientSeed);
+	seedRandom(seed, theTickClientSeed);
+	seedRandom(seed, theGameLogicSeed);
+	theGameLogicBaseSeed = seed;
+#ifdef DEBUG_RANDOM_LOGIC
+DEBUG_LOG(( "InitRandom %08lx\n",seed));
+#endif
+}
+
+//
+// Integer random value
+//
+Int GetGameLogicRandomValue( int lo, int hi, char *file, int line )
+{
+	//Int delta = hi - lo + 1;
+	//Int rval;
+
+	//if (delta == 0)
+		//return hi;
+
+	//rval = ((Int)(randomValue(theGameLogicSeed) % delta)) + lo;
+
+	UnsignedInt delta = hi - lo + 1;
+	//UnsignedInt temp;
+	Int rval;
+
+	if (delta == 0)
+		return hi;
+
+	rval = ((Int)(randomValue(theGameLogicSeed) % delta)) + lo;
+	//temp = randomValue(theGameLogicSeed);
+	//temp = temp % delta;
+
+	//rval = temp + lo;
+
+/**/
+#ifdef DEBUG_RANDOM_LOGIC
+DEBUG_LOG(( "%d: GetGameLogicRandomValue = %d (%d - %d), %s line %d\n",
+				 TheGameLogic->getFrame(), rval, lo, hi, file, line ));
+#endif
+/**/
+
+	return rval;
+}
+
+//
+// Integer random value read from the logic stream without advancing it.
+//
+// Every machine in a game holds the same logic seed, so a value rolled from a copy of it is the
+// same everywhere - but the shared seed does not move, so a machine that never makes the call at
+// all stays in step.  That is what client-side effects need: they are allowed to want a number
+// that everybody agrees on without being allowed to decide how the simulation unfolds.
+//
+// LOGIC-THREAD.md phase 2, M5: a sound logic plays inside a tick is built after the tick, when the
+// seed has moved on.  The tick copies the seed at the call and the build pins that copy, so the
+// unchanged reads pick the file they would have picked at the call.
+static const UnsignedInt *thePinnedLogicSeed = NULL;
+
+void CopyGameLogicSeed( UnsignedInt seed[6] )
+{
+	for (int i = 0; i < 6; ++i)
+		seed[i] = theGameLogicSeed[i];
+}
+
+void PinGameLogicSeedForUnchanged( const UnsignedInt *seed )
+{
+	thePinnedLogicSeed = seed;
+}
+
+Int GetGameLogicRandomValueUnchanged( int lo, int hi )
+{
+	UnsignedInt delta = hi - lo + 1;
+
+	if (delta == 0)
+		return hi;
+
+	const UnsignedInt *seed = thePinnedLogicSeed ? thePinnedLogicSeed : theGameLogicSeed;
+	UnsignedInt seedCopy[6];
+	for (int i = 0; i < 6; ++i)
+		seedCopy[i] = seed[i];
+
+	return ((Int)(randomValue(seedCopy) % delta)) + lo;
+}
+
+//
+// Real random value read from the logic stream without advancing it.  See above.
+//
+Real GetGameLogicRandomValueRealUnchanged( Real lo, Real hi )
+{
+	Real delta = hi - lo;
+
+	if (delta <= 0.0f)
+		return hi;
+
+	const UnsignedInt *seed = thePinnedLogicSeed ? thePinnedLogicSeed : theGameLogicSeed;
+	UnsignedInt seedCopy[6];
+	for (int i = 0; i < 6; ++i)
+		seedCopy[i] = seed[i];
+
+	return ((Real)(randomValue(seedCopy)) * theMultFactor ) * delta + lo;
+}
+
+//
+// Integer random value
+//
+Int GetGameClientRandomValue( int lo, int hi, char *file, int line )
+{
+	UnsignedInt delta = hi - lo + 1;
+	Int rval;
+
+	if (delta == 0)
+		return hi;
+
+	rval = ((Int)(randomValue(clientSeed()) % delta)) + lo;
+
+/**/
+#ifdef DEBUG_RANDOM_CLIENT
+DEBUG_LOG(( "%d: GetGameClientRandomValue = %d (%d - %d), %s line %d\n",
+				TheGameLogic->getFrame(), rval, lo, hi, file, line ));
+#endif
+/**/
+
+	return rval;
+}
+
+//
+// Integer random value
+//
+Int GetGameAudioRandomValue( int lo, int hi, char *file, int line )
+{
+	UnsignedInt delta = hi - lo + 1;
+	Int rval;
+
+	if (delta == 0)
+		return hi;
+
+	rval = ((Int)(randomValue(theGameAudioSeed) % delta)) + lo;
+
+/**/
+#ifdef DEBUG_RANDOM_AUDIO
+DEBUG_LOG(( "%d: GetGameAudioRandomValue = %d (%d - %d), %s line %d\n",
+				TheGameLogic->getFrame(), rval, lo, hi, file, line ));
+#endif
+/**/
+
+	return rval;
+}
+
+//
+// Real valued random value
+//
+Real GetGameLogicRandomValueReal( Real lo, Real hi, char *file, int line )
+{
+	Real delta = hi - lo;
+	Real rval;
+
+	if (delta <= 0.0f)
+		return hi;
+
+	rval = ((Real)(randomValue(theGameLogicSeed)) * theMultFactor ) * delta + lo;
+
+	DEBUG_ASSERTCRASH( rval >= lo && rval <= hi, ("Bad random val"));
+/**/
+#ifdef DEBUG_RANDOM_LOGIC
+DEBUG_LOG(( "%d: GetGameLogicRandomValueReal = %f, %s line %d\n",
+					TheGameLogic->getFrame(), rval, file, line ));
+#endif
+/**/
+
+	return rval;
+}
+
+//
+// Real valued random value
+//
+Real GetGameClientRandomValueReal( Real lo, Real hi, char *file, int line )
+{
+	Real delta = hi - lo;
+	Real rval;
+
+	if (delta <= 0.0f)
+		return hi;
+
+	rval = ((Real)(randomValue(clientSeed())) * theMultFactor ) * delta + lo;
+
+	DEBUG_ASSERTCRASH( rval >= lo && rval <= hi, ("Bad random val"));
+/**/
+#ifdef DEBUG_RANDOM_CLIENT
+DEBUG_LOG(( "%d: GetGameClientRandomValueReal = %f, %s line %d\n",
+					TheGameLogic->getFrame(), rval, file, line ));
+#endif
+/**/
+
+	return rval;
+}
+
+//
+// Real valued random value
+//
+Real GetGameAudioRandomValueReal( Real lo, Real hi, char *file, int line )
+{
+	Real delta = hi - lo;
+	Real rval;
+
+	if (delta <= 0.0f)
+		return hi;
+
+	rval = ((Real)(randomValue(theGameAudioSeed)) * theMultFactor ) * delta + lo;
+
+	DEBUG_ASSERTCRASH( rval >= lo && rval <= hi, ("Bad random val"));
+/**/
+#ifdef DEBUG_RANDOM_AUDIO
+DEBUG_LOG(( "%d: GetGameAudioRandomValueReal = %f, %s line %d\n",
+					TheGameLogic->getFrame(), rval, file, line ));
+#endif
+/**/
+
+	return rval;
+}
+
+//--------------------------------------------------------------------------------------------------------------
+// GameClientRandomVariable
+//
+
+/*static*/ const char *GameClientRandomVariable::DistributionTypeNames[] = 
+{
+	"CONSTANT", "UNIFORM", "GAUSSIAN", "TRIANGULAR", "LOW_BIAS", "HIGH_BIAS"
+};
+
+/**
+	define the range of random values, and the distribution of values
+*/
+void GameClientRandomVariable::setRange( Real low, Real high, DistributionType type )
+{
+	DEBUG_ASSERTCRASH(!(m_type == CONSTANT && m_low != m_high), ("CONSTANT GameClientRandomVariables should have low == high"));
+	m_low = low;
+	m_high = high;
+	m_type = type;
+}
+
+/**
+ * Return a value from the random distribution
+ */
+Real GameClientRandomVariable::getValue( void ) const
+{
+	switch( m_type )
+	{
+		case CONSTANT:
+			DEBUG_ASSERTLOG(m_low == m_high, ("m_low != m_high for a CONSTANT GameClientRandomVariable\n"));
+			if (m_low == m_high) {
+				return m_low;
+			} // else return as though a UNIFORM.
+
+		case UNIFORM:
+			return GameClientRandomValueReal( m_low, m_high );
+
+		default:
+			/// @todo fill in support for nonuniform GameClientRandomVariables.
+			DEBUG_CRASH(("unsupported DistributionType in GameClientRandomVariable::getValue\n"));
+			return 0.0f;
+	}
+}
+
+
+//--------------------------------------------------------------------------------------------------------------
+// GameLogicRandomVariable
+//
+
+/*static*/ const char *GameLogicRandomVariable::DistributionTypeNames[] = 
+{
+	"CONSTANT", "UNIFORM", "GAUSSIAN", "TRIANGULAR", "LOW_BIAS", "HIGH_BIAS"
+};
+
+/**
+	define the range of random values, and the distribution of values
+*/
+void GameLogicRandomVariable::setRange( Real low, Real high, DistributionType type )
+{
+	DEBUG_ASSERTCRASH(!(m_type == CONSTANT && m_low != m_high), ("CONSTANT GameLogicRandomVariables should have low == high"));
+	m_low = low;
+	m_high = high;
+	m_type = type;
+}
+
+/**
+ * Return a value from the random distribution
+ */
+Real GameLogicRandomVariable::getValue( void ) const
+{
+	switch( m_type )
+	{
+		case CONSTANT:
+			DEBUG_ASSERTLOG(m_low == m_high, ("m_low != m_high for a CONSTANT GameLogicRandomVariable"));
+			if (m_low == m_high) {
+				return m_low;
+			} // else return as though a UNIFORM.
+
+		case UNIFORM:
+			return GameLogicRandomValueReal( m_low, m_high );
+
+		default:
+			/// @todo fill in support for nonuniform GameLogicRandomVariables.
+			DEBUG_CRASH(("unsupported DistributionType in GameLogicRandomVariable::getValue\n"));
+			return 0.0f;
+	}
+}
+
+

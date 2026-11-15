@@ -1,0 +1,40 @@
+# CMake build trees. build-perf/ is the -DPERF_TIMERS=ON measurement tree, which lives beside the
+# shipping one so both exes can sit in Run/ at once (THREADING-ROADMAP.md section 0).
+build/
+build-perf/
+build-fx/
+# build-mac/ and build-linux/ are build-macos.sh's and build-linux.sh's trees (see PORTING.md).
+build-mac/
+build-linux/
+
+# Build/test logs from the CMake port loop
+*.log
+
+# Python bytecode from Tools/
+__pycache__/
+*.pyc
+
+# Per-machine overrides for build.bat and build-posix.sh, read after their defaults
+build.local.bat
+build.local.sh
+
+CLAUDE.md
+AGENTS.md
+
+# graphify knowledge-graph output + extraction cache (derived, ~230 MB)
+**/graphify-out/
+
+# Layouts pulled out of WindowZH.big to feed Tools/optionsmenu_layout.py. That is game data and
+# does not belong in the repo; re-extract it with Tools/bigfile.py when a layout has to be redone.
+**/Tools/wnd/
+build64/
+
+# Water scene banks contain proprietary game imagery and stay local.
+*.wbank
+
+# Share CLion build targets and their project tool; keep other IDE settings local.
+/.idea/*
+!/.idea/customTargets.xml
+!/.idea/tools/
+/.idea/tools/*
+!/.idea/tools/Zero Hour.xml

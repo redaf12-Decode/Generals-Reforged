@@ -1,0 +1,264 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2025-2026 by Olcay Seygan for Zero Hour Reforged; see the git history.
+// Modified 2026 by İlyas Akın for the macOS/Linux port; see NOTICE.md and the git history.
+
+////////////////////////////////////////////////////////////////////////////////
+//																																						//
+//  (c) 2001-2003 Electronic Arts Inc.																				//
+//																																						//
+////////////////////////////////////////////////////////////////////////////////
+
+// FILE: GameEngine.h /////////////////////////////////////////////////////////
+// The Game engine interface
+// Author: Michael S. Booth, April 2001
+
+#pragma once
+
+#ifndef _GAME_ENGINE_H_
+#define _GAME_ENGINE_H_
+
+#include "Common/SubsystemInterface.h"
+#include "Common/GameType.h"
+
+#define DEFAULT_MAX_FPS		90		// retail 45: one and a half times normal speed, in 60 Hz logic frames
+
+/** How much wall-clock debt the pacer will carry and pay back. A render pass slower than one
+	logic frame owes the simulation more than one tick; without a catch-up the game speed just
+	becomes the render speed. The cap is the anti-spiral: when the logic frame itself is what
+	overran, the debt past this much is dropped and the match runs slow.
+
+	It is a duration, not a frame count, because the frame count that duration buys depends on the
+	game speed. Three frames - the number this used to be - is a tenth of a second at the retail
+	30fps and half that at 60, so picking a faster game speed made the pacer give up on a slow
+	render twice as early: at 60fps a match visibly ran in slow motion the moment the frame rate
+	dropped under 20. See GameEngine_isLogicFrameDue in GameEngine.cpp. */
+#define LOGIC_CATCHUP_MAX_MS	100.0f
+
+/** The above in logic frames, at a given game speed: 3 at the retail 30fps, 6 at 60. */
+Int GameEngine_logicCatchupMaxFrames( Int logicFps );
+
+/** The logic frames a second a match starts at: FramesPerSecondLimit (normal speed, or what -fps
+	asked for), twice that with turbo mode on.  Every start that sends MSG_NEW_GAME passes this, so a
+	replay plays back at the speed its match had. */
+Int GameEngine_matchFramesPerSecond( Bool turbo );
+
+/** The logic frames a second a mission runs at after its script's SET_FPS_LIMIT.  EA's cinematics ask
+	for 20 to 28 of retail's 30 and time their voices against that; 0 or 30 and up ask for the game back,
+	which is the match's speed, turbo mode included. */
+Int GameEngine_missionFramesPerSecond( Int askedRetailFps, Int matchFps );
+
+/** How fast a mission's logic runs against the wall clock: 0.77 in a cinematic that asked for 23, 2
+	in turbo mode, 1 everywhere else.  Whatever a cinematic times against its script's frames and draws
+	on the wall clock (the scripted camera, W3D's animation clock) multiplies by this. */
+Real GameEngine_missionTimeRate( void );
+
+/** R1, smooth motion: the renderer's blend reads how far into the next logic tick the wall clock is
+	(0 when the last tick was due, 1 a whole tick later or more; always 1 in fast mode or before the first
+	tick).  GameEngine_tickFraction is the arithmetic, on the fine clock's ticks: 1 for a tick length of
+	0, clamped to 0..1 otherwise. */
+Real GameEngine_logicTickFraction( void );
+Real GameEngine_tickFraction( Int64 now, Int64 due, Real msPerTick, Int64 ticksPerSecond );
+
+/** Actual current picture cap used by the main-loop pacer, 0 for uncapped. Presentation only. */
+Int GameEngine_renderCapFramesPerSecond( void );
+
+/** LOGIC-THREAD.md phase 4: a picture presented while the pass's tick still runs beside the render,
+	with another to follow in the same pass.  The frame-time histograms count each picture as a pass of
+	its own, the first with the tick, from the pass's start or the last picture to now. */
+void GameEngine_noteExtraPicture( void );
+
+/** -video and -directorrecord: whether the logic frame is one a range records.  -recordfps draws
+	GameEngine_videoPictures() pictures of each of those, and the logic runs after the last; the coming
+	draw is picture GameEngine_videoPicture() of them, 0 first.  1 and 0 outside a range, and at LOGICFRAMES_PER_SECOND.
+	The last picture shows the logic frame, and each one before it is that share of a frame earlier: its
+	blend fraction is (picture + 1) / pictures, and GameEngine_pictureFrame is its time in logic frames,
+	what an animation drawn for footage runs on instead of the wall clock.  GameEngine_pictureMilliseconds
+	is the same time in milliseconds, the logic frame times 1000 / LOGICFRAMES_PER_SECOND for its last
+	picture.  All client side: the logic runs the frames it always did. */
+Bool GameEngine_isVideoFrame( void );
+Int GameEngine_videoPictures( void );
+/** The pictures of this logic frame or of the next one are blends, so smooth motion has to see this one. */
+Bool GameEngine_videoBlends( void );
+/** What the movie is told: -recordfps, or LOGICFRAMES_PER_SECOND where it does not apply (a network game, -headless). */
+Int GameEngine_videoFramesPerSecond( void );
+Int GameEngine_videoPicture( void );
+Real GameEngine_pictureFrame( void );
+UnsignedInt GameEngine_pictureMilliseconds( void );
+// Opt-in screenshot validation: one rendered picture per logic frame, fixed scenery time.
+Bool GameEngine_isShadowCaptureClock( void );
+
+/**	How long the catch-up loop may keep starting new logic ticks before it gives up for this pass.
+
+	A frame count cannot tell a cheap tick from an expensive one, and that is the whole difference
+	between the two situations the loop is in.  Behind because the *renderer* hitched, the ticks are
+	2ms each and paying three of them costs nothing.  Behind because eight Brutal AIs are all
+	fighting at once, the ticks are 25ms each and paying three of them freezes the picture for 75ms
+	on top of the render - which is exactly the 91ms and 113ms frames measured on Twilight Flame.
+
+	So the loop is bounded by a clock as well as by a count: after each tick, another one only
+	starts if the loop has spent less than this. Cheap debt still gets paid in full; expensive debt
+	is left on the accumulator, where the existing cap stops it spiralling and the match honestly
+	runs a touch slow instead of stopping dead. The worst case becomes this plus one tick.
+
+	That is the intent the frame count was already written for - "when the logic frame itself is what
+	overran, paying the debt would just queue more of the same work" - measured in the unit that can
+	actually see it. */
+#define LOGIC_CATCHUP_BUDGET_MS	8.0f
+
+/** Whether the catch-up loop may start another logic tick this pass. */
+Bool GameEngine_mayStartAnotherCatchupTick( Int ticksSoFar, Int maxTicks, Real elapsedMsInLoop );
+
+/** Whether one more tick, about as long as the last, leaves this pass's picture inside a 60 Hz frame.
+	A pass already past it is late whatever runs next, so it pays its debt under the budget above. */
+Bool GameEngine_catchupTickFitsPicture( Real passSoFarMS, Real lastTickMS );
+
+/** Milliseconds since this pass, or its last extra picture, began. */
+Real GameEngine_msSincePassStart( void );
+
+/** A rate sampled every half second, averaged, and the whole number written on screen for it. */
+struct RateReading
+{
+	Real average;		///< the samples so far, or the last several once there are that many
+	Int samples;		///< how many the average holds, up to the window
+	Int shown;			///< the average as written, moved only a full step at a time
+
+	RateReading() : average( 0.0f ), samples( 0 ), shown( 0 ) {}
+	void add( Real sample );
+	void restart() { samples = 0; }		///< the next sample starts the average again; shown stays
+};
+
+// forward declarations
+class AsciiString;
+class UnicodeString;
+class AudioManager;
+class GameLogic;
+class GameClient;
+class MessageStream;															///< @todo Create a MessageStreamInterface abstract class
+class FileSystem;
+class Keyboard;
+class LocalFileSystem;
+class ArchiveFileSystem;
+class FileSystem;
+class Mouse;
+class NetworkInterface;
+class ModuleFactory;
+class ThingFactory;
+class FunctionLexicon;
+class Radar;
+class WebBrowser;
+class ParticleSystemManager;
+
+/**
+ * The implementation of the game engine
+ */
+class GameEngine : public SubsystemInterface
+{
+
+public:
+
+	GameEngine( void );
+	virtual ~GameEngine();
+
+	virtual void init( void );								///< Init engine by creating client and logic
+	virtual void init( int argc, char *argv[] );			///< Init engine by creating client and logic
+	virtual void reset( void );								///< reset system to starting state
+	virtual void update( void );							///< per frame update
+
+	virtual void execute( void );											/**< The "main loop" of the game engine.
+																								 It will not return until the game exits. */
+	virtual void setFramesPerSecondLimit( Int fps );	///< Set the maximum rate engine updates are allowed to occur
+	virtual Int  getFramesPerSecondLimit( void );			///< Get maxFPS.  Not inline since it is called from another lib.
+	virtual Int  getLogicFramesPerSecond( void );			///< logic frames the last second really ran; the rate a countdown on screen divides by
+	virtual void setQuitting( Bool quitting );				///< set quitting status
+	virtual Bool getQuitting(void);						///< is app getting ready to quit.
+
+	virtual Bool isMultiplayerSession( void );
+	virtual void serviceWindowsOS(void) {};		///< service the native OS
+	virtual Bool isActive(void) {return m_isActive;}	///< returns whether app has OS focus.
+	virtual void setIsActive(Bool isActive) { m_isActive = isActive; };
+
+	/// The device's audio endpoints, for the options menu: the index-th one's id and name, FALSE past
+	/// the last.  An id is what setAudioOutputDevice takes and Options.ini keeps; "" is the default.
+	virtual Bool getAudioOutputDevice(Int index, AsciiString &id, UnicodeString &name) { return FALSE; }
+	virtual void setAudioOutputDevice(const AsciiString &id) {}
+
+	/** LOGIC-THREAD.md phase 3, step 3b.  Called by GameClient::update in front of the draw at
+		* -logicthread 1 and 2: in a single-player game it runs this pass's message stream and asks the
+		* pacer here, and answers whether this pass's first tick is due and may run beside the render. */
+	Bool planOverlappedTick( void );
+
+	/** LOGIC-THREAD.md phase 4.  How long until the pacer owes the next tick, asked while this pass's
+		* first tick runs beside the render: the draw shows another picture while it waits only if one fits.
+		* 0 outside a paced single-player pass that planOverlappedTick planned (fast mode, a network game). */
+	Real msUntilNextTickDue( void );
+
+	/// That same pass: true when the clock paces it, so a picture beside a late tick costs no network turn.
+	Bool isPassPacedByClock( void );
+
+	/** What the pacer decided for one pass, see planLogicPass. */
+	struct LogicPassPlan
+	{
+		Bool fastMode;
+		Bool mayRun;
+		Bool due;
+		Bool mayCatchUp;
+		Bool networkPaced;
+	};
+
+protected:
+
+	void planLogicPass( LogicPassPlan &plan );	///< the pacer: whether logic frames are due this pass, asked once a pass
+
+	virtual FileSystem *createFileSystem( void );								///< Factory for FileSystem classes
+	virtual LocalFileSystem *createLocalFileSystem( void ) = 0;	///< Factory for LocalFileSystem classes
+	virtual ArchiveFileSystem *createArchiveFileSystem( void ) = 0;	///< Factory for ArchiveFileSystem classes
+	virtual GameLogic *createGameLogic( void ) = 0;							///< Factory for GameLogic classes.
+	virtual GameClient *createGameClient( void ) = 0;						///< Factory for GameClient classes.
+	virtual MessageStream *createMessageStream( void );					///< Factory for the message stream
+	virtual ModuleFactory *createModuleFactory( void ) = 0;			///< Factory for modules
+	virtual ThingFactory *createThingFactory( void ) = 0;				///< Factory for the thing factory
+	virtual FunctionLexicon *createFunctionLexicon( void ) = 0;	///< Factory for Function Lexicon
+	virtual Radar *createRadar( void ) = 0;											///< Factory for radar
+	virtual WebBrowser *createWebBrowser( void ) = 0;						///< Factory for embedded browser
+	virtual ParticleSystemManager* createParticleSystemManager( void ) = 0;
+	virtual AudioManager *createAudioManager( void ) = 0;				///< Factory for Audio Manager
+
+	void sampleLogicRate( void );
+
+	Int m_maxFPS;																									///< Maximum frames per second allowed
+	UnsignedInt m_logicRateSampleMs;		///< wall clock the current logic rate sample started at, 0 for none
+	UnsignedInt m_logicRateSampleFrame;	///< logic frame it started on
+	RateReading m_measuredLogicFps;			///< the rate countdowns divide by, 0 shown before there is one
+  Bool m_quitting;  ///< true when we need to quit the game
+	Bool m_isActive;	///< app has OS focus.
+
+};
+inline void GameEngine::setQuitting( Bool quitting ) { m_quitting = quitting; }
+inline Bool GameEngine::getQuitting(void) { return m_quitting; }
+
+// the game engine singleton
+extern GameEngine *TheGameEngine;
+
+/// This function creates a new game engine instance, and is device specific
+extern GameEngine *CreateGameEngine( void );
+
+/// The entry point for the game system
+extern void GameMain( int argc, char *argv[] );
+
+#endif // _GAME_ENGINE_H_

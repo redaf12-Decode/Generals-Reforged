@@ -1,0 +1,107 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2025-2026 by Olcay Seygan for Zero Hour Reforged; see the git history.
+// Modified 2026 by İlyas Akın for the macOS/Linux port; see NOTICE.md and the git history.
+
+////////////////////////////////////////////////////////////////////////////////
+//																																						//
+//  (c) 2001-2003 Electronic Arts Inc.																				//
+//																																						//
+////////////////////////////////////////////////////////////////////////////////
+
+// FILE: W3DGhostObject.h ////////////////////////////////////////////////////////////
+// Placeholder for objects that have been deleted but need to be maintained because
+// a player can see them fogged.
+// Author: Mark Wilczynski, August 2002
+
+#pragma once
+
+#ifndef _W3DGHOSTOBJECT_H_
+#define _W3DGHOSTOBJECT_H_
+
+#include "GameLogic/GhostObject.h"
+#include "Lib/BaseType.h"
+#include "Common/GameCommon.h"
+#include "GameClient/DrawableInfo.h"
+
+#include <vector>
+
+class Object;
+class W3DGhostObjectManager;
+class W3DRenderObjectSnapshot;
+class PartitionData;
+
+class W3DGhostObject: public GhostObject
+{
+	friend W3DGhostObjectManager;
+public:
+	W3DGhostObject();
+	virtual ~W3DGhostObject();
+	virtual void snapShot(int playerIndex);
+	virtual void updateParentObject(Object *object, PartitionData *mod);
+	virtual void freeSnapShot(int playerIndex);
+	virtual Bool hasSnapShot(int playerIndex) const { return m_parentSnapshots[playerIndex] != NULL; }
+protected:
+	virtual void crc( Xfer *xfer);
+	virtual void xfer( Xfer *xfer );
+	virtual void loadPostProcess( void );
+	void removeParentObject(void);
+	void restoreParentObject(void);	///< restore the original non-ghosted object to scene.
+	void addToScene(int playerIndex);
+	void removeFromScene(int playerIndex);
+	void release(void);			///< used by manager to return object to free store.
+	void getShroudStatus(int playerIndex);	///< used to get the partition manager to update ghost objects without parent objects.
+	void freeAllSnapShots(void);				///< used to free all snapshots from all players.
+	void freeSnapShotNow(int playerIndex);	///< freeSnapShot's body, never queued: the manager's own teardown
+	W3DRenderObjectSnapshot *m_parentSnapshots[MAX_PLAYER_COUNT];
+	DrawableInfo	m_drawableInfo;
+
+	///@todo this list should really be part of the device independent base class (CBD 12-3-2002)
+	W3DGhostObject *m_nextSystem;
+	W3DGhostObject *m_prevSystem;
+	ObjectID m_dyingParentID;	///< LOGIC-THREAD.md M6: the parent of a ghost removed inside a tick, found again at its release
+};
+
+class W3DGhostObjectManager : public GhostObjectManager
+{
+public:
+	W3DGhostObjectManager();
+	virtual ~W3DGhostObjectManager();
+	virtual void reset(void);
+	virtual GhostObject *addGhostObject(Object *object, PartitionData *pd);
+	virtual void removeGhostObject(GhostObject *mod);
+	virtual void setLocalPlayerIndex(int index);
+	virtual void updateOrphanedObjects(int *playerIndexList, int numNonLocalPlayers);
+	virtual void releasePartitionData(void);
+	virtual void restorePartitionData(void);
+
+protected:
+	virtual void crc( Xfer *xfer );
+	virtual void xfer( Xfer *xfer );
+	virtual void loadPostProcess( void );
+	void releaseModule(W3DGhostObject *mod);	///< free its snapshots and put it on the free list
+	void releaseDying(W3DGhostObject *mod);		///< one the tick removed, unless reset released it
+	void freeDyingModules(void);							///< release every one the tick removed
+
+	///@todo this list should really be part of the device independent base class (CBD 12-3-2002)
+	W3DGhostObject	*m_freeModules;
+	W3DGhostObject	*m_usedModules;
+	std::vector<W3DGhostObject *> m_dyingModules;	///< LOGIC-THREAD.md M6: removed inside a tick, released after it
+};
+
+#endif // _W3DGHOSTOBJECT_H_

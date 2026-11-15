@@ -1,0 +1,110 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2025-2026 by Olcay Seygan for Zero Hour Reforged; see the git history.
+
+////////////////////////////////////////////////////////////////////////////////
+//																																						//
+//  (c) 2001-2003 Electronic Arts Inc.																				//
+//																																						//
+////////////////////////////////////////////////////////////////////////////////
+
+// LogicRandomValue.h
+// Random number generation system
+// Author: Michael S. Booth, January 1998
+// Split out into separate Logic/Client/Audio headers by MDC Sept 2002
+
+#pragma once
+
+#ifndef _LOGIC_RANDOM_VALUE_H_
+#define _LOGIC_RANDOM_VALUE_H_
+
+#include "Lib/BaseType.h"
+
+// do NOT use these functions directly, rather use the macros below
+extern Int GetGameLogicRandomValue( int lo, int hi, char *file, int line );
+extern Real GetGameLogicRandomValueReal( Real lo, Real hi, char *file, int line );
+
+// These two read the logic random stream WITHOUT advancing it, so the answer is the same on every
+// machine but a machine that does not ask stays in step with the ones that do.  Use them for
+// anything a player's own settings can skip - a muted sound effect, a particle system the detail
+// level threw away - and never for a decision the simulation depends on.
+extern Int GetGameLogicRandomValueUnchanged( int lo, int hi );
+extern Real GetGameLogicRandomValueRealUnchanged( Real lo, Real hi );
+
+// A copy of the logic seed, and a copy the two reads above use instead of the live seed until it is
+// unpinned with NULL.  For a sound a tick plays and the main thread builds after it (LOGIC-THREAD.md M5).
+extern void CopyGameLogicSeed( UnsignedInt seed[6] );
+extern void PinGameLogicSeedForUnchanged( const UnsignedInt *seed );
+
+// use these macros to access the random value functions
+#define GameLogicRandomValue( lo, hi ) GetGameLogicRandomValue( lo, hi, __FILE__, __LINE__ )
+#define GameLogicRandomValueReal( lo, hi ) GetGameLogicRandomValueReal( lo, hi, __FILE__, __LINE__ )
+#define GameLogicRandomValueUnchanged( lo, hi ) GetGameLogicRandomValueUnchanged( lo, hi )
+#define GameLogicRandomValueRealUnchanged( lo, hi ) GetGameLogicRandomValueRealUnchanged( lo, hi )
+
+//--------------------------------------------------------------------------------------------------------------
+class CColorAlphaDialog;
+class DebugWindowDialog;
+
+/**
+ * A GameLogicRandomVariable represents a distribution of random values
+ * from which discrete values can be retrieved.
+ */
+class GameLogicRandomVariable
+{
+public:
+	// NOTE: This class cannot have a constructor or destructor due to its use within unions
+
+	/**
+	 * CONSTANT represents a single, constant, value.
+	 * UNIFORM represents a uniform distribution of random values.
+	 * GAUSSIAN represents a normally distributed set of random values.
+	 * TRIANGULAR represents a distribution of random values in the shape
+	 *		of a triangle, with the peak probability midway between low and high.
+	 * LOW_BIAS represents a distribution of random values with
+	 *		maximum probability at low, and zero probability at high.
+	 * HIGH_BIAS represents a distribution of random values with
+	 *		zero probability at low, and maximum probability at high.
+	 */
+	enum DistributionType 
+	{ 
+		CONSTANT, UNIFORM, GAUSSIAN, TRIANGULAR, LOW_BIAS, HIGH_BIAS
+	};
+
+	static const char *DistributionTypeNames[]; 
+
+	/// define the range of random values, and the distribution of values
+	void setRange( Real low, Real high, DistributionType type = UNIFORM );
+
+	Real getValue( void ) const;														///< return a value from the random distribution
+	inline Real getMinimumValue( void ) const { return m_low; }
+	inline Real getMaximumValue( void ) const { return m_high; }
+	inline DistributionType getDistributionType( void ) const { return m_type; }
+protected:
+	DistributionType m_type;																		///< the kind of random distribution
+	Real m_low, m_high;																					///< the range of random values
+
+	// These two friends are for particle editing.
+	friend CColorAlphaDialog;
+	friend DebugWindowDialog;
+
+};
+
+//--------------------------------------------------------------------------------------------------------------
+
+#endif // _LOGIC_RANDOM_VALUE_H_

@@ -1,0 +1,554 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2025-2026 by Olcay Seygan for Zero Hour Reforged; see the git history.
+// Modified 2026 by İlyas Akın for the macOS/Linux port; see NOTICE.md and the git history.
+
+////////////////////////////////////////////////////////////////////////////////
+//																																						//
+//  (c) 2001-2003 Electronic Arts Inc.																				//
+//																																						//
+////////////////////////////////////////////////////////////////////////////////
+
+// FILE: W3DWater.h ///////////////////////////////////////////////////
+
+#pragma once
+
+#ifndef __W3DWater_H_
+#define __W3DWater_H_
+
+#include <vector>
+
+#include "always.h"
+#include "Platform/ModernWaterBuild.h"
+#include "rendobj.h"
+#include "w3d_file.h"
+#include "dx8vertexbuffer.h"			 
+#include "dx8indexbuffer.h"
+#include "shader.h"
+#include "vertmaterial.h"
+#include "light.h"
+#include "Lib/BaseType.h"
+#include "Common/GameType.h"
+#include "Common/Snapshot.h"
+#include "GameLogic/WaterGridMotion.h"
+#include "Platform/RenderTypes.h"
+#include "Platform/WaterOpticalContext.h"
+// A/B experiment only: one retained depth field per optical-map revision.
+#include "Platform/WaterMediumDepth.h"
+#include "Platform/WaterCleanPrecompute.h"
+#include "Platform/WaterSharedField.h"
+#include "Platform/WaterProjectedMesh.h"
+#include "Platform/WaterProjectedSampleCache.h"
+#include "Platform/WaterHullVisual.h"
+#include "Platform/WaterHullVisualLayout.h"
+#include "Platform/WaterBowRefinement.h"
+#include "Platform/WaterCaptureClock.h"
+#include "Platform/WaterObstacleIndex.h"
+#include "Platform/WaterHullModel.h"
+#include "Platform/WaterHullPoseCache.h"
+#include "Platform/WaterVesselMotion.h"
+#include "Platform/WaterFoamHistory.h"
+#include "Platform/WaterShoreSource.h"
+#include "Platform/WaterCoastalRender.h"
+#if defined(__linux__)
+#include "Platform/WaterProjectedMeshCache.h"
+#include "Platform/WaterMovementBehavior.h"
+#include "Platform/WaterOpenSeaSplit.h"
+#include "Platform/WaterPreparedMeshCache.h"
+#include "Platform/WaterRenderCaches.h"
+#include "Platform/WaterTerrainCulling.h"
+#include "Platform/WaterStaticSampleCache.h"
+#include "Platform/WaterScreenReflection.h"
+#include "Platform/WaterPathTracingView.h"
+#include "Platform/WaterPathTracingSchedule.h"
+#endif
+
+class Drawable;
+class MeshModelClass;
+class W3DWaterPathScene;
+
+#include <vector>
+
+#define INVALID_WATER_HEIGHT 0.0f	///water height guaranteed to be below all terrain.
+
+#define NUM_BUMP_FRAMES 32	///number of animation frames in bump map
+//Offsets in constant register file to Vertex shader constants
+#define CV_ZERO 0
+#define CV_ONE 1
+#define CV_WORLDVIEWPROJ_0 2
+#define CV_TEXPROJ_0 6
+#define CV_PATCH_SCALE_OFFSET 10
+
+class PolygonTrigger;
+class WaterTracksRenderSystem;
+class Xfer;
+/// Custom render object that draws mirrors, water, and skies.
+/**
+This render object handles drawing reflected W3D scenes.  It will only work
+with rectangular planar surfaces and was tuned with an emphasis on water.
+Since skies are only visible in reflections, this code will also
+render clouds and sky bodies.
+*/
+class WaterRenderObjClass : public RenderObjClass
+{
+
+public:
+
+	enum WaterType
+	{
+		WATER_TYPE_0_TRANSLUCENT = 0,	//translucent water, no reflection
+		WATER_TYPE_1_FB_REFLECTION,		//legacy frame buffer reflection (non translucent)
+		WATER_TYPE_2_PVSHADER,		//pixel/vertex shader, texture reflection
+		WATER_TYPE_3_GRIDMESH,		//3D Mesh based water
+		WATER_TYPE_MAX		// end of enumeration
+	};
+
+	WaterRenderObjClass(void);
+	~WaterRenderObjClass(void);
+
+	/////////////////////////////////////////////////////////////////////////////
+	// Render Object Interface (W3D methods) 
+	/////////////////////////////////////////////////////////////////////////////
+	virtual RenderObjClass *	Clone(void) const;
+	virtual int						Class_ID(void) const;
+	virtual void					Render(RenderInfoClass & rinfo);
+/// @todo: Add methods for collision detection with water surface
+//	virtual Bool					Cast_Ray(RayCollisionTestClass & raytest);
+//	virtual Bool					Cast_AABox(AABoxCollisionTestClass & boxtest);
+//	virtual Bool					Cast_OBBox(OBBoxCollisionTestClass & boxtest);
+//	virtual Bool					Intersect_AABox(AABoxIntersectionTestClass & boxtest);
+//	virtual Bool					Intersect_OBBox(OBBoxIntersectionTestClass & boxtest);
+
+	virtual void					Get_Obj_Space_Bounding_Sphere(SphereClass & sphere) const;
+    virtual void					Get_Obj_Space_Bounding_Box(AABoxClass & aabox) const;
+	// Get and set static sort level
+	virtual int		Get_Sort_Level(void) const		{ return m_sortLevel; }
+  	virtual void	Set_Sort_Level(int level)		{ m_sortLevel = level;}
+
+	///allocate W3D resources needed to render water
+	void renderWater(void);				///<draw the water surface (flat)
+	Int init(Real waterLevel, Real dx, Real dy, SceneClass *parentScene, WaterType type);
+	void reset( void );  ///< reset any resources we need to
+	void load(void);	///< load/setup any map dependent features
+	void prewarmStaticMapData(void); ///< immutable modern water fields; never advances water/history time
+	void update(void); ///< update phase of the water
+#if ZH_MODERN_WATER
+	void takeReadsForRender(void);
+#endif
+	void enableWaterGrid(Bool state);	///< used to active custom water for special maps. (i.e DAM).  The grid is TerrainLogic's WaterGrid; this builds its buffers
+	void updateMapOverrides(void);	///< used to update any map specific map overrides for water appearance.
+	void setTimeOfDay(TimeOfDay tod); ///<change sky/water for time of day
+	void toggleCloudLayer(Bool state)	{	m_useCloudLayer=state;}	///<enables/disables the cloud layer
+	void updateRenderTargetTextures(CameraClass *cam);	///< renders into any required textures.	
+	void ReleaseResources(void);	///< Release all dx8 resources so the device can be reset.
+	void ReAcquireResources(void);  ///< Reacquire all resources after device reset.
+	Bool getWeatherSurfaceHeight(Real x, Real y, Real *height, Vector3 *normal=NULL) const; ///< rendered polygon water only; no logic reads or simulation changes
+	Bool hasWeatherWaterInBox(Real minX,Real minY,Real maxX,Real maxY,Real terrainMinimum) const;
+	UnsignedInt weatherSurfaceRevision(void) const { return m_weatherSurfaceRevision; }
+	Bool isRenderingReflection(void) const { return m_renderingMirror; }
+	Real getWaterHeight(Real x, Real y);	///<return water height at given point - for use by WB.
+
+	void replaceSkyboxTexture(const AsciiString& oldTexName, const AsciiString& newTextName);
+	TextureClass *getSkyTexture(void) const { return m_settings[m_tod].skyTexture; }	///< the time of day's sky, as WaterSet names it
+	Bool hasModernVesselFoam(UnsignedInt objectID) const; ///< replacement was submitted for this hull in the current render frame
+	Bool isModernWaterMirrorForOwner(UnsignedInt objectID) const; ///< owner's surface foam must not reflect back into the same water plane
+	Bool isModernFullMirror() const; ///< Modern map water reflects the scene, rather than just objects marked for Classic water
+
+protected:
+	DX8IndexBufferClass			*m_indexBuffer;	///<indices defining quad
+	SceneClass							*m_parentScene;	///<scene to be reflected
+	ShaderClass m_shaderClass; ///<shader or rendering state for heightmap
+	VertexMaterialClass	  		*m_vertexMaterialClass;	///<vertex lighting material
+	VertexMaterialClass			*m_meshVertexMaterialClass; ///<vertex lighting marial for 3D water.
+	LightClass					*m_meshLight;				///<light used for 3D Mesh Water.
+	TextureClass *m_alphaClippingTexture;	///<used for faked clipping using alpha
+	Real	m_dx;	///<x extent of water surface (offset from local center)
+	Real	m_dy;	///<y extent of water surface (offset from local center)
+	Vector3 m_planeNormal;		///<water plane normal
+	Real		m_planeDistance;	///<water plane distance
+	Real		m_level;			///<level of water (hack for water)
+	Real		m_uOffset;			///<current texture offset on u axis
+	Real		m_vOffset;			///<current texture offset on v axis
+	Real		m_uScrollPerMs;		///<texels per/ms scroll rate in u direction
+	Real		m_vScrollPerMs;		///<texels per/ms scroll rate in v direction
+	Int			m_LastUpdateTime;	///<time of last cloud update
+	Bool		m_useCloudLayer;	///<flag if clouds are on/off
+	WaterType	m_waterType;		///<type of water being used
+	Int			m_sortLevel;		///<sort order after main scene is rendered
+
+	//Data used in GeForce3 bump-mapped water (uses direct D3D resources for better
+	//performance and compatibility (most of these featues are not supported by W3D).
+	struct SEA_PATCH_VERTEX	//vertex structure passed to D3D
+	{
+		float x,y,z;
+		unsigned int c;
+		float tu, tv;
+	}; 
+
+	LPDIRECT3DDEVICE9 m_pDev;						///<pointer to D3D Device
+	LPDIRECT3DVERTEXBUFFER9 m_vertexBufferD3D;		///<D3D vertex buffer
+	LPDIRECT3DINDEXBUFFER9	m_indexBufferD3D;	///<D3D index buffer
+	Int						m_vertexBufferD3DOffset;	///<location to start writing vertices
+	IDirect3DPixelShader9 *	m_dwWavePixelShader;	///<D3D pixel shader
+	IDirect3DVertexShader9 * m_dwWaveVertexShader;	///<D3D vertex shader
+	IDirect3DVertexDeclaration9 * m_waveVertexDeclaration;	///<what D3D8 carried beside the shader
+	Int	m_numVertices;				///<number of vertices in D3D vertex buffer
+	Int m_numIndices;				///<number of indices in D3D index buffer
+	LPDIRECT3DTEXTURE9 m_pBumpTexture[NUM_BUMP_FRAMES]; ///<animation frames
+	LPDIRECT3DTEXTURE9 m_pBumpTexture2[NUM_BUMP_FRAMES]; ///<animation frames
+	Int					m_iBumpFrame;	///<current animation frame
+	Real				m_bumpFrameAccum;	///<fractional carry, so the flipbook can run slower than one frame per tick
+	Real				m_fBumpScale;	///<scales bump map uv perturbation
+	TextureClass * m_pReflectionTexture;	///<render target for reflection
+	Int m_reflectionTargetRequestSize;	///<last attempted map reflection size; avoid retrying failed allocations every frame
+	Real m_reflectionLevel;	///<height of the water plane the reflection texture was rendered for
+	Vector2 m_reflectionAreaMin;	///<lower left of the screen area the reflection texture covers, -1 to 1
+	Vector2 m_reflectionAreaMax;	///<upper right of the same area
+	Matrix3D m_reflectionCameraTransform;	///<where the camera stood when the reflection texture was last rendered
+	Bool m_reflectionReused;	///<the frame before this one kept the previous reflection texture
+#if defined(__linux__)
+	WaterScreenReflection::Mode m_waterReflectionMode;	///<last resolved mode, so returning to the mirror refreshes it
+	W3DWaterPathScene *m_waterPathScene;
+	Bool m_waterPathReady;
+	Bool m_waterPathHasView;
+	WaterPathTracing::View m_waterPathView;
+	WaterPathTracing::RefreshSchedule m_waterPathSchedule;
+#endif
+	RenderObjClass	*m_skyBox;		///<box around level
+	WaterTracksRenderSystem *m_waterTrackSystem;	///<object responsible for rendering water wakes
+
+	/* The grid mesh and its settings are TerrainLogic's WaterGrid (LOGIC-THREAD M7).  The draw reads a
+		 copy of it, taken in update() at the sync point (phase 3), so a tick stepping the grid beside the
+		 draw changes nothing the draw is reading: the mesh, its size, the two flags and the transform,
+		 which syncGridTransform copies into this object's own. */
+	typedef WaterGridMotion::MeshPoint WaterMeshData;	///< moved, unchanged, with the step that moves it (T1c)
+	UnsignedInt m_meshGeneration;	///< the grid allocation the mesh buffers were built for
+	void syncGridTransform(void);	///< take the grid's transform, as the grid setters once set ours
+	void takeGridForDraw(void);		///< the copy below, from TerrainLogic's grid
+	std::vector<WaterMeshData> m_drawnMesh;
+	Int m_drawnCellsX;
+	Int m_drawnCellsY;
+	Real m_drawnCellSize;
+	Bool m_drawnMotionEnabled;
+	Bool m_drawnPushed;
+	Matrix3D m_drawnTransform;
+
+	Real m_riverVOrigin;
+	TextureClass *m_riverTexture;
+	TextureClass *m_whiteTexture;		///< a texture containing only white used for NULL pixel shader stages.
+	TextureClass *m_waterNoiseTexture;
+	Bool m_useModernWater = FALSE; // active render style; synchronized before mirror/surface draws
+	TextureClass *m_modernHeightTexture = NULL;
+	TextureClass *m_modernBedTexture = NULL;
+	Real m_modernWaveTime = 0.0f;
+	WaterCaptureClock::Clock m_modernCaptureClock; // CPU state survives device resize
+	Int m_modernMeshCells = 32;
+	Real m_modernMeshMorph = 0.0f;
+	Int m_modernProjectedColumns=160,m_modernProjectedRows=90;
+	Int m_modernProjectedWidth=1280,m_modernProjectedHeight=720;
+	WaterBowRefinement::Admissions m_modernBowAdmissions;
+	uintptr_t m_modernBowPatchOwner=0;
+	unsigned m_modernBowPatchPart=0;
+	size_t m_modernBowVertices=0,m_modernBowTriangles=0,m_modernBowRegions=0,m_modernBowDenied=0,m_modernBowRejected=0;
+	size_t m_modernProjectedVertices=0,m_modernProjectedTriangles=0,m_modernProjectedFallbacks=0,m_modernRetainedVertices=0;
+	size_t m_modernProjectedBudget=60000,m_modernProjectedEvaluations=0;
+	Bool m_modernProjectedCacheEnabled=TRUE;
+	Bool m_modernProfileEnabled=FALSE;
+	// Opt-in per-render CPU attribution; independent of the sampled 120-render profile.
+	Bool m_modernMotionProfileEnabled = FALSE, m_modernMotionProfileActive = FALSE;
+	uint64_t m_modernMotionProfileSerial = 0;
+	double m_modernMotionFoamCpu = 0, m_modernMotionAdvanceCpu = 0;
+	size_t m_modernMotionFoamCalls = 0, m_modernMotionAdvanceCalls = 0;
+	struct ModernWaterMotionGeometryProfile {
+		double mesh = 0, fill = 0, submit = 0, refine = 0, cull = 0, shoreClip = 0, compact = 0;
+		size_t patches = 0, baseVertices = 0, baseTriangles = 0, refinedVertices = 0, refinedTriangles = 0,
+			preparedVertices = 0, preparedTriangles = 0;
+	} m_modernMotionGeometry;
+
+#if defined(__linux__)
+	WaterProjectedMeshCache::Cache m_modernTopologyCache;
+	WaterProjectedMeshCache::Profile m_modernMotionTopology;
+	WaterPreparedMeshCache::Profile m_modernMotionPrepared;
+	WaterPreparedMeshCache::Cache m_modernPreparedMeshCache;
+	WaterTerrainCulling::WetNodeCache m_modernTerrainProofCache{WaterOpticalContext::MaxLevels};
+	WaterStaticSampleCache::Cache m_modernStaticSamples;
+	WaterRenderCaches::Settings m_modernCacheSettings;
+	Bool m_modernCacheSettingsValid = FALSE;
+#endif
+	struct ModernWaterProfile {
+		double render=0,setup=0,hulls=0,obstacles=0,mesh=0,fill=0,submit=0,fftPrepare=0;
+		double fieldSample=0,dampingSample=0,waveSample=0,cacheSample=0;
+		size_t frames=0,vertices=0,triangles=0,patches=0,patchObstacles=0;
+		size_t attempts=0,hits=0,misses=0,samples=0,wavePoints=0;
+		size_t topologyHits=0,topologyMisses=0,staticHits=0,staticMisses=0,preparedHits=0,preparedMisses=0;
+		size_t fftPreparedPatches=0,cpuHeightsElided=0;
+	} m_modernProfile;
+	struct ModernProjectedSample { Real height,damping,obstacle,hullFreeObstacle,offshore,fftDamping,exposure; };
+	WaterProjectedSampleCache::Cache<ModernProjectedSample> m_modernProjectedSamples;
+	Vector3 m_modernCamera;
+	CameraClass *m_modernRenderCamera = NULL;
+	struct ModernWaterObstacle {
+		Vector3 position; Real radius,height,major,minor,cosine,sine; Bool box,hasHull=FALSE;
+	};
+	std::vector<ModernWaterObstacle> m_modernObstacles, m_modernPatchObstacles;
+#if ZH_MODERN_WATER
+	struct ModernWaterObject {
+		Drawable *drawable;
+		Vector3 position;
+		Real level;
+		WaterVesselMotion::Point initialVelocity;
+		Bool vessel;
+	};
+	std::unordered_map<UnsignedInt,ModernWaterObject> m_modernObjectsForDraw;
+	std::vector<UnsignedInt> m_modernObstacleObjectIDs;
+	UnsignedInt m_modernMotionFrame=0;
+	Bool m_modernMotionFrozen=FALSE,m_modernReadsReady=FALSE;
+	struct WaterPolygonForDraw {
+		std::vector<ICoord3D> points;
+		Coord3D center;
+		Real radius;
+		Int riverStart;
+		Bool river;
+		uintptr_t owner;
+		Bool isWaterArea() const { return TRUE; }
+		Bool isRiver() const { return river; }
+		Int getNumPoints() const { return Int(points.size()); }
+		const ICoord3D *getPoint(Int i) const { if (i<0) i=0; if (i>=getNumPoints()) i=getNumPoints()-1; return &points[i]; }
+		Int getRiverStart() const { return riverStart; }
+		void getCenterXY(Coord3D *p) const { *p=center; }
+		Real getRadius() const { return radius; }
+	};
+	std::vector<WaterPolygonForDraw> m_waterPolygonsForDraw;
+	void takeWaterPolygonsForDraw(void);
+	void takeMotionReadsForRender(void);
+	void synchronizeWaterReflection(void);
+#endif
+	WaterObstacleIndex::Grid m_modernObstacleIndex;
+	std::vector<WaterObstacleIndex::Influence> m_modernObstacleInfluences;
+	struct ModernHullCache {
+		RenderObjClass *model=NULL; // retained until eviction/reset; pointer identity cannot be reused
+		UnsignedInt objectID=0, lastUse=0;
+		WaterHullPoseCache::Cache poses;
+		std::vector<MeshModelClass*> slicedModels; // retained even if an HLOD replaces a child
+		WaterHullPoseCache::Cache visualPoses;
+		std::vector<MeshModelClass*> visualModels;
+		WaterHullVisual::Packet visual={};
+		UnsignedInt visualTraceFrame=~0u;
+		WaterHullModel::Polygon polygon,contact;
+		Real forwardSign=1.0f;
+		WaterVesselMotion::State motion;
+	};
+	std::vector<ModernHullCache> m_modernHullCache;
+	std::vector<WaterHullModel::Hull> m_modernHulls,m_modernContactHulls;
+	std::vector<WaterHullVisual::Packet> m_modernVisualHulls;
+	std::vector<UnsignedInt> m_modernHullObjectIDs;
+	UnsignedInt m_modernHullSerial=0;
+	UnsignedInt m_modernHullTraceLines=0;
+	UnsignedInt m_modernVisualHullTraceLines=0;
+	UnsignedInt m_modernVesselStateTraceFrame=~0u, m_modernVesselStateTraceLines=0;
+	WaterFoamHistory::History m_modernFoamHistory;
+	WaterShoreHistory::History m_modernShoreHistory;
+	WaterShoreSource::Batch m_modernShoreSource;
+	struct ModernShorePreparation {
+		uint64_t revision = 0;
+		WaterShoreHistory::BuildResult result = WaterShoreHistory::BuildResult::Invalid;
+		WaterShoreHistory::BuildResult coastalResult = WaterShoreHistory::BuildResult::Invalid;
+		size_t levels = 0;
+		Bool coastalAttempted = FALSE;
+		WaterShoreSource::Batch source;
+		WaterShoreHistory::Topology topology;
+		WaterCoastalDomain::Domain coastal;
+	} m_modernShorePreparation;
+	uint64_t m_modernShoreRevision=1, m_modernShoreAttempted=0;
+	Bool m_modernShoreReady=FALSE;
+	size_t m_modernShoreLevelCount = 0;
+	WaterCoastalDomain::Domain m_modernCoastalDomain;
+	uint64_t m_modernCoastalRevision=0;
+	Bool m_modernCoastalReady=FALSE,m_modernCoastalViewReady=FALSE;
+	WaterShoreHistory::Mapping m_modernCoastalMapping={};
+	Real m_modernCoastalViewLevel=0;
+	std::vector<WaterCoastalSurf::Lookup> m_modernCoastalLookup;
+	unsigned m_modernFoamDrawFrame=~0u;
+	std::vector<UnsignedInt> m_modernFoamDrawObjectIDs;
+	struct ModernFoamTexture {
+		Real level=0,timestamp=-1;
+		TextureClass *texture=NULL;
+		WaterFoamHistory::Mapping mapping;
+		unsigned channels=0; // bit0 vessel RGB, bit1 coast A, bit2 second direction tile
+		unsigned textureWidth=0,textureHeight=0;
+		Bool valid=FALSE;
+		WaterShoreHistory::RasterLookup shoreLookup;
+		std::vector<float> shoreBreakup;
+		uint64_t shoreBreakupBuild = 0;
+	};
+	std::vector<ModernFoamTexture> m_modernFoamTextures;
+
+	std::vector<UnsignedByte> m_modernHeights;
+	Int m_modernHeightWidth = 0, m_modernHeightHeight = 0, m_modernHeightSide = 0;
+	Int m_modernHeightBorder = -1;
+	const void *m_modernHeightMap = NULL, *m_modernHeightData = NULL;
+	Real m_modernOpticalLevel = 0.0f;
+	struct ModernOpticalTexture {
+		Real level; TextureClass *texture;
+		TextureClass *waveCage=NULL;
+#if defined(__linux__)
+		TextureClass *heading = NULL;
+		Real prevailingRotation = 0.0f, swellStep = 1.0f, localStep = 0.0f;
+		bool headingManual=false;
+		uint64_t headingGeneration=0;
+		std::vector<uint32_t> cleanHeadingWords;
+		WaterCleanPrecompute::Rotation cleanRotation;
+		double headingTravelAngle = -1000.0; // clean solve key; outside any configured angle
+		std::vector<UnsignedByte> waveSupport; // geometry support; optical/material exposure stays unchanged
+		std::vector<uint32_t> localEnvelope;
+		WaterOpenSeaSplit::Mask localMask;
+		Real waveExtent = 0.0f;
+#endif
+		Bool attempted = FALSE;
+		std::vector<UnsignedByte> waveCageSupport; // same quantized alpha sampled by the shader
+		std::vector<UnsignedByte> ocean;
+		WaterOpticalContext::Field shoreContext; // retained CPU source data, independent of texture upload success
+		Real oceanExtent=0.0f;
+	};
+	std::vector<ModernOpticalTexture> m_modernOpticalTextures;
+	std::vector<WaterOpticalContext::Polygon> m_modernOpticalPolygons;
+	Bool m_modernOpticalPolygonsValid = FALSE;
+#if defined(__linux__)
+	WaterMovementBehavior::MapSelection m_waterMovement;
+	// A/B experiment only: snapshotted at map load, never queried in a vertex/render loop.
+	Bool m_modernOneMediumWind = FALSE;
+	// A/B experiment only: map-load snapshot and quantized shared amplitudes.
+	Bool m_modernShared = FALSE, m_modernWindRequested = FALSE;
+	// A/B experiment only: map-load clean selection; never query the environment per vertex/frame.
+	Bool m_modernClean = FALSE;
+	WaterSharedField::Field m_modernSharedField;
+	WaterMediumDepth::Field m_modernMediumDepth;
+	WaterCleanPrecompute::Image m_modernCleanDepth;
+	Bool m_modernCleanForce=FALSE;
+	Real m_modernMediumLevel = 0.0f;
+	Bool m_modernMediumReady = FALSE; // current source preparation, independent of optional GPU precomputes
+	WaterOpenSeaSplit::Cache m_modernOpenSeaCache;
+	std::vector<WaterOpenSeaSplit::Point> m_modernOpenSeaPositions;
+	std::vector<WaterOpenSeaSplit::Disc> m_modernLocalDiscs;
+	Bool m_modernWaveSourceReady = FALSE, m_modernWaveSourcePresent = FALSE;
+	Real m_modernWaveSourceLevel = 0.0f;
+#endif
+	IDirect3DPixelShader9 *	m_waterPixelShader;		///<D3D pixel shader.
+	IDirect3DPixelShader9 *	m_riverWaterPixelShader;		///<D3D pixel shader.
+	IDirect3DPixelShader9 *	m_trapezoidWaterPixelShader;	///<D3D pixel shader
+	IDirect3DPixelShader9 *	m_reflectionPixelShader;	///<darkens water where the reflection texture holds something
+	IDirect3DPixelShader9 *	m_riverWaterFoamPixelShader;	///<the river's bytecode again, named for the D3D11 foam program (WaterFoam)
+	IDirect3DPixelShader9 *	m_trapezoidWaterFoamPixelShader;	///<the trapezoid's bytecode again, named for the D3D11 foam program
+	TextureClass *m_waterSparklesTexture;
+	Real m_riverXOffset;
+	Real m_riverYOffset;
+	Bool m_drawingRiver;
+	TextureClass *m_riverAlphaEdge;
+
+	TimeOfDay m_tod;	///<time of day setting for reflected cloud layer
+
+	struct Setting
+	{
+		TextureClass	*skyTexture;
+		TextureClass	*waterTexture;
+		Int				waterRepeatCount;
+		Real			skyTexelsPerUnit;	//texel density of sky plane (higher value repeats texture more).
+		UnsignedInt			vertex00Diffuse;		
+		UnsignedInt			vertex10Diffuse;		
+		UnsignedInt			vertex11Diffuse;		
+		UnsignedInt			vertex01Diffuse;
+		UnsignedInt			waterDiffuse;
+		UnsignedInt			transparentWaterDiffuse;
+		Real			uScrollPerMs;		
+		Real			vScrollPerMs;
+	};
+
+	Setting m_settings[ TIME_OF_DAY_COUNT ];	///< settings for each time of day
+#if ZH_MODERN_WATER
+	void drawRiverWater(const WaterPolygonForDraw *pTrig);
+#else
+	void drawRiverWater(PolygonTrigger *pTrig);
+#endif
+	void drawTrapezoidWater(Vector3 points[4]);
+	void loadSetting ( Setting *skySetting, TimeOfDay timeOfDay );	///<init sky/water settings from GDF
+	void renderSky(void);	///<draw the sky layer (clouds, stars, etc.)
+	void testCurvedWater(void);	///<draw the sky layer (clouds, stars, etc.)
+	void renderSkyBody(Matrix3D *mat);	///<draw the sky body (sun, moon, etc.)
+	void renderWaterMesh(void);			///<draw the water surface mesh (deformed 3d mesh).
+	RenderResult initBumpMap(LPDIRECT3DTEXTURE9 *pTex, TextureClass *pBumpSource);	///<copies data into bump-map format.
+	void renderMirror(CameraClass *cam, Real level);	///< Draw reflected scene into texture
+	void drawReflection(Int triangleCount, Int vertexCount);	///< Lay the reflection over the water just drawn
+	void drawSea(RenderInfoClass & rinfo);	///< Draw the surface of the water
+	///bounding box of frustum clipped polygon plane
+	Bool getClippedWaterPlane(CameraClass *cam, AABoxClass *box);
+
+	void setupFlatWaterShader(Bool heightCorrection=FALSE,Bool waveCage=FALSE);
+	void setupJbaWaterShader(void);
+	void synchronizeWaterStyle(void);
+	Int mapReflectionTargetSize() const;
+	void ensureMapReflectionTarget(void);
+#if defined(__linux__)
+	Bool updatePathTracedReflection(CameraClass *cam);
+#endif
+	void registerWaterStyleShaders(void);
+	void setupModernWaterShader(Bool river,Bool heightCorrection=FALSE,Bool waveCage=FALSE);
+	void updateModernWaterTextures(void);
+	void updateModernWaterHulls(void);
+	void clearModernWaterHulls(Bool admissions=TRUE);
+	void clearModernWaterFoam(Bool history=TRUE);
+	void bindModernWaterFoam(Real level,Bool river);
+	void bindModernWaterCoastal(Real level,Bool river);
+	void invalidateModernWaterShore(void);
+	void prepareModernWaterShore(void);
+	void updateModernWaterShore(void);
+	Real modernHullDamping(Real x,Real y,Real level) const;
+	Bool modernHasHull(UnsignedInt objectID) const;
+	void clearModernWaterOpticalTextures(void);
+	void refreshModernWaterOpticalPolygons(void);
+	TextureClass *modernWaterOpticalTexture(Real level);
+#if defined(__linux__)
+	Bool prepareModernWaterMedium(const WaterOpticalContext::Field &field, Real level);
+	Bool modernWaterMediumApplies(Real level, Bool river=FALSE) const;
+#endif
+	void drawModernWaterPatch(const Vector3 points[4], Bool river, Real riverStart = 0, Real riverEnd = 1);
+	// A/B experiment only: medium opts flat patches into D; rivers keep the default terrain rule.
+	Real modernWaterDamping(Real x, Real y, Real z, Real offshore=0.0f, Real *obstacleAttenuation=NULL, Real *terrainDepth=NULL, Real *hullFreeDamping=NULL, Real *hullFreeObstacle=NULL, const Real *cachedTerrain=NULL, Bool medium=FALSE) const;
+	UnsignedInt m_weatherSurfaceRevision=1;
+	Bool m_renderingMirror = FALSE; ///< prevents a water draw sampling the mirror being written
+	void cleanupJbaWaterShader(void);
+
+	//Methods used for GeForce3 specific water
+	RenderResult generateIndexBuffer(int sizeX, int sizeY);	///<Generate static index buufer
+	RenderResult generateVertexBuffer( Int sizeX, Int sizeY, Int vertexSize, Bool doFill);///<Generate static vertex buffer
+
+private:
+#if defined(__linux__)
+	struct ModernWaterHeadingDiagnostics;
+	void prepareModernWaterCompatibilityHeading(ModernOpticalTexture &cached, Real level,
+		const ModernWaterHeadingDiagnostics &diagnostics);
+	void prepareModernWaterClean(ModernOpticalTexture &cached);
+	void prepareModernWaterMapAwareHeading(ModernOpticalTexture &cached, Real level,
+		const ModernWaterHeadingDiagnostics &diagnostics);
+	void prepareModernWaterLocalDiscs(const WaterOpenSeaSplit::Mask &mask, Real level, Real margin);
+#endif
+
+};
+
+extern WaterRenderObjClass *TheWaterRenderObj; ///<global water rendering object
+
+#endif  // end __W3DWater_H_

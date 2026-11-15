@@ -1,0 +1,65 @@
+# Four jets at cruise, each ordered onto a ground target that is 120 off its wing when the order lands,
+# the target driving away south: the pass that ends with the target under the plane.
+#
+#   generals.exe -headless -quickstart -noshellmap -observer -multiInstance -noFPSLimit
+#     -map "Maps\Twilight Flame\Twilight Flame.map" -autoskirmish 2 -takeover
+#     -side 0 FactionAmerica -side 1 FactionChina -seed 7 -maxframes 1400
+#     -scenario jetpass -logPrefix jetpass_
+#
+# The jets reach x=2200 around frame 250. Measured 2026-10-02: before the fix the Raptor circled the
+# Overlord inside its own minimum range from frame 258 to 330 (a temporary per-frame trace) and the
+# Overlord still had 1100 health at frame 450, 900 at 500 and 700 at 650. After it the Raptor runs
+# out, turns and fires all four, and the Overlord has 700 at frame 400. The other three targets end
+# on the same health in both builds. The 42-pass sweep behind the changelog numbers (attack frame
+# 240 to 300, wing offset 0 to 180, parked and driving) is in the commit message of the fix.
+#
+# 2026-10-16: the spawn check now refuses 2200,3300 (a cliff cell), so the Overlord starts at 2250.
+# Banked flight against EA's, health at frame 650 and the frame of the first hit: Overlord 700 at 400
+# against 800 at 490 (the Raptor turns too wide to get all four off in one pass and is still on its
+# second at 650), Battle Master 222 at 290 against 234 at 500, Crusader 80 at 300 against 80 at 330,
+# Scorpion 170 at 330 against 170 at 430. Every jet still hits; the wide turns cost time.
+#
+# 2026-11-04, jets break off instead of flying over (jetbreak.txt): health at 650 Overlord 700 (from
+# 450), Battle Master 234, Crusader 80, Scorpion 170. A first cut broke off on distance alone and the
+# Stealth Fighter, coming back round on the Scorpion, turned away before its nose was on it every pass
+# and never fired (370 of 370); breaking off only with the target in the aim cone fixed it. Closest
+# approach, centre to centre: Raptor 142, MiG 148, Aurora 123, Stealth 111. -maxframes counts the
+# 60 Hz logic frames, so the file's 650 needs 1400.
+#
+# 2026-11-08: those break-off numbers stopped holding with f4d0e85b, which waited for a spent clip
+# that an empty jet never stayed in the attack to see: 0 BREAK OFF lines, and the Raptor went over
+# the Overlord at 11 and fired its fourth missile on a second pass, at logic frame 1211. With the
+# break-off flown after the last round and the approach ending at the reach, closest approach over
+# the pass is Raptor 11 -> 137, MiG 130 -> 209, Aurora 59 -> 65, Stealth 51 -> 50 (its reach is the
+# shortest, the second missile goes at 115), and the Raptor's four land by frame 903. Same rounds,
+# same damage: the MiG's 166 to 179 on the Battle Master is the seed's draw on both builds, mean 169.5
+# against 169.4 over 13 seeds.
+
+30    spawn      1  ChinaTankOverlord            1   2250 3300
+30    spawn      0  AmericaJetRaptor             1   1000 3420
+31    move       0  AmericaJetRaptor                 4400 3420
+30    spawn      1  ChinaTankBattleMaster        1   2200 3650
+30    spawn      0  ChinaJetMIG                  1   1000 3770
+31    move       0  ChinaJetMIG                      4400 3770
+30    spawn      1  AmericaTankCrusader          1   2200 4000
+30    spawn      0  AmericaJetAurora             1   1000 4120
+31    move       0  AmericaJetAurora                 4400 4120
+30    spawn      1  GLATankScorpion              1   2200 4350
+30    spawn      0  AmericaJetStealthFighter     1   1000 4470
+31    move       0  AmericaJetStealthFighter         4400 4470
+250   attack     0  AmericaJetRaptor             1  ChinaTankOverlord
+250   move       1  ChinaTankOverlord                2250 3000
+250   attack     0  ChinaJetMIG                  1  ChinaTankBattleMaster
+250   move       1  ChinaTankBattleMaster            2200 3350
+250   attack     0  AmericaJetAurora             1  AmericaTankCrusader
+250   move       1  AmericaTankCrusader              2200 3700
+250   attack     0  AmericaJetStealthFighter     1  GLATankScorpion
+250   move       1  GLATankScorpion                  2200 4050
+350   tally      1  ChinaTankOverlord
+400   tally      1  ChinaTankOverlord
+450   tally      1  ChinaTankOverlord
+500   tally      1  ChinaTankOverlord
+650   tally      1  ChinaTankOverlord
+650   tally      1  ChinaTankBattleMaster
+650   tally      1  AmericaTankCrusader
+650   tally      1  GLATankScorpion

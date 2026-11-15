@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+#	Copyright 2026 İlyas Akın
+#	Additional terms under GNU GPL section 7 apply: see LICENSE.md.
+#
+#	This program is free software: you can redistribute it and/or modify
+#	it under the terms of the GNU General Public License as published by
+#	the Free Software Foundation, either version 3 of the License, or
+#	(at your option) any later version.
+#
+#	This program is distributed in the hope that it will be useful,
+#	but WITHOUT ANY WARRANTY; without even the implied warranty of
+#	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#	GNU General Public License for more details.
+#
+#	You should have received a copy of the GNU General Public License
+#	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# linux-portable.sh: the portable Linux build (P3) - one folder that runs
+# on the Steam Deck's SteamOS and any desktop Linux of the last five years, with nothing installed.
+#
+#   <out>/zero-hour-reforged.sh                   the launcher: runs bin/generals with the player's arguments (a .sh:
+#                                                 Steam's Add a Non-Steam Game picker takes .sh, .exe, .application
+#                                                 or an AppImage, never a bare executable).  While <out>/UserData
+#                                                 is there it holds the settings, saves and Registry.ini (the
+#                                                 portable mode); a Zero Hour in <out>/GameData is used as -root
+#   <out>/UserData/                               the portable settings folder, shipped empty but for its README
+#   <out>/bin/generals                            stripped; bin/generals.debug beside it (a GNU debuglink)
+#   <out>/share/zero-hour-reforged/overlay/       the staged overlay (zh_overlay), its art copied in
+#   <out>/share/zero-hour-reforged/licenses/      from macos-app-licenses.txt, checked against the link line
+#   <out>/share/applications/, share/icons/       a .desktop file and the icon (Main/Generals.ico's 48 px, and 128 px)
+#   <out>/VERSION, <out>/README.txt               which build this is; how to install it and point it at Zero Hour
+#   <out>.tar.zst                                 the folder, packed (not with --no-tar)
+#   <out>.zip                                     the folder without its debug file, zipped (with --zip)
+#   <out>.sha256                                  the tarball's and the zip's checksums
+#   <out>.AppImage                                the same folder as one AppImage (with --appimage), without the debug
+#                                                 file: AppRun is the launcher, the .desktop file and icon at its root,
+#                                                 a type-2 runtime
+#
+# THE BUILD runs inside Valve's Steam Runtime 3 "sniper" SDK container (Debian 11, glibc 2.31, g++-14, mold),
+# as the user running this, with the repository, the build folder and CMake mounted at their own paths.
+# libstdc++ and libgcc are linked statically, so the Steam Deck's C++ runtime version does not matter.
+#
+# Refused, before the folder is written:
+#   - generals needing a glibc symbol newer than GLIBC_2.31, or any libstdc++ symbol (GLIBCXX_, CXXABI_);
+#   - generals needing a shared library outside the ones every SteamOS and desktop Linux has (glibc's own,
+#     and fontconfig); everything else is static or loaded at run time by SDL and miniaudio;
+#   - a static library on generals' link line that macos-app-licenses.txt does not name.
+#
+# THE HOST BUILD (--host) is the same folder built with this machine's own compiler, without docker: libstdc++
+# and libgcc are still static, but the glibc floor is this machine's, so the folder runs only where glibc is as
+# new (VERSION and README.txt say which).  It is for testing a release before the SDK build, not a wide one.
+#
+# Usage: linux-portable.sh --build <folder> --out <folder> --cmake <cmake>
+#          [--image <sdk image>] [--jobs <n>] [--no-art] [--no-tar] [--no-build] [--zip] [--host]
+#          [--appimage <appimagetool> --runtime <type-2 runtime>]
+#   --build     the build folder (made if missing); kept between runs, so a second build is incremental
+#   --out       the folder to make; its name is the package's (e.g. .../ZeroHourReforged-linux-x86_64)
+#   --cmake     a Linux CMake of 3.29 or later that runs inside the container: the SDK's own 3.25 cannot
+#               configure this project, and a distribution's CMake needs its distribution's glibc.
+#               Kitware's release tarball (cmake-3.31.6-linux-x86_64, or -aarch64 on arm64) is what P3 uses
+#   --image     default registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest, or sniper/sdk/arm64:latest
+#               on an arm64 host (the Steam Frame's architecture); the folder is built for the image's
+#   --jobs      the build's parallelism (default: ZH_BUILD_JOBS, else the CPU count)
+#   --no-art    leaves the 1.6 GB of Reforged*.big art out (the game then looks as ClassicGraphics does)
+#   --no-build  stages from what <build> already holds
+#   --zip       also makes <out>.zip (symbolic links kept, the debug file left out)
+#   --host      builds with this machine's compiler and no docker (above); --cmake defaults to the cmake on PATH,
+#               and CC and CXX name the compilers (default gcc-16 and g++-16 where they are, else gcc and g++)
+#   --appimage  also makes <out>.AppImage with that appimagetool (its extracted AppRun is fine), from a copy of
+#               the folder made of hard links; --runtime names the type-2 runtime file it embeds, so the build
+#               fetches nothing.  The AppImage mounts through the host's FUSE (fusermount3), or runs from
+#               --appimage-extract-and-run where there is none
+# Needs docker (the user in its group; not with --host), python3, rsync, GNU tar with zstd, and zip for --zip.
+# Exit status: 0 made and checked; 1 refused or failed (the partial folder is removed).
+
+set -u
+
+BUILD="" OUT="" CMAKE="" IMAGE="" JOBS="" ART=1 TAR=1 DOBUILD=1 ZIP=0 HOST=0
+APPIMAGETOOL="" RUNTIME=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--build) BUILD="$2"; shift 2;;
+		--out) OUT="$2"; shift 2;;
+		--cmake) CMAKE="$2"; shift 2;;
+		--image) IMAGE="$2"; shift 2;;
+		--jobs) JOBS="$2"; shift 2;;
+		--no-art) ART=0; shift;;
+		--no-tar) TAR=0; shift;;
+		--no-build) DOBUILD=0; shift;;
+		--zip) ZIP=1; shift;;
+		--host) HOST=1; shift;;
+		--appimage) APPIMAGETOOL="$2"; shift 2;;
+		--runtime) RUNTIME="$2"; shift 2;;
+		*) echo "linux-portable: unknown argument $1" >&2; exit 2;;
+	esac
+done
+if [ -z "$IMAGE" ]; then
+	case "$(uname -m)" in
+		aarch64|arm64) IMAGE="registry.gitlab.steamos.cloud/steamrt/sniper/sdk/arm64:latest";;
+		*) IMAGE="registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest";;
+	esac
+fi
+fail() { echo "linux-portable: $*" >&2; [ -n "${STARTED:-}" ] && rm -rf -- "${OUT:?}"; exit 1; }
+[ -n "$BUILD" ] && [ -n "$OUT" ] || fail "--build and --out are required"
+if [ "$HOST" -eq 1 ]; then
+	[ -n "$CMAKE" ] || CMAKE="$(command -v cmake)"
+	[ -n "${CC:-}" ] || { command -v gcc-16 >/dev/null && CC=gcc-16 || CC=gcc; }
+	[ -n "${CXX:-}" ] || { command -v g++-16 >/dev/null && CXX=g++-16 || CXX=g++; }
+else
+	CC=gcc-14 CXX=g++-14		# the SDK's
+fi
+[ "$DOBUILD" -eq 0 ] || [ -x "$CMAKE" ] || fail "--cmake must name a Linux CMake of 3.29 or later (Kitware's release tarball)"
+[ "$HOST" -eq 1 ] || command -v docker >/dev/null || fail "no docker"
+[ "$ZIP" -eq 0 ] || command -v zip >/dev/null || fail "no zip, which --zip needs"
+CODE="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$CODE/../.." && pwd)"
+TABLE="$CODE/Tools/macos-app-licenses.txt"
+mkdir -p "$BUILD" && BUILD="$(cd "$BUILD" && pwd)" || fail "cannot make $BUILD"
+case "$OUT" in /*) ;; *) OUT="$PWD/$OUT";; esac
+[ -n "$JOBS" ] || JOBS="${ZH_BUILD_JOBS:-$(nproc)}"
+. "$CODE/Tools/package-common.sh"
+
+# everything the container reads or writes, mounted at its own path
+mounts=( -v "$REPO:$REPO" -v "$BUILD:$BUILD" )
+[ -n "$CMAKE" ] && mounts+=( -v "$(cd "$(dirname "$CMAKE")/.." && pwd):$(cd "$(dirname "$CMAKE")/.." && pwd)" )
+in_sdk() {	# in_sdk <command>: runs a shell command inside the SDK as this user (with --host, here)
+	if [ "$HOST" -eq 1 ]; then
+		( cd "$BUILD" && bash -c "$1" )
+	else
+		docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp "${mounts[@]}" -w "$BUILD" "$IMAGE" bash -c "$1"
+	fi
+}
+ARCH="$(in_sdk "uname -m")" || fail "cannot run $IMAGE"
+case "$ARCH" in x86_64|aarch64) ;; *) fail "$IMAGE is $ARCH: only x86_64 and aarch64 are built";; esac
+
+# ---- the build ---------------------------------------------------------------------------------------------
+if [ "$DOBUILD" -eq 1 ]; then
+	echo "linux-portable: building generals and the overlay in $( [ "$HOST" -eq 1 ] && echo "this machine, with $CXX" || echo "$IMAGE" ) (-j$JOBS; the log: $BUILD/linux-portable.log)"
+	in_sdk "'$CMAKE' -S '$CODE' -B '$BUILD' -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=$CC \
+		-DCMAKE_CXX_COMPILER=$CXX '-DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++ -static-libgcc' && \
+		ninja -C '$BUILD' -j$JOBS generals zh_overlay" > "$BUILD/linux-portable.log" 2>&1 \
+		|| { grep -E "error|FAILED|undefined reference" "$BUILD/linux-portable.log" | head -20 >&2; fail "the build failed"; }
+fi
+GENERALS="$BUILD/generals"
+[ -x "$GENERALS" ] && [ -d "$BUILD/overlay" ] || fail "$BUILD holds no generals or no staged overlay"
+
+# ---- the licences, against the link line -----------------------------------------------------------------
+LIBPATHS="$(mktemp "${TMPDIR:-/tmp}/zh-link-libs.XXXXXX")"
+trap 'rm -f -- "$LIBPATHS"' EXIT
+linked="$(package_link_libraries "$BUILD/build.ninja" "$LIBPATHS")" || fail "cannot read generals' link line"
+[ -n "$linked" ] || fail "generals' link line names no static library"
+ENTRIES="$(package_license_entries "$TABLE" $linked)" || fail "refused: generals links libraries macos-app-licenses.txt does not cover:$ENTRIES"
+
+# ---- the art, unless it is left out: the staged overlay links it from GeneralsMD/Run ----------------------
+if [ "$ART" -eq 1 ] && ! ls "$BUILD/overlay"/Reforged*.big >/dev/null 2>&1; then
+	fail "the staged overlay holds no Reforged*.big art: put the archives in GeneralsMD/Run and build again, or pass --no-art"
+fi
+
+# ---- what generals needs of the system ---------------------------------------------------------------------
+glibc="$(in_sdk ". '$CODE/Tools/package-common.sh' && package_check_linux_abi '$GENERALS' '$HOST' '$ARCH'")" \
+	|| fail "generals failed the portable ABI/dependency checks"
+if [ "$HOST" -eq 1 ]; then
+	echo "linux-portable: a host build: generals needs $glibc, so it runs only where glibc is that new or newer" >&2
+fi
+
+# ---- the folder --------------------------------------------------------------------------------------------
+rm -rf -- "$OUT" "$OUT.tar.zst" "$OUT.zip" "$OUT.sha256"
+STARTED=1
+mkdir -p "$OUT" || fail "cannot create $OUT"
+OUT="$(cd "$OUT" && pwd)"
+mounts+=( -v "$(dirname "$OUT"):$(dirname "$OUT")" )
+S="$OUT/share/zero-hour-reforged"
+mkdir -p "$OUT/bin" "$OUT/UserData" "$S/overlay" "$S/licenses" "$OUT/share/applications" "$OUT/share/icons/hicolor/48x48/apps" \
+	"$OUT/share/icons/hicolor/128x128/apps" \
+	|| fail "cannot create $OUT"
+in_sdk "objcopy --only-keep-debug '$GENERALS' '$OUT/bin/generals.debug' && strip -S -x -o '$OUT/bin/generals' '$GENERALS' && \
+	cd '$OUT/bin' && objcopy --add-gnu-debuglink=generals.debug generals" || fail "cannot strip generals"
+# the overlay, its links followed: the art is copied (a reflink where the file system has them)
+if [ "$ART" -eq 1 ]; then
+	cp -R -L --reflink=auto "$BUILD/overlay/." "$S/overlay/" || fail "cannot copy the overlay"
+else
+	rsync -aL --exclude 'Reforged*.big' "$BUILD/overlay/" "$S/overlay/" || fail "cannot copy the overlay"
+fi
+for e in $ENTRIES; do
+	license_entry "$e" "$S/licenses" || fail "cannot write the licence entry '$e'"
+done
+
+cat > "$OUT/zero-hour-reforged.sh" <<'LAUNCHER'
+#!/bin/sh
+# Zero Hour Reforged's launcher (P3): the game finds its overlay beside it and the player's Zero Hour by itself
+# (Registry.ini, then ~/Games, the Steam libraries and the rest; see README.txt).  Arguments pass through,
+# so Steam's launch options reach the game: -root "<your Zero Hour folder>" names the install.
+#
+# Portable mode: while a UserData folder is beside this file (in an AppImage: beside the AppImage), the game keeps
+# its settings, saves, replays, logs and Registry.ini (where the Zero Hour folder is remembered) there, not in
+# ~/.local/share; delete UserData to use ~/.local/share instead.  A Zero Hour copied into GameData beside this
+# file (INIZH.big at its top, Generals in GameData/ZH_Generals) is used without being asked for.
+here="$(dirname "$(readlink -f "$0")")"
+beside="$here"
+[ -n "${APPIMAGE:-}" ] && beside="$(dirname "$(readlink -f "$APPIMAGE")")"
+if [ -z "${ZH_USER_DATA_DIR:-}" ] && [ -d "$beside/UserData" ] && [ -w "$beside/UserData" ]; then
+	ZH_USER_DATA_DIR="$beside/UserData"
+	export ZH_USER_DATA_DIR
+fi
+# an unzipper that dropped the executable bit (some desktop archive managers do)
+[ -x "$here/bin/generals" ] || chmod +x "$here/bin/generals" 2>/dev/null
+if [ -f "$beside/GameData/INIZH.big" ]; then
+	case " $* " in *" -root "*) ;; *) set -- -root "$beside/GameData" "$@";; esac
+fi
+exec "$here/bin/generals" "$@"
+LAUNCHER
+chmod +x "$OUT/zero-hour-reforged.sh"
+
+python3 "$CODE/Tools/generals-icon.py" png "$CODE/Main/Generals.ico" "$OUT/share/icons/hicolor/48x48/apps/zero-hour-reforged.png" \
+	&& python3 "$CODE/Tools/generals-icon.py" png "$CODE/Main/Generals.ico" "$OUT/share/icons/hicolor/128x128/apps/zero-hour-reforged.png" 128 \
+	|| fail "cannot make the icon"
+
+cat > "$OUT/UserData/README.txt" <<'USERDATA'
+This folder holds Zero Hour Reforged's settings, saves, replays, screenshots and logs while it is here
+(the portable mode): copy the whole game folder and they go with it. Delete this folder to keep them in
+~/.local/share/Command and Conquer Generals Zero Hour Data instead.
+
+Registry.ini here remembers where your Zero Hour is. The upscaled art, if you have it, goes in a
+ReforgedArt folder here.
+USERDATA
+
+cat > "$OUT/share/applications/zero-hour-reforged.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Zero Hour Reforged
+Comment=Command & Conquer Generals Zero Hour, reforged
+Exec=zero-hour-reforged.sh
+Icon=zero-hour-reforged
+# a template: to use it, put the folder's path in Exec and copy this file to ~/.local/share/applications
+Categories=Game;StrategyGame;
+Terminal=false
+DESKTOP
+
+commit="$(git -C "$CODE" rev-parse --short=10 HEAD 2>/dev/null || echo unknown)"
+if [ "$commit" != unknown ] && ! git -C "$CODE" diff --quiet HEAD -- . 2>/dev/null; then commit="$commit-dirty"; fi
+built="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if [ "$HOST" -eq 1 ]; then
+	image_id="this machine ($(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-$(uname -sr)}"))"
+else
+	image_id="$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || echo "$IMAGE")"
+fi
+compiler="$(in_sdk "$CXX --version | head -1")"
+version="$(awk '/#define VERSION_MAJOR/ {a=$3} /#define VERSION_MINOR/ {b=$3} /#define VERSION_BUILDNUM/ {c=$3} END {print a"."b"."c}' "$BUILD/generated/BuildVersion.h")"
+cat > "$OUT/VERSION" <<VERSION_EOF
+Zero Hour Reforged $version for Linux ($ARCH)
+commit $commit
+built $built
+built in $image_id
+compiler $compiler
+needs glibc $glibc or newer, and fontconfig; art $( [ "$ART" -eq 1 ] && echo included || echo left out)
+VERSION_EOF
+
+cat > "$OUT/README.txt" <<'README_EOF'
+Zero Hour Reforged for Linux and the Steam Deck
+===============================================
+
+This folder is the whole game engine; nothing is installed. It needs your own copy of Command & Conquer
+Generals Zero Hour (Steam, EA App, CD or First Decade), with the original Generals it builds on.
+
+NEEDS
+  A 64-bit Linux with glibc @GLIBC@ or newer, fontconfig, and a Vulkan driver.
+
+INSTALL
+  Unpack the folder anywhere you can write, e.g. ~/Games/ZeroHourReforged. To start it, run
+  zero-hour-reforged.sh in the folder. If your archive manager lost the files' permissions, run
+  it as: sh zero-hour-reforged.sh
+
+  In Steam: Games > Add a Non-Steam Game to My Library > Browse, choose zero-hour-reforged.sh.
+
+WHERE YOUR ZERO HOUR IS
+  The game finds it by itself when it is in one of these places:
+    ~/Games/Command & Conquer Generals Zero Hour (or "Zero Hour", or the other usual names)
+    any Steam library, the SD card's included, as Steam installs it
+  with the original Generals in a ZH_Generals folder inside it, or in a folder named "Command & Conquer
+  Generals" beside it.
+
+  If it is elsewhere, the first start asks for the folder (in Desktop Mode) and remembers it. In the
+  Steam Deck's Game Mode there is no folder dialog: give the folder in Steam's launch options instead.
+  Select the game in Steam, then Properties > General > Launch Options, and enter:
+
+    -root "/home/you/Games/Command & Conquer Generals Zero Hour"
+
+  with the path of your own Zero Hour folder (the one with INIZH.big in it) between the quotes.
+
+  To carry the game itself with this folder (a USB drive), copy your Zero Hour folder's contents into
+  a folder named GameData here, and the original Generals' .big files into GameData/ZH_Generals.
+
+THE UPSCALED ART
+  A folder built without the art (every Linux package) does not download it. The game reads the
+  Reforged*.big files from ReforgedArt/ in the settings folder below when they are there, and plays at
+  the original textures when they are not.
+
+FILES
+  Settings, saves, replays and logs:  UserData/ in this folder (the portable mode). Delete UserData to
+                                     use ~/.local/share/Command and Conquer Generals Zero Hour Data/
+                                     ($XDG_DATA_HOME's, when that is set) instead.
+  Which build this is:               VERSION
+  Licences:                          share/zero-hour-reforged/licenses/
+
+UPDATE
+  Unpack the new version, then move this folder's UserData (and GameData, if you made one) into it.
+
+UNINSTALL
+  Delete this folder, which takes the portable settings and saves with it. Without UserData they are
+  in ~/.local/share/Command and Conquer Generals Zero Hour Data until you delete them too.
+README_EOF
+
+sed -i "s/@GLIBC@/${glibc#GLIBC_}/" "$OUT/README.txt" || fail "cannot complete README.txt"
+
+# x86_64 --no-art is the public CI package path. Audit it before making any archive; the existing
+# aarch64 developer build is outside the x86_64 release helper's supported package metadata.
+if [ "$ART" -eq 0 ] && [ "$ARCH" = x86_64 ]; then
+	python3 "$CODE/Tools/linux-release.py" audit-portable "$OUT" || fail "the engine-only folder contains unexpected files"
+fi
+
+size="$(du -sh "$OUT" | cut -f1)"
+if [ "$TAR" -eq 1 ]; then
+	tar -C "$(dirname "$OUT")" -I 'zstd -T0 -10' -cf "$OUT.tar.zst" "$(basename "$OUT")" || fail "cannot pack $OUT.tar.zst"
+fi
+if [ "$ZIP" -eq 1 ]; then
+	( cd "$(dirname "$OUT")" && zip -q -r -y -X -9 "$OUT.zip" "$(basename "$OUT")" -x "$(basename "$OUT")/bin/generals.debug" ) \
+		|| fail "cannot pack $OUT.zip"
+fi
+if [ "$TAR" -eq 1 ] || [ "$ZIP" -eq 1 ]; then
+	( cd "$(dirname "$OUT")" && sha256sum -- $(ls "$(basename "$OUT")".tar.zst "$(basename "$OUT")".zip 2>/dev/null) > "$OUT.sha256" ) \
+		|| fail "cannot write $OUT.sha256"
+fi
+if [ -n "$APPIMAGETOOL" ]; then
+	package_make_appimage "$OUT" "$APPIMAGETOOL" "$RUNTIME" "$ARCH" || fail "AppImage creation failed"
+fi
+STARTED=""
+echo "linux-portable: $OUT ($size$( [ "$TAR" -eq 1 ] && echo ", packed $(du -sh "$OUT.tar.zst" | cut -f1)")$( [ "$ZIP" -eq 1 ] && echo ", zip $(du -sh "$OUT.zip" | cut -f1)")$( [ -n "$APPIMAGETOOL" ] && echo ", AppImage $(du -sh "$OUT.AppImage" | cut -f1)")): commit $commit, needs $glibc, $(printf '%s\n' $ENTRIES | wc -l) licence entries for $(printf '%s\n' $linked | wc -l) linked libraries, art $( [ "$ART" -eq 1 ] && echo included || echo left out)"

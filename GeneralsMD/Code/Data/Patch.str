@@ -1,0 +1,4151 @@
+// MASTER COPY - this is the tracked one.  The build copies it to
+// Run/Data/Patch.str, which is where the game reads it from and which is
+// gitignored, so edit THIS file and rebuild (or copy it across by hand).
+//
+// Patch.str is the 1.04 string overlay from PatchData.big.  The two original
+// strings are kept; everything after them is this fork's.
+//
+// Comments are '//' - GameText.cpp parseStringFile skips exactly that.
+
+GUI:CustomMission
+"CUSTOM MISSION"
+END
+
+GUI:StartCustomMission
+"START GAME"
+END
+
+GUI:Stop
+"Stop"
+END
+
+GUI:StopDescription
+"Stops what the selected units are doing."
+END
+
+// The command grid's own attack, hold position and move keys, which stand in no command set:
+// the cards they show under the pointer.
+
+GUI:OrderForceAttackDescription
+"The next click attacks whatever is under the pointer, the ground and your own side included. Click the key again to call it off."
+END
+
+CONTROLBAR:ForceAttack
+"&Force Attack"
+END
+
+CONTROLBAR:ToolTipForceAttack
+"The next click attacks whatever is under the pointer, the ground and your own side included. Click the button again to call it off."
+END
+
+// the idle buttons at the right end of the command grid, under EA's idle worker
+
+CONTROLBAR:IdleInfantry
+"Idle Infantry"
+END
+
+CONTROLBAR:IdleInfantryDescription
+"Click to select the next idle infantry. Shift-click selects all of them."
+END
+
+CONTROLBAR:IdleVehicle
+"Idle Vehicle"
+END
+
+CONTROLBAR:IdleVehicleDescription
+"Click to select the next idle ground vehicle. Shift-click selects all of them."
+END
+
+CONTROLBAR:IdleAircraft
+"Idle Aircraft"
+END
+
+CONTROLBAR:IdleAircraftDescription
+"Click to select the next idle aircraft. Shift-click selects all of them."
+END
+
+CONTROLBAR:IdleWorkerDescription
+"Click to select the next idle worker. Shift-click selects all of them."
+END
+
+GUI:OrderHoldPositionDescription
+"The selected units guard the spot they stand on and fight whatever comes near, without chasing it out of the area."
+END
+
+GUI:OrderMoveDescription
+"The next click on the ground sends the selected units there. Drag instead and they spread out along the line you draw."
+END
+
+GUI:SelectionTypeDescription
+"Click to keep only these selected. Shift-click to take them out of the selection."
+END
+
+GUI:OrderStanceDefensiveDescription
+"The selected units shoot what comes into range and hold the ground you put them on. Click to make them aggressive: they go after any enemy they see."
+END
+
+GUI:OrderStanceAggressiveDescription
+"The selected units go after any enemy they see and chase it. Click to make them defensive again: they only shoot what comes into range and stay where they are."
+END
+
+// Smoke signals.  The three ...Placed lines are what an ally reads; %s is the sender's name.  The
+// ...Label words are written over the smoke, which is in the sender's colour.
+GUI:SignalAttack
+"Signal: Attack"
+END
+
+GUI:SignalDefend
+"Signal: Defend"
+END
+
+GUI:SignalAttention
+"Signal: Look Here"
+END
+
+GUI:SignalAttackPlaced
+"%s: attack here!"
+END
+
+GUI:SignalDefendPlaced
+"%s: defend here!"
+END
+
+GUI:SignalAttentionPlaced
+"%s: look here!"
+END
+
+// The money request's line in the allies' chat, in the asker's own language.
+GUI:RequestMoneyChat
+"I need money!"
+END
+
+GUI:GamePaused
+"Game paused."
+END
+
+GUI:GameResumed
+"Game resumed."
+END
+
+// The replay strip's pause button while the replay is paused.
+GUI:ReplayResume
+"Resume"
+END
+
+// Skirmish lobby: an opponent seat with no AI behind it (Shift-Ctrl-T takes it over).
+GUI:HumanSlot
+"Human"
+END
+
+// ---------------------------------------------------------------------------
+// Options screen.  The five page buttons across the top.
+// ---------------------------------------------------------------------------
+
+GUI:OptionsTabDisplay
+"Display"
+END
+
+GUI:OptionsTabAudio
+"Audio"
+END
+
+GUI:OptionsTabControls
+"Controls"
+END
+
+GUI:OptionsTabInterface
+"Interface"
+END
+
+GUI:OptionsTabNetwork
+"Network"
+END
+
+GUI:OptionsTabGraphics
+"Graphics"
+END
+
+GUI:OptionsTabEffects
+"Effects"
+END
+
+GUI:OptionsTabWater
+"Water"
+END
+
+GUI:Ultra
+"Ultra"
+END
+
+GUI:TreeSway
+"Swaying Trees"
+END
+
+TOOLTIP:TreeSway
+"Trees and shrubs lean in the wind. Applies from the next map."
+END
+
+TOOLTIP:ExtraAnimations
+"Buildings rise inside scaffolding while they are built. Applies from the next map."
+END
+
+GUI:ExtraAnimations
+"Building Scaffolding"
+END
+
+GUI:Detail
+"Detail Preset"
+END
+
+GUI:GraphicsQuality
+"Performance / Quality"
+END
+
+TOOLTIP:GraphicsQuality
+"Left is the fastest picture, right the best looking. Dragging it sets the boxes on this page and on Effects, the cheap ones first, and the four presets are points along it. Change a box afterwards and the preset reads Custom. Applies when you press Accept; some settings wait for the next map or the next launch."
+END
+
+GUI:DetailNote0
+"Every box on, the most particles and thick smoke, and detail never drops in a big fight. Picking it only fills in the boxes; Accept applies it."
+END
+
+GUI:DetailNote1
+"All the shadows and full-size textures, with the original smoke. Picking it only fills in the boxes; Accept applies it."
+END
+
+GUI:DetailNote2
+"Flat shadows in place of cast ones and fewer particles, for a modest graphics card. Picking it only fills in the boxes; Accept applies it."
+END
+
+GUI:DetailNote3
+"No shadows, half-size textures and the fewest particles, for an old machine. Picking it only fills in the boxes; Accept applies it."
+END
+
+GUI:DetailNote4
+"Your own mix of the boxes on this page and on Effects, or a point on the slider between two presets. Accept keeps it as it is."
+END
+
+GUI:Shadows3D
+"Cast Shadows"
+END
+
+TOOLTIP:Shadows3D
+"Shadows that units, buildings and trees throw on the ground and on each other. Off turns all of them off, the sun's shadows included, and Infantry Shadows needs it on. Applies when you press Accept; a few shadows only change on the next map."
+END
+
+GUI:Shadows2D
+"Flat Shadows"
+END
+
+TOOLTIP:Shadows2D
+"The flat dark patch drawn under a unit or a missile that has no cast shadow. Costs little. Applies when you press Accept."
+END
+
+TOOLTIP:CloudShadows
+"Cloud shadows drift across the ground. Costs little. Applies when you press Accept."
+END
+
+GUI:GroundLighting
+"Ground Pattern"
+END
+
+TOOLTIP:GroundLighting
+"A faint pattern of light and dark laid over the ground, so its repeating tiles show less. Costs little. Applies when you press Accept."
+END
+
+GUI:SmoothWater
+"Soft Shorelines"
+END
+
+TOOLTIP:SmoothWater
+"Water fades out at the shore instead of ending on a hard line. Applies from the next map."
+END
+
+GUI:ShowProps
+"Trees And Bushes"
+END
+
+TOOLTIP:ShowProps
+"Trees and bushes on the map. Off helps a slow machine. Network games always show them. Applies from the next map."
+END
+
+GUI:HeatEffects
+"Heat Haze"
+END
+
+TOOLTIP:HeatEffects
+"Hot air shimmers, as it does over the Microwave Tank's beam. Applies when you press Accept."
+END
+
+GUI:BehindBuilding
+"Units Behind Buildings"
+END
+
+TOOLTIP:BehindBuilding
+"A unit hidden behind a building shows through it as a silhouette in its player's colour. Applies when you press Accept."
+END
+
+TOOLTIP:NoDynamicLOD
+"When the frame rate drops in a big fight, the game thins out effects to keep up. On, it never does: the picture stays full and the frame rate takes the hit."
+END
+
+TOOLTIP:LowResSlider
+"How sharp the textures are. Lower saves graphics memory on an old card. Applies when you press Accept."
+END
+
+TOOLTIP:ParticleCapSlider
+"How many particles of smoke, fire and sparks can exist at once. Big fights reach the limit first; lower it if explosions slow the game down. Applies when you press Accept."
+END
+
+GUI:TextureFilter
+"Texture Filtering"
+END
+
+GUI:TextureFilter0
+"Bilinear"
+END
+
+GUI:TextureFilter1
+"Trilinear"
+END
+
+GUI:TextureFilter2
+"Anisotropic"
+END
+
+TOOLTIP:TextureFilter
+"How textures are sampled as they recede from the camera. Bilinear is what the game shipped with and makes distant ground shimmer; anisotropic keeps it sharp. Applies the next time the game starts."
+END
+
+GUI:Anisotropy
+"Anisotropic Samples"
+END
+
+TOOLTIP:Anisotropy
+"How many samples anisotropic filtering may take. Auto lets the graphics card decide, up to 16. Only used when texture filtering is anisotropic. Applies the next time the game starts."
+END
+
+GUI:AnisotropyCardMaximum
+"Auto"
+END
+
+GUI:TextureResolution
+"Texture Resolution"
+END
+
+GUI:ParticleLimit
+"Particle Limit"
+END
+
+GUI:NeverLowerDetail
+"Never Lower Detail"
+END
+
+GUI:OptionsGroupScreen
+"Screen"
+END
+
+GUI:OptionsGroupPicture
+"Picture"
+END
+
+GUI:OptionsGroupDetail
+"Quality"
+END
+
+GUI:OptionsGroupEffects
+"Effects"
+END
+
+GUI:OptionsGroupImage
+"Image"
+END
+
+GUI:OptionsGroupVolume
+"Volume"
+END
+
+GUI:OptionsGroupCamera
+"Camera"
+END
+
+GUI:OptionsGroupPlacement
+"Building Placement"
+END
+
+GUI:OptionsGroupLighting
+"Light And Glow"
+END
+
+GUI:OptionsGroupOrders
+"Mouse And Orders"
+END
+
+GUI:OptionsGroupBattlefield
+"Battlefield"
+END
+
+GUI:OptionsGroupAddresses
+"Addresses"
+END
+
+GUI:OptionsGroupFirewall
+"Firewall"
+END
+
+GUI:OptionsGroupProxy
+"Proxy"
+END
+
+GUI:OptionsGroupShadows
+"Shadows"
+END
+
+GUI:OptionsGroupExtras
+"Extras"
+END
+
+GUI:OptionsGroupParticles
+"Smoke And Particles"
+END
+
+GUI:OptionsGroupReflections
+"Reflections"
+END
+
+GUI:OptionsGroupModernWater
+"Modern water"
+END
+
+// ---------------------------------------------------------------------------
+// One GUI: label and one TOOLTIP: line per row of TheOptionCatalog.  A label
+// and the combo box under it share the tooltip; an OPTION_ENUM row also needs
+// its entries, numbered from zero in the order the enum declares them.
+// ---------------------------------------------------------------------------
+
+GUI:WindowMode
+"Window Mode"
+END
+
+GUI:WindowMode0
+"Fullscreen"
+END
+
+GUI:WindowMode1
+"Borderless"
+END
+
+GUI:WindowMode2
+"Windowed"
+END
+
+TOOLTIP:WindowMode
+"Fullscreen covers the monitor at the resolution above, scaled up to it when smaller, and steps aside on alt-tab. Borderless always draws at the monitor's own resolution and stays put behind other windows."
+END
+
+GUI:ResolutionNote0
+"Monitor supports this mode"
+END
+
+GUI:FullscreenScaling
+"Fullscreen Fit"
+END
+
+GUI:FullscreenScaling0
+"Stretch to fill"
+END
+
+GUI:FullscreenScaling1
+"Keep shape, add bars"
+END
+
+TOOLTIP:FullscreenScaling
+"How fullscreen fills a monitor whose shape your resolution does not have, such as 1920x1080 on a 1920x1200 screen or 1024x768 on a widescreen. Stretch fills every pixel; the other keeps the picture's proportions with black bars."
+END
+
+GUI:Monitor
+"Monitor"
+END
+
+TOOLTIP:Monitor
+"The monitor the game plays on. The resolution list below holds the sizes this monitor can show. Applied when you Accept."
+END
+
+GUI:MSAA
+"Antialiasing"
+END
+
+GUI:MSAA0
+"Off"
+END
+
+GUI:MSAA1
+"2x"
+END
+
+GUI:MSAA2
+"4x"
+END
+
+GUI:MSAA3
+"8x"
+END
+
+GUI:MSAA4
+"16x"
+END
+
+TOOLTIP:MSAA
+"Smooths the stair steps along model edges. Only the Direct3D 9 renderer uses it: the default renderer smooths edges on its own and ignores this setting. A level your card does not offer drops to the highest one it does. Applies the next time the game starts."
+END
+
+GUI:Bloom
+"Glow"
+END
+
+GUI:Bloom0
+"Off"
+END
+
+GUI:Bloom1
+"Low"
+END
+
+GUI:Bloom2
+"Medium"
+END
+
+GUI:Bloom3
+"High"
+END
+
+GUI:Bloom4
+"Ultra"
+END
+
+TOOLTIP:Bloom
+"How hard fire, explosions, muzzle flashes and lasers burn and how far their light spills over what is around them. Buildings, the sky, snow and sand never glow. Off is the look the artwork was painted for. The Direct3D 9 renderer gets a softer version, and under Classic Graphics only the laser halos follow it."
+END
+
+GUI:VSync
+"Vertical Sync"
+END
+
+TOOLTIP:VSync
+"Holds the picture to the monitor so it does not tear. Off, the picture runs as fast as the machine draws. Applied when you Accept."
+END
+
+GUI:FrameRateLimit
+"Frame Rate Limit"
+END
+
+GUI:FrameRateLimit0
+"Off"
+END
+
+GUI:FrameRateLimit1
+"240 FPS"
+END
+
+GUI:FrameRateLimit2
+"144 FPS"
+END
+
+GUI:FrameRateLimit3
+"120 FPS"
+END
+
+GUI:FrameRateLimit4
+"60 FPS"
+END
+
+TOOLTIP:FrameRateLimit
+"The most pictures a second the game draws in a match. A lower limit keeps the graphics card cooler and quieter and does not slow the game down. The menus always stop at 60."
+END
+
+GUI:ClassicGraphics
+"Classic Graphics"
+END
+
+TOOLTIP:ClassicGraphics
+"The game as it looked in 2003: its own textures and ground, the old hard shadows, no bump detail and no glow or sharpening. The game opens this way. Untick it for the Reforged picture: the High preset fills in the boxes, and you can move the slider from there. Takes effect the next time the game starts."
+END
+
+GUI:DetailedModels
+"Detailed Models"
+END
+
+TOOLTIP:DetailedModels
+"The rebuilt units and buildings, for the Reforged picture, when you downloaded them. They change only what you see: you play with anyone, whether they have them or not. Untick it for a higher frame rate in big battles. Takes effect the next time the game starts."
+END
+
+GUI:HDTextures
+"HD Textures"
+END
+
+TOOLTIP:HDTextures
+"Every texture and ground tile at twice the detail, for the Reforged picture, when you downloaded them. They change only what you see: you play with anyone, whether they have them or not. Untick it on a card short of video memory. Takes effect the next time the game starts."
+END
+
+GUI:InfantryShadows
+"Infantry Shadows"
+END
+
+TOOLTIP:InfantryShadows
+"Soldiers and the other animated models cast real shadows too. Needs Cast Shadows. Applies from the next map."
+END
+
+GUI:ProjectileShadows
+"Missile Shadows"
+END
+
+TOOLTIP:ProjectileShadows
+"Missiles and bombs the artists gave no shadow get one on the ground. Applies from the next map."
+END
+
+GUI:PropShadows
+"Scenery Shadows"
+END
+
+TOOLTIP:PropShadows
+"Fences, rubbish and shrubs, which the original drew with no shadow at all, get one. Applies from the next map."
+END
+
+GUI:ParticleShadows
+"Smoke Shadows"
+END
+
+TOOLTIP:ParticleShadows
+"Big clouds of smoke and dust lay a soft shadow on the ground under them. Applies when you press Accept."
+END
+
+GUI:Smoke
+"Smoke"
+END
+
+GUI:Smoke0
+"Original"
+END
+
+GUI:Smoke1
+"Thick"
+END
+
+GUI:Smoke2
+"Very Thick"
+END
+
+TOOLTIP:Smoke
+"How long smoke hangs in the air and how dense it looks. 175 of the game's 1088 effects are smoke. Very Thick cost 0.7 ms a frame over a burning column when it was measured. Takes effect the next time the game starts."
+END
+
+GUI:ParticleBounce
+"Particles Hit The Ground"
+END
+
+TOOLTIP:ParticleBounce
+"Sparks, debris and the other particles land and bounce on the terrain instead of falling through it. Takes effect the next time the game starts."
+END
+
+GUI:MiddleMousePans
+"Middle Mouse Pans"
+END
+
+TOOLTIP:MiddleMousePans
+"Hold the middle button to drag the map under the cursor."
+END
+
+GUI:ZoomToCursor
+"Zoom To Cursor"
+END
+
+TOOLTIP:ZoomToCursor
+"The wheel zooms towards whatever the cursor is over instead of the middle of the screen."
+END
+
+GUI:StartAtMaxZoom
+"Start Zoomed Out"
+END
+
+TOOLTIP:StartAtMaxZoom
+"A match opens with the camera as far out as the wheel goes. Off, it opens close in, at the height the original game used."
+END
+
+GUI:ScrollSpeed
+"Camera Scroll Speed"
+END
+
+TOOLTIP:ScrollSpeed
+"How fast the camera pans: at the screen edge, on the arrow keys and while you drag with the right mouse button. The mouse wheel has its own Zoom Speed. Takes effect on Accept."
+END
+
+GUI:ZoomSpeed
+"Zoom Speed"
+END
+
+TOOLTIP:ZoomSpeed
+"How far one turn of the mouse wheel moves the camera in or out. At 100 it moves as far as in the original game. Takes effect on Accept."
+END
+
+GUI:DragTolerance
+"Drag Threshold"
+END
+
+TOOLTIP:DragTolerance
+"How many pixels the mouse may move with a button held before a click becomes a drag. Raise it if selection boxes start by accident, lower it if drags read as clicks."
+END
+
+GUI:AmbientVolume
+"Ambient Volume"
+END
+
+TOOLTIP:AmbientVolume
+"Birds, wind, water and the hum of a town. Sound FX no longer moves these, so the battle can stay loud while the world around it stays quiet."
+END
+
+GUI:MasterVolume
+"Master Volume"
+END
+
+TOOLTIP:MasterVolume
+"Turns the whole game up or down: music, effects, voices, ambience and movies. The other sliders keep the mix, this one sets how loud the mix is."
+END
+
+GUI:OptionsGroupMusic
+"Music"
+END
+
+GUI:DynamicMusic
+"Music Follows the Fight"
+END
+
+TOOLTIP:DynamicMusic
+"In a skirmish or online match the music answers the battle: one of your side's calmer tracks while nothing happens, a harder one once guns fire near the camera or at your forces, and back to calm a few seconds after the fight ends. Off leaves the music as the original game played it."
+END
+
+GUI:OptionsGroupOutput
+"Output"
+END
+
+GUI:AudioDevice
+"Output Device"
+END
+
+TOOLTIP:AudioDevice
+"The speakers or headphones the game plays through. Default follows Windows and moves with it when you plug in a headset. Applied when you Accept."
+END
+
+GUI:AudioDeviceDefault
+"Default"
+END
+
+GUI:SpeakerType
+"Speaker Setup"
+END
+
+TOOLTIP:SpeakerType
+"How the battlefield's sounds are placed around you. Headphones give each ear its own timing and tone, so a sound behind or beside you is heard there. 5.1 and 7.1 spread them over surround speakers; on Linux and macOS they play as stereo. Applied when you Accept."
+END
+
+GUI:SpeakerType0
+"Stereo Speakers"
+END
+
+GUI:SpeakerType1
+"Headphones"
+END
+
+GUI:SpeakerType2
+"5.1 Surround"
+END
+
+GUI:SpeakerType3
+"7.1 Surround"
+END
+
+GUI:MuteInBackground
+"Mute in Background"
+END
+
+TOOLTIP:MuteInBackground
+"Silences the game while another window has the focus. Off keeps it playing behind a browser or on a second monitor."
+END
+
+GUI:LegacySound
+"Legacy Sound"
+END
+
+TOOLTIP:LegacySound
+"The original game's sound: no pitch bend on passing sounds, no Aurora sonic boom, no cap on battle sounds or unit replies, no limiter, no map ambience and no music following the fight. Master volume, the device and the speakers still apply. Takes effect at once."
+END
+
+GUI:CameraShake
+"Camera Shake"
+END
+
+TOOLTIP:CameraShake
+"Blasts shake the camera. A nuke or a big building coming down nearby kicks it hard for a moment. Untick to keep the view still. Applies when you press Accept."
+END
+
+GUI:IsometricCamera
+"Isometric Camera"
+END
+
+TOOLTIP:IsometricCamera
+"The battlefield seen from far off, so a unit is the same size at the top of the screen as at the bottom. You still turn and zoom the camera."
+END
+
+GUI:EdgeScrollWindowed
+"Edge Scroll In A Window"
+END
+
+TOOLTIP:EdgeScrollWindowed
+"Retail refuses to scroll from the screen edge in windowed mode. Turn this on to get it back on a second monitor or in borderless."
+END
+
+GUI:SnapCamera45
+"Snap Camera Rotation"
+END
+
+TOOLTIP:SnapCamera45
+"Rotating the camera clicks to the eight 45 degree headings instead of stopping anywhere. Hold Shift while turning to get the other behaviour for that turn."
+END
+
+GUI:GridBuild
+"Grid Building Placement"
+END
+
+TOOLTIP:GridBuild
+"Structures land on the pathfinder's own 10-unit grid, drawn under the building while you place it, so two buildings put down by eye share an edge instead of leaving a gap too narrow to walk through. Off, only the cells nothing can be built on are marked."
+END
+
+GUI:NudgeBuild
+"Nudge Blocked Placement"
+END
+
+TOOLTIP:NudgeBuild
+"A structure whose spot is blocked slides to the nearest one it fits instead of going red under the cursor."
+END
+
+GUI:SnapBuild45
+"Snap Building Rotation"
+END
+
+TOOLTIP:SnapBuild45
+"Drag-to-rotate clicks to the eight 45 degree headings, which is what walls and defenses along a base edge want."
+END
+
+GUI:SnapBuildNeighbour
+"Snap to Nearby Buildings"
+END
+
+TOOLTIP:SnapBuildNeighbour
+"A structure put down a cell or so short of another one is pulled flush against its edge, so the two leave no gap."
+END
+
+GUI:RangeRing
+"Placement Range Ring"
+END
+
+TOOLTIP:RangeRing
+"Draws the weapon range of the structure you are about to place."
+END
+
+GUI:WorkersReturn
+"Workers Return To Supply"
+END
+
+TOOLTIP:WorkersReturn
+"A worker that finishes a building goes back to gathering instead of standing where it built."
+END
+
+GUI:BuildTooltips
+"Detailed Build Tooltips"
+END
+
+TOOLTIP:BuildTooltips
+"Build buttons list cost, build time and prerequisites."
+END
+
+GUI:HudOverlay
+"HUD Overlay"
+END
+
+TOOLTIP:HudOverlay
+"The extra readouts across the top of the screen: power, income and the production strip."
+END
+
+GUI:NetBox
+"Info Box"
+END
+
+TOOLTIP:NetBox
+"The box in the top right corner with the match clock, the frame rates and the connection. Off, the superweapon timers move up into the corner."
+END
+
+GUI:OptionsGroupHud
+"HUD"
+END
+
+GUI:EmptyBuildingPips
+"Empty Building Slots"
+END
+
+TOOLTIP:EmptyBuildingPips
+"The row of empty slots over a building with nobody inside, like the ten over a Barracks. Off, a building shows its slots only while someone is in it."
+END
+
+GUI:ArchiveReplays
+"Archive Replays"
+END
+
+TOOLTIP:ArchiveReplays
+"Every game is kept under its own name instead of overwriting the last one."
+END
+
+GUI:HealthBars
+"Health Bars"
+END
+
+GUI:HealthBars0
+"Always"
+END
+
+GUI:HealthBars1
+"Smart"
+END
+
+GUI:HealthBars2
+"Selection Only"
+END
+
+GUI:HealthBars3
+"Never"
+END
+
+TOOLTIP:HealthBars
+"Smart shows a bar over anything hurt, plus the selection and whatever is under the cursor. Selection only is what retail did."
+END
+
+GUI:OptionsGroupInput
+"Input"
+END
+
+GUI:ChromaLighting
+"Razer Chroma Lighting"
+END
+
+TOOLTIP:ChromaLighting
+"During a match, a Razer keyboard, mouse and mousepad show the command bar, power, superweapons and money. In the menus Synapse keeps its own lighting."
+END
+
+GUI:OrderLines
+"Order Lines"
+END
+
+TOOLTIP:OrderLines
+"A line from each selected unit to where it is going, and on through every point it has queued. Off, a single order draws no line, but its marker and the ring where you click still show; a queued route keeps its line."
+END
+
+GUI:AircraftAltitudeLine
+"Aircraft Altitude Lines"
+END
+
+TOOLTIP:AircraftAltitudeLine
+"A thin line from each aircraft in the air straight down to the ground under it. Where it touches is where the plane really is, and its length is how high it flies. Parked aircraft have none."
+END
+
+GUI:PlayerColors
+"Player Colors"
+END
+
+GUI:PlayerColors0
+"Original"
+END
+
+GUI:PlayerColors1
+"You, Allies, Enemies"
+END
+
+GUI:PlayerColors2
+"By Team"
+END
+
+TOOLTIP:PlayerColors
+"You, allies, enemies paints you blue, everyone on your side green and everyone shooting at you red. By team gives each alliance its own color and each member of it a shade. Your own screen only, so it changes nothing for anyone else in the game."
+END
+
+// Language - the Gameplay page's second group.  Each entry is written in its own language, so a
+// player who cannot read the current one can still find theirs.
+
+GUI:OptionsGroupLanguage
+"Language"
+END
+
+GUI:Language
+"Text Language"
+END
+
+GUI:Language0
+"English"
+END
+
+GUI:Language1
+"Türkçe"
+END
+
+GUI:Language2
+"Deutsch"
+END
+
+GUI:Language3
+"Українська"
+END
+
+GUI:Language4
+"Русский"
+END
+
+GUI:Language5
+"Français"
+END
+
+TOOLTIP:Language
+"The language of menus, orders, briefings and subtitles. Voices and videos stay as installed. Takes effect the next time the game starts."
+END
+
+// The line under it when the lobby's Pile Limit has the pile closed to the player looking at it.
+
+TOOLTIP:SupplyPileFull
+"\n Taken: the pile limit keeps your gatherers out"
+END
+
+// The build tooltip card's figures, a label and its value each.
+
+TOOLTIP:StatSeconds
+"%ds"
+END
+
+TOOLTIP:StatDamage
+"Damage"
+END
+
+TOOLTIP:StatRange
+"Range"
+END
+
+TOOLTIP:StatHealth
+"Health"
+END
+
+TOOLTIP:StatAttackSpeed
+"Attack speed"
+END
+
+TOOLTIP:StatPerSecond
+"/s"
+END
+
+TOOLTIP:StatDamagePerSecond
+"Damage per second"
+END
+
+TOOLTIP:StatArmor
+"Armor"
+END
+
+TOOLTIP:StatArmorStronger
+"stronger, less of each hit gets through"
+END
+
+TOOLTIP:StatNewWeapon
+"New weapon"
+END
+
+TOOLTIP:StatNewWeaponGround
+"Ground weapon"
+END
+
+TOOLTIP:StatNewWeaponAir
+"Anti-air weapon"
+END
+
+TOOLTIP:StatNewWeaponFigures
+"%d damage, %d range"
+END
+
+// The card's armour cell: the class of the unconditioned ArmorSet's armour, TOOLTIP:Armor and the
+// Armor block's name with its first "Armor" taken out.  Short, a cell is about sixty pixels wide.
+
+TOOLTIP:ArmorNo
+"None"
+END
+
+TOOLTIP:ArmorVulnerableAll
+"None"
+END
+
+TOOLTIP:ArmorInvulnerable
+"Invulnerable"
+END
+
+TOOLTIP:ArmorInvulnerableAll
+"Invulnerable"
+END
+
+TOOLTIP:ArmorHuman
+"Infantry"
+END
+
+TOOLTIP:ArmorHazMatHuman
+"Infantry"
+END
+
+TOOLTIP:ArmorChemSuitHuman
+"Infantry"
+END
+
+TOOLTIP:ArmorInfGen_Human
+"Infantry"
+END
+
+TOOLTIP:ArmorChemReb_Human
+"Infantry"
+END
+
+TOOLTIP:ArmorDemoGenTerrorist
+"Infantry"
+END
+
+TOOLTIP:ArmorStingerSoldier
+"Infantry"
+END
+
+TOOLTIP:ArmorTruck
+"Vehicle"
+END
+
+TOOLTIP:ArmorHumvee
+"Vehicle"
+END
+
+TOOLTIP:ArmorDozer
+"Vehicle"
+END
+
+TOOLTIP:ArmorToxinTruck
+"Vehicle"
+END
+
+TOOLTIP:ArmorAntiAirVehicle
+"Vehicle"
+END
+
+TOOLTIP:ArmorQuadCannon
+"Vehicle"
+END
+
+TOOLTIP:ArmorAvenger
+"Vehicle"
+END
+
+TOOLTIP:ArmorBattleBusTruck
+"Vehicle"
+END
+
+TOOLTIP:ArmorBattleBusTruckPlusOne
+"Vehicle"
+END
+
+TOOLTIP:ArmorBattleBusTruckPlusTwo
+"Vehicle"
+END
+
+TOOLTIP:ArmorTank
+"Tank"
+END
+
+TOOLTIP:ArmorUpgradedTank
+"Tank"
+END
+
+TOOLTIP:ArmorDragonTank
+"Tank"
+END
+
+TOOLTIP:ArmorAssaultCrawler
+"Tank"
+END
+
+TOOLTIP:ArmorAvalanche
+"Tank"
+END
+
+TOOLTIP:ArmorAirplane
+"Aircraft"
+END
+
+TOOLTIP:ArmorCountermeasuresAirplane
+"Aircraft"
+END
+
+TOOLTIP:ArmorSpectreGunship
+"Aircraft"
+END
+
+TOOLTIP:ArmorCountermeasuresSpectreGunship
+"Aircraft"
+END
+
+TOOLTIP:ArmorComanche
+"Helicopter"
+END
+
+TOOLTIP:ArmorAFG_Comanche
+"Helicopter"
+END
+
+TOOLTIP:ArmorCountermeasuresComanche
+"Helicopter"
+END
+
+TOOLTIP:ArmorAFG_CountermeasuresComanche
+"Helicopter"
+END
+
+TOOLTIP:ArmorChinook
+"Helicopter"
+END
+
+TOOLTIP:ArmorSentryDrone
+"Drone"
+END
+
+TOOLTIP:ArmorMine
+"Mine"
+END
+
+TOOLTIP:ArmorStructure
+"Building"
+END
+
+TOOLTIP:ArmorStructureInternetCenter
+"Building"
+END
+
+TOOLTIP:ArmorStructureTough
+"Fortified"
+END
+
+TOOLTIP:ArmorGLAUpgradedStructure
+"Fortified"
+END
+
+TOOLTIP:ArmorGLAUpgradedStructureTough
+"Fortified"
+END
+
+TOOLTIP:ArmorBattleBusStructureTough
+"Fortified"
+END
+
+TOOLTIP:ArmorBattleBusStructureToughPlusOne
+"Fortified"
+END
+
+TOOLTIP:ArmorBattleBusStructureToughPlusTwo
+"Fortified"
+END
+
+TOOLTIP:ArmorBaseDefense
+"Defense"
+END
+
+TOOLTIP:ArmorFireBase
+"Defense"
+END
+
+TOOLTIP:ArmorStingerSite
+"Defense"
+END
+
+TOOLTIP:ArmorWall
+"Wall"
+END
+
+// Under the figures: a unit's upgrades, or on an upgrade's card the units it changes.
+
+TOOLTIP:Upgrades
+"UPGRADES"
+END
+
+TOOLTIP:UpgradeChanges
+"CHANGES"
+END
+
+TOOLTIP:UpgradesHint
+"(without it → with it)"
+END
+
+TOOLTIP:UpgradeChangesHint
+"(plain unit → with this)"
+END
+
+TOOLTIP:UpgradeOwned
+"owned"
+END
+
+// Peace time - the lobby combo box, its tooltip, the corner countdown and the three things the game
+// says while the clock runs.  Tools/peacetime_layout.py selfcheck fails if any of these goes missing.
+
+GUI:PeaceTimeOff
+"No Peace Time"
+END
+
+GUI:PeaceTimeFormat
+"Peace: %d min"
+END
+
+TOOLTIP:PeaceTime
+"Nobody can attack for this long at the start of the match. Anything that walks up to an enemy command center burns."
+END
+
+GUI:PeaceTimeStarted
+"Peace time: %d minutes. Nobody can attack until it runs out."
+END
+
+GUI:PeaceTimeRemaining
+"Peace time ends in %d seconds."
+END
+
+GUI:PeaceTimeOver
+"Peace time is over."
+END
+
+GUI:PeaceTimeHud
+"%d:%02d"
+END
+
+GUI:PeaceTimeHudLabel
+"PEACE"
+END
+
+GUI:ListMore
+"+%d more"
+END
+
+GUI:LobbyTabChat
+"Chat"
+END
+
+GUI:LobbyTabInfo
+"Info"
+END
+
+GUI:LobbyTabSettings
+"Lobby Settings"
+END
+
+GUI:PeaceTimeLabel
+"Peace Time"
+END
+
+GUI:Superweapons
+"Superweapons"
+END
+
+GUI:SuperweaponsAllow
+"Allow Superweapons"
+END
+
+GUI:SuperweaponsLimit
+"Limit Superweapons"
+END
+
+GUI:SuperweaponsNone
+"No Superweapons"
+END
+
+TOOLTIP:Superweapons
+"How many superweapons a player may have standing. Allow: as many as he can pay for. Limit: one, and four for the USA Superweapon General. No: none at all, except the Superweapon General, who keeps one. He is the exception because his superweapons are what he pays for a weaker army with. Under No anyone, computer players too, may still put up one Nuclear Missile silo to buy China's upgrades in. It has no missile: no launch button, no countdown, no announcement."
+END
+
+GUI:UnitLimit
+"Unit Limit"
+END
+
+TOOLTIP:UnitLimit
+"840 units shared out evenly between the players: two players get 420 each, eight get 105. Units standing and units waiting in a queue both count, buildings do not. Your own count and your share are in the top right corner during the match."
+END
+
+GUI:IncomeSharing
+"Share Income"
+END
+
+TOOLTIP:IncomeSharing
+"What allies split between them. Every payment is divided evenly between the player who earned it and each ally still in the match: an oil derrick paying 200 to one of two allies pays 100 to each. Oil Derricks shares captured derricks only. All Income adds supply runs, hackers and black markets."
+END
+
+GUI:IncomeSharingOff
+"No Sharing"
+END
+
+GUI:IncomeSharingTech
+"Oil Derricks"
+END
+
+GUI:IncomeSharingAll
+"All Income"
+END
+
+GUI:TechRespawn
+"Tech Respawn"
+END
+
+TOOLTIP:TechRespawn
+"How long a destroyed tech building lies in ruins before a neutral one stands on the same spot again, at full health and ready to be captured. Oil derricks, refineries, hospitals, artillery platforms, repair bays and reinforcement pads all come back. A unit or a building standing on the spot holds it back until it moves."
+END
+
+GUI:TechRespawnOff
+"Never"
+END
+
+GUI:TechRespawnFormat
+"After %d min"
+END
+
+GUI:SupplyPileLimit
+"Pile Limit"
+END
+
+TOOLTIP:SupplyPileLimit
+"How many players may gather from one supply dock or supply pile at the same time. With 1, a pile belongs to whoever reaches it first, and every other player's supply trucks, Workers and Chinooks go to another pile or wait at home. Allies count as separate players. A pile is free again a minute after the last load was taken from it."
+END
+
+GUI:SupplyPileLimitOff
+"No Limit"
+END
+
+GUI:SupplyPileLimitFormat
+"%d per pile"
+END
+
+GUI:ProRules
+"Pro Rules"
+END
+
+TOOLTIP:ProRules
+"The tournament list. No Particle Cannon or SCUD Storm, except the Superweapon General's one cannon. The Nuclear Missile silo goes up but never fires. No Aurora, no Tactical Nuke MiGs, no demo bike, no suicide bombs, Neutron Shells or Stealth Comanche, and no Carpet Bomb before rank 3. A Microwave Tank cannot freeze a building still going up, nobody builds within 300 of an enemy building, and nobody puts more than two Patriots, Gatling Cannons or Stinger Sites round one group of oil derricks."
+END
+
+GUI:TurboMode
+"Turbo Mode"
+END
+
+TOOLTIP:TurboMode
+"The match runs twice as fast: two seconds of play go by in every second, and nothing else about it changes. In a network game the host picks it for everyone."
+END
+
+GUI:TurboModeMissions
+"Turbo Mode in Missions"
+END
+
+TOOLTIP:TurboModeMissions
+"Campaign and Generals' Challenge missions run twice as fast, and a mission already under way speeds up at once. Skirmish and multiplayer games have their own box in the lobby."
+END
+
+// Pro Rules, rule 9: no foundation within reach of an enemy building
+GUI:CantBuildTooCloseToEnemy
+"Can't build this close to an enemy building."
+END
+
+// Pro Rules, rule 16: two defenses to a group of oil derricks
+GUI:CantBuildTooManyDerrickDefenses
+"You already have two defenses round these oil derricks."
+END
+
+// Pro Rules, rules 6 and 12 to 14: the upgrade's card says why its button is grey
+TOOLTIP:TooltipProRulesBanUpgrade
+"Banned under Pro Rules"
+END
+
+GUI:HudStatArmy
+"Army value"
+END
+
+// The spectator's rack: the stats its dial ranks every player by, the first also the broadcast's
+// list of every player's cash plus what everything he has standing cost
+GUI:HudNetWorth
+"Net worth"
+END
+
+GUI:HudStatCash
+"Cash"
+END
+
+GUI:HudStatIncome
+"Income per minute"
+END
+
+GUI:HudStatKills
+"Kills / losses"
+END
+
+GUI:HudStatRank
+"General's rank"
+END
+
+GUI:HudStatPower
+"Power"
+END
+
+// a row's number under the income stat, "$1,840/min"
+GUI:HudStatIncomeValue
+"%ls/min"
+END
+
+// a row's number under the rank stat
+GUI:HudStatRankValue
+"Rank %d"
+END
+
+// the rack's top drawer: the camera lever, the fog and the armies drawer
+GUI:HudWatch
+"Watch"
+END
+
+// the camera's own again
+GUI:HudCameraFree
+"Free"
+END
+
+// the camera goes to the biggest fight on the map by itself
+GUI:HudCameraDirector
+"Director"
+END
+
+// the camera shows what the followed player's own screen shows
+GUI:HudCameraPlayer
+"Player"
+END
+
+// the followed player's fog of war, so the spectator sees only what he sees
+GUI:HudFog
+"Fog"
+END
+
+// each player's units, most first, with how many he has
+GUI:HudArmies
+"Armies"
+END
+
+// the rack's drawer of every player ranked by the picked stat
+GUI:HudStandings
+"Standings"
+END
+
+// the standings' heading when no stat key is under the pointer: the order the rows are in
+GUI:HudHighestFirst
+"highest first"
+END
+
+// the standings' column head over the names
+GUI:HudPlayerHead
+"Player"
+END
+
+// the units the standings' column head names after the stat
+GUI:HudStatUnitMoney
+"$"
+END
+
+GUI:HudStatUnitIncome
+"$/min"
+END
+
+GUI:HudStatUnitPower
+"surplus"
+END
+
+// The cheat panel the console's "trainer" command opens.
+GUI:CheatPanelTitle
+"Cheats"
+END
+
+GUI:CheatPanelClose
+"Close"
+END
+
+GUI:CheatMoney
+"Cash"
+END
+
+GUI:CheatPoints
+"General's points"
+END
+
+GUI:CheatRankUp
+"Rank up"
+END
+
+GUI:CheatHeroic
+"Heroic units"
+END
+
+GUI:CheatReveal
+"Reveal the map"
+END
+
+GUI:CheatPower
+"Unlimited power"
+END
+
+GUI:StartingMoneyUnlimited
+"Unlimited"
+END
+
+GUI:CheatNoCooldown
+"No cooldowns"
+END
+
+GUI:CheatGod
+"God mode"
+END
+
+GUI:CheatInstantBuild
+"Instant build"
+END
+
+GUI:CheatOneHitKill
+"One-hit kills"
+END
+
+GUI:CheatOn
+"ON"
+END
+
+GUI:CheatOff
+"OFF"
+END
+
+GUI:CheatApply
+"GO"
+END
+
+// a line of the event feed when a player's last dozer or worker is gone; %s is his name
+GUI:HudNoDozerLeft
+"%s has no dozer left"
+END
+
+GUI:HudNoWorkerLeft
+"%s has no worker left"
+END
+
+// the command bar's own buttons, written on them now that the bar is drawn from a page
+GUI:BarIdleWorker
+"Worker"
+END
+
+CONTROLBAR:MoneyDescription
+"The money you have, and what you earned a second over the last half minute"
+END
+
+CONTROLBAR:ObsLookingThrough
+"Watching through %ls's eyes. Esc brings back the whole map."
+END
+
+GUI:ScoreboardFavourite
+"FAVOURITE"
+END
+
+// Power tooltips that named the wrong countdown or count: the Air Force Spectre
+// Gunship (3:00) and Carpet Bomb (4:00), the Leaflet Drop (5:00), the Stealth GPS
+// Scrambler (3:00), the Spectre's third rank (20 seconds) and the Demolitions
+// ambush (4, 6 and 10 rebels).
+
+CONTROLBAR:AirF_TooltipSpectreGunship
+"Strong vs. Vehicles \n \n Countdown Timer: 3:00"
+END
+
+CONTROLBAR:AirF_TooltipCarpetBomb
+"Carpet Bomb target area \n \n Countdown Timer: 4:00"
+END
+
+CONTROLBAR:TooltipLeafletDrop
+"Strong vs. Infantry \n \n Countdown Timer: 5:00"
+END
+
+CONTROLBAR:Slth_TooltipFireGPSScrambler
+"GPS Scrambler \n Countdown Timer: 3:00"
+END
+
+CONTROLBAR:AirF_ToolTipUSAScienceSpectreGunship
+"Spectre Gunships circle the battlefield and pummel enemy forces with Howitzers and Gatling Cannons \n \nLevel 1: 10 seconds \n Level 2: 15 seconds \n Level 3: 20 seconds \n \n Deploy from: Command Center"
+END
+
+CONTROLBAR:Demo_ToolTipGLAScienceRebelAmbush
+"Allows you to create a surprise ambush of Rebels anywhere \n \n Rank 1: 4 Rebels \n Rank 2: 6 Rebels \n Rank 3: 10 Rebels \n \n Deploy from: Command Center"
+END
+
+GUI:WaterStyle
+"Water style"
+END
+
+GUI:WaterStyle0
+"Classic"
+END
+
+GUI:WaterStyle1
+"Modern"
+END
+
+TOOLTIP:WaterStyle
+"Classic uses the original water, sparkles, reflections and wakes. Modern adds waves, shoreline detail and hull foam. Applied when you Accept."
+END
+
+GUI:WaterReflectionEnabled
+"Scene reflections"
+END
+
+TOOLTIP:WaterReflectionEnabled
+"Reflects the scene in Modern water. Turn off to improve performance while keeping sky colour and sun highlights. Your reflection mode is remembered. Applied when you Accept."
+END
+
+GUI:WaterShoreWaveTurning
+"Shore wave turning"
+END
+
+TOOLTIP:WaterShoreWaveTurning
+"Lets Modern water waves turn toward the shore. Turn off to keep waves travelling in one direction and improve performance. Applied when you Accept."
+END
+
+GUI:WaterWaveFiltering
+"Wave filtering"
+END
+
+TOOLTIP:WaterWaveFiltering
+"Smooths distant waves and sun glints in Modern water. Turn off for simpler distant highlights and better performance. Applied when you Accept."
+END
+
+GUI:WaterFftResolution
+"Wave detail"
+END
+
+GUI:WaterFftResolution0
+"Low"
+END
+
+GUI:WaterFftResolution1
+"Medium"
+END
+
+GUI:WaterFftResolution2
+"High"
+END
+
+TOOLTIP:WaterFftResolution
+"Higher settings add finer wave detail. Lower settings improve performance."
+END
+
+GUI:WaterRefractionQuality
+"Refraction"
+END
+
+GUI:WaterRefractionQuality0
+"Full"
+END
+
+GUI:WaterRefractionQuality1
+"Simple"
+END
+
+GUI:WaterRefractionQuality2
+"Off"
+END
+
+TOOLTIP:WaterRefractionQuality
+"For Modern water. Full distorts the view below the surface. Simple keeps clear water without distortion. Off uses opaque tinted water for better performance. Applied when you Accept."
+END
+
+GUI:WaterReflectionDetail
+"Reflection detail"
+END
+
+GUI:WaterReflectionDetail0
+"Low"
+END
+
+GUI:WaterReflectionDetail1
+"High"
+END
+
+TOOLTIP:WaterReflectionDetail
+"Controls scene reflection detail in Modern water. Low improves performance. High gives clearer reflections, including 512 x 512 Path traced captures while moving. SSR resolution is unchanged. Applied when you Accept."
+END
+
+GUI:WaterReflection
+"Reflection mode"
+END
+
+GUI:WaterReflection0
+"Legacy"
+END
+
+GUI:WaterReflection1
+"SSR"
+END
+
+GUI:WaterReflection2
+"Hybrid"
+END
+
+GUI:WaterReflection3
+"Path traced (experimental)"
+END
+
+TOOLTIP:WaterReflection
+"For Modern water when Scene reflections is on. Legacy uses the original reflections. SSR reflects visible screen content. Hybrid combines both and is the default. Path traced is an experimental, slower option that traces scene geometry. Applied when you Accept."
+END
+
+GUI:CloudStyle
+"Cloud style"
+END
+
+GUI:CloudStyle0
+"Classic"
+END
+
+GUI:CloudStyle1
+"Volumetric"
+END
+
+TOOLTIP:CloudStyle
+"Classic uses the original toxin and radiation effects. Volumetric adds moving smoke, darker nuclear haze and heat shimmer. Applies when you press Accept, to the clouds already on the field too."
+END
+
+GUI:SaveFromOlderGame
+"This save was made by the original game or by an older version of Reforged, and cannot be loaded. Its \"Mission Start\" saves still load and carry the campaign on from that mission's beginning, and every campaign mission can be picked from the campaign menu."
+END
+
+GUI:CampaignMission
+"MISSION %d"
+END
+
+GUI:CampaignZeroHour
+"GENERALS ZERO HOUR"
+END
+
+GUI:CampaignGenerals
+"GENERALS"
+END
+
+GUI:MapCorrupt
+"The map %ls is damaged and cannot be played."
+END
+
+GUI:KickVoteStarted
+"%ls wants %ls out of the match. Type /yes or /no in chat: every other player has 30 seconds to agree."
+END
+
+GUI:KickVoteBanner
+"Kick %ls?   Yes %d of %d   /yes or /no   %d s"
+END
+
+GUI:KickVoteFailed
+"The vote to kick %ls failed."
+END
+
+GUI:KickVoteKicked
+"%ls was voted out of the match."
+END
+
+GUI:KickVoteTooFew
+"A vote kick needs at least two other players besides the one you want out."
+END
+
+GUI:KickVoteNoPlayer
+"No player called %ls is in the match."
+END
+
+GUI:KickVoteNone
+"No vote is open. Type /kick and a player's name to start one."
+END
+
+GUI:ShadowQuality
+"Shadow Quality"
+END
+
+GUI:ShadowQuality0
+"Low"
+END
+
+GUI:ShadowQuality1
+"Medium"
+END
+
+GUI:ShadowQuality2
+"High"
+END
+
+TOOLTIP:ShadowQuality
+"How sharp unit and building shadows are. High takes about 64 MB of video memory, Low frees memory on a weak card. Off under Classic Graphics. Applies when you press Accept."
+END
+
+GUI:VolumetricSmoke
+"Volumetric Smoke"
+END
+
+TOOLTIP:VolumetricSmoke
+"Smoke and dust shade the ground, the units and the smoke behind them by how thick they are. Has a small cost in big fights. Applies when you press Accept."
+END
+
+GUI:LightingStyle
+"Lighting"
+END
+
+GUI:LightingStyle0
+"Classic"
+END
+
+GUI:LightingStyle1
+"Reforged"
+END
+
+TOOLTIP:LightingStyle
+"Reforged gives each map a stronger, warmer sun, darker shade and deeper shadows, keeping its time of day. Classic is the flat light of 2003, and Classic Graphics always uses it. Applies from the next map."
+END
+
+GUI:SmokeFireLighting
+"Smoke Lit By Fire"
+END
+
+TOOLTIP:SmokeFireLighting
+"Smoke beside a fire takes on its orange light. Applies when you press Accept."
+END
+
+GUI:DebrisTrails
+"Explosion Debris Trails"
+END
+
+TOOLTIP:DebrisTrails
+"Blasts throw fragments that trail smoke, and wrecks shed burning shrapnel. Off keeps the original explosions. Applies when you press Accept."
+END
+
+GUI:MapLight
+"Warm Light and Haze"
+END
+
+TOOLTIP:MapLight
+"A low afternoon sun that lights the map warmer and casts longer shadows, and a light haze lying still over low ground. Off under Classic Graphics. Applies from the next map."
+END
+
+GUI:TeamGlow
+"Team Color Glow"
+END
+
+TOOLTIP:TeamGlow
+"The bright patches of each side's color on units and buildings glow in that color. Off under Classic Graphics. Applies from the next map."
+END
+
+GUI:WaterFoam
+"Water Foam"
+END
+
+TOOLTIP:WaterFoam
+"Rivers and lakes carry flecks of foam and a band of it along the shore, and the sun's shadows fall on the water. The sea's waves are unchanged. Classic water only, and off under Classic Graphics. Applies when you press Accept."
+END
+
+GUI:GroundMarks
+"Battle Marks"
+END
+
+TOOLTIP:GroundMarks
+"Shells and missiles leave burns on the ground, a fallen building leaves a dark stain with cracks in it, a nuke leaves a burnt ring, and tank treads stay dark for longer. They fade over about four minutes. Off under Classic Graphics. Applies when you press Accept."
+END
+
+GUI:Firelight
+"Firelight"
+END
+
+TOOLTIP:Firelight
+"Burning buildings, wrecks and explosions throw a flickering orange light on the ground, the walls and the units around them. It shows most on night maps. Off under Classic Graphics. Applies when you press Accept."
+END
+
+GUI:HemiAmbient
+"Sky And Ground Light"
+END
+
+TOOLTIP:HemiAmbient
+"Models take the map's ambient light from the sky above and the ground below instead of evenly, so a tank's deck is lighter than its belly. Walls keep the light they had and a night map stays dark. Off under Classic Graphics. Applies when you press Accept."
+END
+
+GUI:AmbientOcclusion
+"Ambient Occlusion"
+END
+
+TOOLTIP:AmbientOcclusion
+"Corners and the ground under what stands on it go darker, so a tank sits on the sand instead of hovering over it. Water and the fog of war stay out of it. Off under Classic Graphics. Applies when you press Accept."
+END
+
+GUI:InternalHdr
+"Internal HDR Tone Mapping"
+END
+
+TOOLTIP:InternalHdr
+"Fire, blasts and lasers past white keep their colour on the way to your screen instead of ending in one flat white, and team colours hold a little more of theirs. Ground and walls away from a fire stay as they were. This is inside the game's picture: your monitor still gets a normal image, and an HDR monitor gets no HDR signal. Off under Classic Graphics. Applies when you press Accept."
+END
+
+GUI:Weather
+"Weather"
+END
+
+TOOLTIP:Weather
+"Rain falls, or sand blows on a desert map and snow on a snowy one, and a wind bends the trees and leans the smoke. A map with its own rain or snow keeps it and takes only the wind. Only your picture changes: what units see and hit stays the same, and other players see their own setting. Off under Classic Graphics. Applies when you press Accept."
+END
+
+GUI:WaterSplashes
+"Water Splashes"
+END
+
+TOOLTIP:WaterSplashes
+"A shell, a bomb or a falling body that comes down in water throws up a splash and sends rings across the surface. Only your picture changes: nothing in the game reads it, and other players see their own setting. Classic water only, and off under Classic Graphics. Applies when you press Accept."
+END
+
+GUI:Atmosphere
+"Atmosphere"
+END
+
+TOOLTIP:Atmosphere
+"The ground far from the camera fades toward the sky's colour, and where the map ends or the camera lies flat you see a sky by the map's time of day instead of black. The ground near the camera stays clear and fog of war keeps its dark. Only your picture changes: nothing in the game reads it, and other players see their own setting. Off under Classic Graphics."
+END
+
+GUI:SmoothMotion
+"Smooth Motion"
+END
+
+TOOLTIP:SmoothMotion
+"On a screen faster than 60 Hz, units are drawn between their last two positions instead of holding each one until the next. A 60 Hz screen shows no change. Only your picture changes: nothing in the game reads it, and other players see their own setting. Applies when you press Accept."
+END
+
+GUI:HeatHaze
+"Heat Haze"
+END
+
+TOOLTIP:HeatHaze
+"The air shimmers over fires, along laser beams and behind missile exhaust. Off under Classic Graphics. Applies when you press Accept."
+END
+
+GUI:StructureCollapse
+"Collapsing Buildings"
+END
+
+TOOLTIP:StructureCollapse
+"A destroyed building sinks into the ground under the blast instead of vanishing in one frame, or swapping to its rubble in one. Only your picture changes: it blocks nothing, nothing in the game reads it, and other players see their own setting. Off under Classic Graphics."
+END
+
+GUI:FormationDrag
+"Drag Out A Formation"
+END
+
+TOOLTIP:FormationDrag
+"Dragging with a move, attack move or guard order armed spreads the units along the line you draw."
+END
+
+GUI:BuildWithoutWorker
+"Build Without A Worker"
+END
+
+TOOLTIP:BuildWithoutWorker
+"With nothing selected the command bar shows your workers' buildings, and the idle worker nearest the spot goes to build. Off, the bar stays empty until you select a worker, as in 2003."
+END
+
+GUI:HealthBarColors
+"Health Bar Color"
+END
+
+GUI:HealthBarColors0
+"Green To Red"
+END
+
+GUI:HealthBarColors1
+"Player Color"
+END
+
+TOOLTIP:HealthBarColors
+"Green at full health through yellow to red, or every bar in its owner's color so you see whose it is. Disabled units stay blue."
+END
+
+GUI:MenuTransitionSpeed
+"Menu Transition Speed"
+END
+
+TOOLTIP:MenuTransitionSpeed
+"How fast menus slide and fade. 100 is the original speed."
+END
+
+GUI:OptionsGroupMenus
+"Menus"
+END
+
+GUI:AssetPreloading
+"Asset Preloading"
+END
+
+TOOLTIP:AssetPreloading
+"Preload audio, shaders and graphics pipelines while a map loads to reduce first-use pauses. Uses extra memory and can lengthen loading. Changes apply to the next map."
+END
+
+GUI:OptionsGroupSpeed
+"Game Speed"
+END
+
+GUI:OptionsGroupReplays
+"Replays"
+END
+
+GUI:SaveCamera
+"Record My Camera"
+END
+
+TOOLTIP:SaveCamera
+"Your camera movements are recorded into your replays of single player and skirmish games."
+END
+
+GUI:UseCamera
+"Follow Recorded Camera"
+END
+
+TOOLTIP:UseCamera
+"A replay follows the camera its player recorded instead of leaving you a free camera."
+END
+
+GUI:DrawScrollAnchor
+"Draw Scroll Anchor"
+END
+
+TOOLTIP:DrawScrollAnchor
+"Puts a marker where a right-drag scroll started."
+END
+
+GUI:MoveScrollAnchor
+"Move Scroll Anchor"
+END
+
+TOOLTIP:MoveScrollAnchor
+"The scroll marker trails the cursor, never more than half a screen behind, so a long drag does not keep speeding up."
+END
+
+// The options menu's Hotkeys page (OptionsMenuHotkeys.cpp), the launcher's Hotkeys page in the game.
+// GUI:HotkeysClash takes the key and the buttons' names; the family lines take a number.
+GUI:OptionsTabHotkeys
+"Hotkeys"
+END
+
+GUI:HotkeysCommands
+"Commands"
+END
+
+GUI:HotkeysCommandBar
+"Command bar"
+END
+
+GUI:HotkeysChange
+"CHANGE"
+END
+
+GUI:HotkeysClear
+"NO KEY"
+END
+
+GUI:HotkeysDefault
+"GAME'S KEY"
+END
+
+GUI:FirewallRefresh
+"REFRESH NAT"
+END
+
+TOOLTIP:HotkeyChange
+"Wait for a new key for the selected command or button. A double click or Enter on it does the same."
+END
+
+TOOLTIP:HotkeyClear
+"Take the key off the selected command or button."
+END
+
+TOOLTIP:HotkeyDefault
+"Put back the game's own key. Keys are written when you press Accept."
+END
+
+GUI:HotkeysNone
+"none"
+END
+
+GUI:HotkeysPressKey
+"Press a key, or Esc to cancel"
+END
+
+GUI:HotkeysPressLetter
+"Press a letter, or Esc to cancel"
+END
+
+GUI:HotkeysPressHold
+"Press a key, or Ctrl, Alt or Shift alone. Esc cancels."
+END
+
+GUI:HotkeysClash
+"%s: %s share this key. Only one of them gets it in the game: a fixed order keeps its own, and a letter you set beats the game's."
+END
+
+GUI:HotkeysAlsoOn
+"Same key as %s."
+END
+
+GUI:HotkeysFixed
+"The same default on every bar: A attack move, S stop, G guard, Y rally point, V evacuate, C combat drop, N sell, H mines, camo netting and the fake switch. Change moves it."
+END
+
+GUI:HotkeysGameKey
+"The game's own key is %s."
+END
+
+GUI:HotkeysMoved
+"Moved off the command bar's keys; the game's key is %s."
+END
+
+GUI:HotkeysButtonMoved
+"The game gave it the letter of a fixed key, so the launcher moved it."
+END
+
+GUI:HotkeysPick
+"Pick a command or a button, then double-click it or press Change."
+END
+
+GUI:HotkeysOnFixedKey
+"A command bar key too: it fires with the button that has it."
+END
+
+GUI:HotkeysCategorySELECTION
+"Selection"
+END
+
+GUI:HotkeysCategoryTEAM
+"Teams"
+END
+
+GUI:HotkeysCategoryINFORMATION
+"Signals and beacons"
+END
+
+GUI:HotkeysCategoryCONTROL
+"Orders"
+END
+
+GUI:HotkeysCategoryINTERFACE
+"Interface"
+END
+
+GUI:HotkeysCategorySHORTCUTS
+"General's powers"
+END
+
+GUI:HotkeysCategoryGRID
+"Command bar by place"
+END
+
+GUI:HotkeysCategoryMISC
+"Camera and chat"
+END
+
+GUI:HotkeysFamilySaveView
+"Set bookmark %d"
+END
+
+GUI:HotkeysFamilyViewView
+"Go to bookmark %d"
+END
+
+GUI:HotkeysFamilyAddTeam
+"Add selection to team %d"
+END
+
+GUI:HotkeysFamilyShortcut
+"General's power %d"
+END
+
+GUI:HotkeysFamilySlot
+"Command bar place %d"
+END
+
+GUI:HotkeysCommandSELECT_HERO
+"Select hero"
+END
+
+GUI:HotkeysCommandSELECT_NEXT_WORKER
+"Next worker"
+END
+
+GUI:HotkeysCommandSELECT_PREV_WORKER
+"Previous worker"
+END
+
+GUI:HotkeysCommandCHAT_ALLIES
+"Chat to allies"
+END
+
+GUI:HotkeysCommandCHAT_EVERYONE
+"Chat to everyone"
+END
+
+GUI:HotkeysCommandDIPLOMACY
+"Diplomacy"
+END
+
+GUI:HotkeysCommandPLACE_BEACON
+"Place beacon"
+END
+
+GUI:HotkeysCommandDELETE_BEACON
+"Delete beacon"
+END
+
+GUI:HotkeysCommandBEGIN_CAMERA_ROTATE_LEFT
+"Turn camera left"
+END
+
+GUI:HotkeysCommandBEGIN_CAMERA_ROTATE_RIGHT
+"Turn camera right"
+END
+
+GUI:HotkeysCommandBEGIN_CAMERA_ZOOM_IN
+"Zoom in"
+END
+
+GUI:HotkeysCommandBEGIN_CAMERA_ZOOM_OUT
+"Zoom out"
+END
+
+GUI:HotkeysCommandCAMERA_RESET
+"Reset camera"
+END
+
+GUI:HotkeysCommandTOGGLE_CAMERA_TRACKING_DRAWABLE
+"Camera follows selection"
+END
+
+GUI:HotkeysCommandTOGGLE_FAST_FORWARD_REPLAY
+"Fast forward replay"
+END
+
+GUI:HotkeysCommandSELECT_ALL
+"Select all units"
+END
+
+GUI:HotkeysCommandSELECT_ALL_MILITARY
+"Select all infantry"
+END
+
+GUI:HotkeysCommandSELECT_ALL_VEHICLES
+"Select all vehicles"
+END
+
+GUI:HotkeysCommandSELECT_ALL_AIRCRAFT
+"Select all aircraft"
+END
+
+GUI:HotkeysCommandSELECT_ALL_BARRACKS
+"Select all barracks"
+END
+
+GUI:HotkeysCommandSELECT_ALL_WARFACTORIES
+"Select all war factories"
+END
+
+GUI:HotkeysCommandSELECT_ALL_AIRFIELDS
+"Select all airfields"
+END
+
+GUI:HotkeysCommandSELECT_NEXT_IDLE_WORKER
+"Next idle worker"
+END
+
+GUI:HotkeysCommandSELECT_NEXT_IDLE_UNIT
+"Next idle unit"
+END
+
+GUI:HotkeysCommandSELECT_NEXT_IDLE_AIRCRAFT
+"Next idle aircraft"
+END
+
+GUI:HotkeysCommandSELECT_NEXT_IDLE_VEHICLE
+"Next idle vehicle"
+END
+
+GUI:HotkeysCommandSELECT_NEXT_IDLE_INFANTRY
+"Next idle infantry"
+END
+
+GUI:HotkeysCommandSELECT_ALL_IDLE_UNITS
+"Select all idle units"
+END
+
+GUI:HotkeysCommandSELECT_ALL_IDLE_AIRCRAFT
+"Select all idle aircraft"
+END
+
+GUI:HotkeysCommandSELECT_ALL_IDLE_VEHICLES
+"Select all idle vehicles"
+END
+
+GUI:HotkeysCommandTOGGLE_PAUSE
+"Pause (single player and replays)"
+END
+
+GUI:HotkeysCommandTOGGLE_PURCHASE_SCIENCE
+"General's promotions"
+END
+
+GUI:HotkeysCommandSIGNAL_ATTACK
+"Signal: attack here"
+END
+
+GUI:HotkeysCommandSIGNAL_DEFEND
+"Signal: defend here"
+END
+
+GUI:HotkeysCommandSIGNAL_ATTENTION
+"Signal: look here"
+END
+
+GUI:HotkeysCommandREQUEST_MONEY
+"Ask allies for money"
+END
+
+GUI:HotkeysCommandBEGIN_WAYPOINTS
+"Queue orders (hold)"
+END
+
+GUI:HotkeysCommandBEGIN_PREFER_SELECTION
+"Add to selection (hold)"
+END
+
+GUI:HotkeysCommandAUTO_GARRISON
+"Garrison nearby buildings"
+END
+
+GUI:HotkeysCommandAUTO_REPAIR
+"Go get repaired or healed"
+END
+
+GUI:HotkeysCommandTOGGLE_ATTACKMOVE
+"Attack move (next click)"
+END
+
+GUI:HotkeysCommandTOGGLE_FORCEATTACK
+"Force Attack (next click)"
+END
+
+GUI:HotkeysCommandTOGGLE_GUARD
+"Guard (next click)"
+END
+
+GUI:HotkeysCommandTOGGLE_MOVE
+"Move (next click)"
+END
+
+GUI:HotkeysCommandHOLD_POSITION
+"Hold position"
+END
+
+// The match load screen (LoadScreenBoard in LoadScreen.cpp)
+GUI:LoadModeSkirmish
+"Skirmish"
+END
+
+GUI:LoadModeLAN
+"LAN game"
+END
+
+GUI:LoadModeOnline
+"Online game"
+END
+
+GUI:LoadModeReplay
+"Replay"
+END
+
+GUI:LoadMission
+"Mission %d"
+END
+
+GUI:LoadBriefing
+"BRIEFING"
+END
+
+GUI:LoadFreeForAll
+"Free for all"
+END
+
+GUI:LoadObservers
+"Observers:"
+END
+
+GUI:LoadTeam
+"Team %d"
+END
+
+GUI:LoadWaiting
+"Waiting for the other players"
+END
+
+GUI:LoadTip
+"TIP"
+END
+
+GUI:LoadTip1
+"Hold Shift while you give orders and the group works down the list by itself: move, attack, capture, guard."
+END
+
+GUI:LoadTip2
+"Shift and a number adds your selection to that control group and keeps everyone already in it."
+END
+
+GUI:LoadTip3
+"Ctrl+D selects every unit of the kinds you have selected on the screen. Press it twice for the whole map."
+END
+
+GUI:LoadTip4
+"Hold Shift and drag to draw a line. The selection spreads along it as a firing line."
+END
+
+GUI:LoadTip5
+"On a build button, Shift queues five and Ctrl twenty."
+END
+
+GUI:LoadTip6
+"Hold Ctrl and Alt on a unit's button and the factory builds it on repeat."
+END
+
+GUI:LoadTip7
+"A beacon you place asks your computer allies to attack there."
+END
+
+GUI:LoadTip8
+"Type help, attack or money in chat and your computer allies come to help, attack there or send cash."
+END
+
+GUI:LoadTip9
+"Hold Ctrl while placing a building to flip grid placement for as long as the key is down."
+END
+
+GUI:LoadTip10
+"Double-click a building to select every building of its kind on the screen."
+END
+
+// Computer player personalities, picked per seat in the lobby (AIPersonality)
+GUI:AIPersonaNormal
+"Normal"
+END
+
+GUI:AIPersonaAttacker
+"Attacker"
+END
+
+GUI:AIPersonaTurtle
+"Turtle"
+END
+
+GUI:AIPersonaEconomist
+"Economist"
+END
+
+GUI:AIPersonaAir
+"Air Force"
+END
+
+GUI:AIPersonaRusher
+"Rusher"
+END
+
+GUI:AIPersonaRaider
+"Raider"
+END
+
+GUI:AIPersonaTech
+"Tech"
+END
+
+GUI:AIPersonaInfantry
+"Infantry"
+END
+
+GUI:AIPersonaArmor
+"Armor"
+END
+
+GUI:AIPersonaSneaky
+"Sneaky"
+END
+
+GUI:AIPersonaOpportunist
+"Opportunist"
+END
+
+GUI:AIPersonaSupporter
+"Supporter"
+END
+
+GUI:AIPersonaCounter
+"Counter"
+END
+
+GUI:AIPersonaRandom
+"Random"
+END
+
+GUI:AIPersonaTooltip
+"How this computer player plays, whatever its difficulty"
+END
+
+// What each personality does, shown when the pointer is over the box or a line of its list
+GUI:AIPersonaTooltipNormal
+"Plays exactly as the computer always has."
+END
+
+GUI:AIPersonaTooltipAttacker
+"Attacks early and often with smaller waves, spends its money as fast as it comes in and builds few defences."
+END
+
+GUI:AIPersonaTooltipTurtle
+"Puts up a defence line early and guns at the chokepoints, attacks late with big waves and pulls back sooner when it is losing."
+END
+
+GUI:AIPersonaTooltipEconomist
+"Income and upgrades first, a later first attack, and its spare money goes to the poorest ally."
+END
+
+GUI:AIPersonaTooltipAir
+"Builds airfields and sends its aircraft out on sorties, and turns away from them when your anti-air is heavy."
+END
+
+GUI:AIPersonaTooltipRusher
+"Throws everything into one attack, three minutes in on Hard and four and a half on Easy, with almost no defences. After it, it plays as an Attacker."
+END
+
+GUI:AIPersonaTooltipRaider
+"Sends small groups of its fastest vehicles around your army at your gatherers and workers, from the third minute on Hard and the fifth on Easy."
+END
+
+GUI:AIPersonaTooltipTech
+"Sits behind its defences and races to the superweapon, then plays as the normal computer once it stands. Turns its powers on whoever hits an ally."
+END
+
+GUI:AIPersonaTooltipInfantry
+"An infantry army trained from its barracks first, with its waves carried in transports."
+END
+
+GUI:AIPersonaTooltipArmor
+"A tank-heavy army that waits longer to gather and attacks in fewer, bigger waves."
+END
+
+GUI:AIPersonaTooltipSneaky
+"Favours units that turn invisible, spends its general's points on stealth first and comes in by the flanks and the back door."
+END
+
+GUI:AIPersonaTooltipOpportunist
+"Goes after the weakest enemy in sight, and after whoever is already fighting someone else."
+END
+
+GUI:AIPersonaTooltipSupporter
+"Joins its allies' attacks and sends its idle army to clear enemies out of an ally's base."
+END
+
+GUI:AIPersonaTooltipCounter
+"Reads your army harder and builds what beats it, even on Easy."
+END
+
+GUI:AIPersonaTooltipRandom
+"One of the personalities above, drawn when the match starts. Never Normal."
+END
+
+GUI:AIPersona
+"Personality"
+END
+
+// The lobby's handicap column, one box a seat
+GUI:Handicap
+"Handicap"
+END
+
+TOOLTIP:Handicap
+"Weakens this player in proportion. At 50 percent: half the health and damage on units and buildings, half the healing, twice the build, research and special power times."
+END
+
+// What a computer player with a personality says in chat: when a wave leaves (two lines), when its
+// base is hit, and when an enemy is wiped out (AIPlayer::personaChat)
+GUI:AIChatAttackerWave1
+"Here we come. Again."
+END
+
+GUI:AIChatAttackerWave2
+"No rest for you today."
+END
+
+GUI:AIChatAttackerHit1
+"Hitting me back? Cute."
+END
+
+GUI:AIChatAttackerWin1
+"Next!"
+END
+
+GUI:AIChatTurtleWave1
+"The walls are done. Now we march."
+END
+
+GUI:AIChatTurtleWave2
+"Slow and steady, coming your way."
+END
+
+GUI:AIChatTurtleHit1
+"Knock all you like. Nobody is home to you."
+END
+
+GUI:AIChatTurtleWin1
+"Patience wins."
+END
+
+GUI:AIChatEconomistWave1
+"Consider this an investment."
+END
+
+GUI:AIChatEconomistWave2
+"Paid for in full. Delivering now."
+END
+
+GUI:AIChatEconomistHit1
+"Do you know what that building cost?"
+END
+
+GUI:AIChatEconomistWin1
+"Bankrupt. Closing the account."
+END
+
+GUI:AIChatAirWave1
+"Look up."
+END
+
+GUI:AIChatAirWave2
+"Wheels up, weapons hot."
+END
+
+GUI:AIChatAirHit1
+"Ground troops. How quaint."
+END
+
+GUI:AIChatAirWin1
+"Air superiority confirmed."
+END
+
+GUI:AIChatRusherWave1
+"Everything I have, right now!"
+END
+
+GUI:AIChatRusherWave2
+"Faster, faster!"
+END
+
+GUI:AIChatRusherHit1
+"You were supposed to be dead by now."
+END
+
+GUI:AIChatRusherWin1
+"Too slow."
+END
+
+GUI:AIChatRaiderWave1
+"Your trucks look lonely."
+END
+
+GUI:AIChatRaiderWave2
+"Hit and gone."
+END
+
+GUI:AIChatRaiderHit1
+"So you found the way to my base too."
+END
+
+GUI:AIChatRaiderWin1
+"No supplies, no army."
+END
+
+GUI:AIChatTechWave1
+"Field test, live targets."
+END
+
+GUI:AIChatTechWave2
+"The prototypes are ready."
+END
+
+GUI:AIChatTechHit1
+"Mind the lab, that equipment is expensive."
+END
+
+GUI:AIChatTechWin1
+"Experiment concluded."
+END
+
+GUI:AIChatInfantryWave1
+"Boots on the ground!"
+END
+
+GUI:AIChatInfantryWave2
+"Every street, every window."
+END
+
+GUI:AIChatInfantryHit1
+"Into the buildings, hold the line!"
+END
+
+GUI:AIChatInfantryWin1
+"The city is ours."
+END
+
+GUI:AIChatArmorWave1
+"Steel is rolling."
+END
+
+GUI:AIChatArmorWave2
+"Hear the tracks? That is us."
+END
+
+GUI:AIChatArmorHit1
+"You scratched the paint."
+END
+
+GUI:AIChatArmorWin1
+"Flattened."
+END
+
+GUI:AIChatSneakyWave1
+"You did not see this coming."
+END
+
+GUI:AIChatSneakyWave2
+"Check behind you."
+END
+
+GUI:AIChatSneakyHit1
+"Found me? Lucky guess."
+END
+
+GUI:AIChatSneakyWin1
+"Gone without a trace."
+END
+
+GUI:AIChatOpportunistWave1
+"You look busy. Good."
+END
+
+GUI:AIChatOpportunistWave2
+"Weak spot found."
+END
+
+GUI:AIChatOpportunistHit1
+"Picking on me? Bad pick."
+END
+
+GUI:AIChatOpportunistWin1
+"Thanks for softening that one up."
+END
+
+GUI:AIChatSupporterWave1
+"Right behind you, partner."
+END
+
+GUI:AIChatSupporterWave2
+"Your target is my target."
+END
+
+GUI:AIChatSupporterHit1
+"Cover me, I am taking fire!"
+END
+
+GUI:AIChatSupporterWin1
+"Good teamwork."
+END
+
+GUI:AIChatCounterWave1
+"I have read your army. This is the answer."
+END
+
+GUI:AIChatCounterWave2
+"Built for you, specially."
+END
+
+GUI:AIChatCounterHit1
+"Predictable."
+END
+
+GUI:AIChatCounterWin1
+"Countered."
+END
+
+// A computer ally answering the team board (AIPlayer::coopChat)
+GUI:AICoopHelp
+"Hold on, I am coming."
+END
+
+GUI:AICoopMoney
+"Here, take some money."
+END
+
+GUI:AICoopJoin
+"I am with you on that attack."
+END
+
+GUI:MoneyTransferTitle
+"Send money"
+END
+
+GUI:MoneyTransferSend
+"Send"
+END
+
+GUI:MoneyTransferAmount
+"$%d"
+END
+
+GUI:MoneyTransferMinus
+"-"
+END
+
+GUI:MoneyTransferPlus
+"+"
+END
+
+GUI:MoneyTransferSent
+"You sent $%d to %ls."
+END
+
+GUI:MoneyTransferReceived
+"%ls sent you $%d."
+END
+
+TOOLTIP:MoneyTransfer
+"Scroll or click - and + to pick the amount: 100 a step, 1,000 with Ctrl, 10,000 with Shift, 100,000 with both. Send hands it over."
+END
+
+GUI:DiplomacyPing
+"Ping"
+END
+
+GUI:DiplomacyFps
+"FPS"
+END
+
+TOOLTIP:DiplomacyNet
+"Ping is the player's round trip to the host in milliseconds (the host has none), FPS how many game frames a second his machine keeps up with. Yellow numbers mark the slowest player, and the whole match runs at his speed."
+END
+
+GUI:LobbyRecord
+"Record"
+END
+
+GUI:LobbyRecordButton
+"RECORD"
+END
+
+GUI:LobbyRecordClose
+"CLOSE"
+END
+
+// The score screen's summary panel (ScoreScreenGraphs.cpp)
+GUI:SummaryUnits
+"Units"
+END
+
+GUI:SummaryMoney
+"Money"
+END
+
+GUI:SummaryUnitsBuilt
+"Built"
+END
+
+GUI:SummaryBuildingsBuilt
+"Built"
+END
+
+GUI:SummaryLost
+"Lost"
+END
+
+GUI:SummaryDestroyed
+"Destroyed"
+END
+
+GUI:SummaryEarned
+"Earned"
+END
+
+GUI:SummaryWinner
+"Winner"
+END
+
+GUI:BuildOrderEvery
+"Show every build"
+END
+
+GUI:BuildOrderFirsts
+"Show the first of each"
+END
+
+GUI:GraphSummary
+"Summary"
+END
+
+GUI:GraphEarned
+"Money earned"
+END
+
+GUI:GraphArmy
+"Army"
+END
+
+GUI:GraphBuildings
+"Buildings"
+END
+
+GUI:GraphBuildOrder
+"Build order"
+END
+
+GUI:GraphSuperweaponBuilt
+"Superweapon built"
+END
+
+GUI:GraphSuperweaponFired
+"Superweapon fired"
+END
+
+GUI:GraphGeneralPower
+"General's power"
+END
+
+GUI:GraphPromotion
+"Promotion"
+END
+
+GUI:GraphRank
+"Rank %d"
+END
+
+GUI:GraphNoData
+"Nothing was recorded in this match."
+END
+
+// The Turkiye faction (PlayerTemplateReforged.ini, TurkiyeReforged.ini). Units, buildings, buttons, upgrades.
+
+INI:FactionTurkiye
+"Turkiye (Experimental)"
+END
+
+SIDE:Turkiye
+"Turkiye (Experimental)"
+END
+
+TOOLTIP:BioStrategyLong_Turkiye
+"Turkiye kills from range but cannot see for itself: its artillery fires 600 and sees 100, so a spotter, a UAV or a radar tower has to find the target"
+END
+
+GUI:BioFeatures_Turkiye
+"Long-range artillery, short sight \n Combat Engineers dig Siper bunkers at the front \n Spotters, UAVs and radar towers aim the guns"
+END
+
+OBJECT:TurkiyeInfantryMehmetcik
+"Mehmetcik Rifleman"
+END
+
+CONTROLBAR:ConstructTurkiyeInfantryMehmetcik
+"&Mehmetcik Rifleman"
+END
+
+CONTROLBAR:ToolTipTurkiyeInfantryMehmetcik
+"Line infantry. Clears and holds buildings."
+END
+
+OBJECT:TurkiyeInfantryEngineer
+"Combat Engineers"
+END
+
+CONTROLBAR:ConstructTurkiyeInfantryEngineer
+"Combat &Engineers"
+END
+
+CONTROLBAR:ToolTipTurkiyeInfantryEngineer
+"Builds and repairs structures. Infantry: it can be crushed and shot."
+END
+
+OBJECT:TurkiyeInfantrySungur
+"Sungur Gunner"
+END
+
+CONTROLBAR:ConstructTurkiyeInfantrySungur
+"&Sungur Gunner"
+END
+
+CONTROLBAR:ToolTipTurkiyeInfantrySungur
+"Missile infantry against tanks and aircraft."
+END
+
+OBJECT:TurkiyeInfantrySpotter
+"Spotter Team"
+END
+
+CONTROLBAR:ConstructTurkiyeInfantrySpotter
+"S&potter Team"
+END
+
+CONTROLBAR:ToolTipTurkiyeInfantrySpotter
+"Sees 500 and barely fights. It cannot hide, so keep it out of reach. Put it on a hill and the artillery behind it can shoot."
+END
+
+OBJECT:TurkiyeInfantryMaroonBeret
+"Maroon Beret"
+END
+
+CONTROLBAR:ConstructTurkiyeInfantryMaroonBeret
+"Maroon &Beret"
+END
+
+CONTROLBAR:ToolTipTurkiyeInfantryMaroonBeret
+"Special forces. Camouflaged, sees 350 for the artillery and plants timed and remote charges."
+END
+
+OBJECT:TurkiyeVehicleSupplyTruck
+"Supply Truck"
+END
+
+CONTROLBAR:ConstructTurkiyeVehicleSupplyTruck
+"Supply &Truck"
+END
+
+CONTROLBAR:ToolTipTurkiyeVehicleSupplyTruck
+"Carries supplies to the Supply Center."
+END
+
+OBJECT:TurkiyeVehicleCobra
+"Cobra Scout"
+END
+
+CONTROLBAR:ConstructTurkiyeVehicleCobra
+"&Cobra Scout"
+END
+
+CONTROLBAR:ToolTipTurkiyeVehicleCobra
+"Fast, fragile car with a machine gun and seats for five infantry. Sees 250, too short to aim the artillery from afar."
+END
+
+OBJECT:TurkiyeVehicleKirpi
+"Kirpi APC"
+END
+
+CONTROLBAR:ConstructTurkiyeVehicleKirpi
+"&Kirpi APC"
+END
+
+CONTROLBAR:ToolTipTurkiyeVehicleKirpi
+"Armored personnel carrier for five infantry."
+END
+
+OBJECT:TurkiyeTankAltay
+"Altay Tank"
+END
+
+CONTROLBAR:ConstructTurkiyeTankAltay
+"&Altay Tank"
+END
+
+CONTROLBAR:ToolTipTurkiyeTankAltay
+"Main battle tank, the only direct-fire vehicle in Turkiye's factory."
+END
+
+OBJECT:TurkiyeVehicleKorkut
+"Korkut Air Defense"
+END
+
+CONTROLBAR:ConstructTurkiyeVehicleKorkut
+"K&orkut Air Defense"
+END
+
+CONTROLBAR:ToolTipTurkiyeVehicleKorkut
+"Air defense: twin cannons out to 350 against aircraft. Cannot fire at the ground."
+END
+
+OBJECT:TurkiyeVehicleFirtina
+"Firtina Howitzer"
+END
+
+CONTROLBAR:ConstructTurkiyeVehicleFirtina
+"&Firtina Howitzer"
+END
+
+CONTROLBAR:ToolTipTurkiyeVehicleFirtina
+"Fires a heavy shell with a wide blast out to 600 and sees 100: it needs a spotter, a UAV or a radar tower to aim."
+END
+
+OBJECT:TurkiyeVehicleSakarya
+"Sakarya Rocket Launcher"
+END
+
+CONTROLBAR:ConstructTurkiyeVehicleSakarya
+"&Sakarya Rocket Launcher"
+END
+
+CONTROLBAR:ToolTipTurkiyeVehicleSakarya
+"Fires a six-rocket salvo over a wide area out to 500, then reloads for 12 seconds. Needs a spotter."
+END
+
+OBJECT:TurkiyeTankKoral
+"Koral Electronic Warfare"
+END
+
+CONTROLBAR:ConstructTurkiyeTankKoral
+"Ko&ral Electronic Warfare"
+END
+
+CONTROLBAR:ToolTipTurkiyeTankKoral
+"Electronic warfare vehicle; its beam shuts enemy buildings down from 400."
+END
+
+OBJECT:TurkiyeVehicleBayraktar
+"Bayraktar UAV"
+END
+
+CONTROLBAR:ConstructTurkiyeVehicleBayraktar
+"&Bayraktar UAV"
+END
+
+CONTROLBAR:ToolTipTurkiyeVehicleBayraktar
+"Hovers where it is sent and sees 550, the artillery's best eye. Light munitions."
+END
+
+OBJECT:TurkiyeVehicleGokbey
+"Gokbey Helicopter"
+END
+
+CONTROLBAR:ConstructTurkiyeVehicleGokbey
+"&Gokbey Helicopter"
+END
+
+CONTROLBAR:ToolTipTurkiyeVehicleGokbey
+"Transport helicopter for five infantry."
+END
+
+OBJECT:TurkiyeJetAkinci
+"Akinci UAV"
+END
+
+CONTROLBAR:ConstructTurkiyeJetAkinci
+"&Akinci UAV"
+END
+
+CONTROLBAR:ToolTipTurkiyeJetAkinci
+"Heavy armed UAV. Dies under air defense."
+END
+
+OBJECT:TurkiyeJetKizilelma
+"Kizilelma Fighter"
+END
+
+CONTROLBAR:ConstructTurkiyeJetKizilelma
+"&Kizilelma Fighter"
+END
+
+CONTROLBAR:ToolTipTurkiyeJetKizilelma
+"Strike fighter: its missiles hit aircraft and ground targets alike."
+END
+
+OBJECT:TurkiyeRadarTower
+"Radar Tower"
+END
+
+CONTROLBAR:ConstructTurkiyeRadarTower
+"&Radar Tower"
+END
+
+CONTROLBAR:ToolTipTurkiyeRadarTower
+"Fixed eye: sees 500 for the artillery. Draws power. A target."
+END
+
+OBJECT:TurkiyeSiper
+"Siper Bunker"
+END
+
+CONTROLBAR:ConstructTurkiyeSiper
+"Sip&er Bunker"
+END
+
+CONTROLBAR:ToolTipTurkiyeSiper
+"Trench bunker for five infantry, dug wherever the engineers stand. Mehmetcik in it hold off infantry, Sungur gunners hold off tanks."
+END
+
+OBJECT:TurkiyeLandMine
+"Minefield"
+END
+
+CONTROLBAR:ConstructTurkiyeLandMine
+"&Minefield"
+END
+
+CONTROLBAR:ToolTipTurkiyeLandMine
+"A charge buried in the ground. Needs the Mine Kit."
+END
+
+UPGRADE:TurkiyeExtendedRange
+"Extended Range"
+END
+
+CONTROLBAR:UpgradeTurkiyeExtendedRange
+"&Extended Range"
+END
+
+CONTROLBAR:ToolTipUpgradeTurkiyeExtendedRange
+"Firtina and Sakarya reach 15 percent further."
+END
+
+UPGRADE:TurkiyePrecisionGuidance
+"Inertial Guidance"
+END
+
+CONTROLBAR:UpgradeTurkiyePrecisionGuidance
+"&Inertial Guidance"
+END
+
+CONTROLBAR:ToolTipUpgradeTurkiyePrecisionGuidance
+"Rockets fired outside radar cover hit two shots in five, up from one."
+END
+
+UPGRADE:TurkiyeArmorPack
+"Reinforced Hull"
+END
+
+CONTROLBAR:UpgradeTurkiyeArmorPack
+"Reinforced &Hull"
+END
+
+CONTROLBAR:ToolTipUpgradeTurkiyeArmorPack
+"Kirpi and Altay get 20 percent more health."
+END
+
+UPGRADE:TurkiyeMineKit
+"Mine Kit"
+END
+
+CONTROLBAR:UpgradeTurkiyeMineKit
+"Mine &Kit"
+END
+
+CONTROLBAR:ToolTipUpgradeTurkiyeMineKit
+"Combat Engineers can lay mines."
+END
+
+OBJECT:TurkiyeCommandCenter
+"Headquarters"
+END
+
+CONTROLBAR:ConstructTurkiyeCommandCenter
+"&Headquarters"
+END
+
+OBJECT:TurkiyePowerPlant
+"Power Plant"
+END
+
+CONTROLBAR:ConstructTurkiyePowerPlant
+"&Power Plant"
+END
+
+OBJECT:TurkiyeBarracks
+"Barracks"
+END
+
+CONTROLBAR:ConstructTurkiyeBarracks
+"&Barracks"
+END
+
+OBJECT:TurkiyeWarFactory
+"Factory"
+END
+
+CONTROLBAR:ConstructTurkiyeWarFactory
+"&Factory"
+END
+
+OBJECT:TurkiyeAirfield
+"Airfield"
+END
+
+CONTROLBAR:ConstructTurkiyeAirfield
+"&Airfield"
+END
+
+OBJECT:TurkiyeSupplyCenter
+"Supply Center"
+END
+
+CONTROLBAR:ConstructTurkiyeSupplyCenter
+"&Supply Center"
+END
+
+OBJECT:TurkiyePatriotBattery
+"Hisar Battery"
+END
+
+CONTROLBAR:ConstructTurkiyePatriotBattery
+"H&isar Battery"
+END
+
+SCIENCE:TurkiyeLaserDesignation
+"Laser Designation"
+END
+
+CONTROLBAR:ToolTipTurkiyeScienceLaserDesignation
+"Spotter Teams and Bayraktars paint what they attack. A painted target counts as inside radar coverage wherever it stands, so every radar-guided rocket keeps its lock on it."
+END
+
+UPGRADE:TurkiyeLaserDesignation
+"Laser Designation"
+END
+
+SCIENCE:TurkiyeEarlyWarning
+"Early Warning"
+END
+
+CONTROLBAR:ToolTipTurkiyeScienceEarlyWarning
+"Every Turkiye radar reaches a quarter further: Headquarters, Radar Tower, Koral, Akinci and Mobile Radar."
+END
+
+UPGRADE:TurkiyeEarlyWarning
+"Early Warning"
+END
+
+SCIENCE:TurkiyeUavRecon
+"UAV Recon"
+END
+
+CONTROLBAR:ToolTipTurkiyeScienceUavRecon
+"A UAV circles the target area for 30 seconds and reports every enemy unit in it, parked or moving, and what it is. The fog stays, but the area counts as radar coverage. \n \n Deploy from: Headquarters"
+END
+
+CONTROLBAR:TurkiyeUavRecon
+"&UAV Recon"
+END
+
+CONTROLBAR:TooltipTurkiyeUavRecon
+"UAV Recon \n Recharge: 2:00"
+END
+
+GUI:HudReconSiha
+"SIHA RECON"
+END
+
+SCIENCE:TurkiyeMobileRadar
+"Mobile Radar"
+END
+
+CONTROLBAR:ToolTipTurkiyeScienceMobileRadar
+"The Factory builds the Mobile Radar, a radar truck that covers 900 around it while it stands still."
+END
+
+OBJECT:TurkiyeVehicleMobileRadar
+"Mobile Radar"
+END
+
+CONTROLBAR:ConstructTurkiyeVehicleMobileRadar
+"&Mobile Radar"
+END
+
+CONTROLBAR:ToolTipTurkiyeVehicleMobileRadar
+"A radar on wheels: parked, it covers 900 around it; driving, it covers nothing. No weapon. \n \n Requires: Mobile Radar (rank 3)"
+END
+
+SCIENCE:TurkiyeAkinciAesa
+"Akinci AESA"
+END
+
+CONTROLBAR:ToolTipTurkiyeScienceAkinciAesa
+"The Akinci's radar reaches 1000 instead of 750."
+END
+
+UPGRADE:TurkiyeAkinciAesa
+"Akinci AESA"
+END
+
+SCIENCE:TurkiyeSwarmMunition
+"UAV Swarm 1"
+END
+
+SCIENCE:TurkiyeSwarmMunition2
+"UAV Swarm 2"
+END
+
+SCIENCE:TurkiyeSwarmMunition3
+"UAV Swarm 3"
+END
+
+CONTROLBAR:ToolTipTurkiyeScienceSwarmMunition
+"Loitering munitions circle where you point, and each dives on the most expensive target it finds: one at level 1, three at level 2, five at level 3. \n \n Deploy from: Headquarters"
+END
+
+CONTROLBAR:TurkiyeSwarmMunition
+"UAV Swa&rm"
+END
+
+CONTROLBAR:TooltipTurkiyeSwarmMunition
+"UAV Swarm \n Recharge: 3:00"
+END
+
+SCIENCE:TurkiyeElectronicBlinding
+"Electronic Warfare"
+END
+
+CONTROLBAR:ToolTipTurkiyeScienceElectronicBlinding
+"Every enemy with a building in the target area loses its radar for 30 seconds, and the area stays jammed as long: enemy drones and spotters in it see nothing, and guided missiles crossing it lose their lock. \n \n Deploy from: Headquarters"
+END
+
+CONTROLBAR:TurkiyeElectronicBlinding
+"Electronic &Warfare"
+END
+
+CONTROLBAR:TooltipTurkiyeElectronicBlinding
+"Electronic Warfare \n Recharge: 4:00"
+END
+
+SCIENCE:TurkiyeSatelliteGuidance
+"Satellite Guidance"
+END
+
+CONTROLBAR:ToolTipTurkiyeScienceSatelliteGuidance
+"For 45 seconds the whole map counts as Turkiye radar coverage: every radar-guided rocket keeps its lock, and moving enemies show through the fog. \n \n Deploy from: Headquarters"
+END
+
+CONTROLBAR:TurkiyeSatelliteGuidance
+"Sa&tellite Guidance"
+END
+
+CONTROLBAR:TooltipTurkiyeSatelliteGuidance
+"Satellite Guidance \n Recharge: 5:00"
+END
+
+SCIENCE:TurkiyeTayfun
+"Tayfun Missile"
+END
+
+CONTROLBAR:ToolTipTurkiyeScienceTayfun
+"A Tayfun ballistic missile comes down on the target. Inside radar coverage it always hits; outside it lands on the point one time in five and misses wide the rest. \n \n Deploy from: Headquarters"
+END
+
+CONTROLBAR:TurkiyeTayfun
+"Tayfun &Missile"
+END
+
+CONTROLBAR:TooltipTurkiyeTayfun
+"Tayfun Missile \n Recharge: 4:00"
+END
+
+UPGRADE:TurkiyeTargetClassification
+"Target Classification"
+END
+
+CONTROLBAR:UpgradeTurkiyeTargetClassification
+"&Target Classification"
+END
+
+CONTROLBAR:ToolTipUpgradeTurkiyeTargetClassification
+"Radar contacts show what they are: infantry, vehicle, air defense, artillery, aircraft or a defense."
+END
+
+UPGRADE:TurkiyeAkkor
+"AKKOR Active Protection"
+END
+
+CONTROLBAR:UpgradeTurkiyeAkkor
+"AKKOR Active &Protection"
+END
+
+CONTROLBAR:ToolTipUpgradeTurkiyeAkkor
+"Every Altay carries a hard-kill charge that bursts one incoming missile or rocket every three seconds."
+END
+
+UPGRADE:TurkiyeGokdogan
+"Gokdogan Missiles"
+END
+
+CONTROLBAR:UpgradeTurkiyeGokdogan
+"Gokdogan &Missiles"
+END
+
+CONTROLBAR:ToolTipUpgradeTurkiyeGokdogan
+"Kizilelma fighters fire the Gokdogan: 360 range instead of 280, 130 damage instead of 100."
+END
+
+UPGRADE:TurkiyeSiperReinforced
+"Reinforced Siper"
+END
+
+CONTROLBAR:UpgradeTurkiyeSiperReinforced
+"Rein&forced Siper"
+END
+
+CONTROLBAR:ToolTipUpgradeTurkiyeSiperReinforced
+"Concrete and overhead cover: every Siper takes half as much again before it falls."
+END
+
+UPGRADE:TurkiyeThermal
+"Thermal Sights"
+END
+
+CONTROLBAR:UpgradeTurkiyeThermal
+"T&hermal Sights"
+END
+
+CONTROLBAR:ToolTipUpgradeTurkiyeThermal
+"Spotter Teams see out to 650 and Cobras to 320, and both spot camouflaged units."
+END
+
+UPGRADE:TurkiyeFuelCell
+"Fuel Cell"
+END
+
+CONTROLBAR:UpgradeTurkiyeFuelCell
+"&Fuel Cell"
+END
+
+CONTROLBAR:ToolTipUpgradeTurkiyeFuelCell
+"The Bayraktar stays over the target twice as long, with twice the munitions."
+END
+
+UPGRADE:TurkiyeSwarmSoftware
+"Swarm Software"
+END
+
+CONTROLBAR:UpgradeTurkiyeSwarmSoftware
+"Swarm Soft&ware"
+END
+
+CONTROLBAR:ToolTipUpgradeTurkiyeSwarmSoftware
+"Bayraktar munitions pick their own target: the most expensive enemy in reach."
+END
+
+SCIENCE:TurkiyeRapidDeployment
+"Gokbey Landing 1"
+END
+
+SCIENCE:TurkiyeRapidDeployment2
+"Gokbey Landing 2"
+END
+
+SCIENCE:TurkiyeRapidDeployment3
+"Gokbey Landing 3"
+END
+
+CONTROLBAR:ToolTipTurkiyeScienceRapidDeployment
+"Mehmetcik riflemen and Sungur gunners parachute wherever you point: six at level 1, ten at level 2, fourteen and a Kirpi at level 3. \n \n Deploy from: Headquarters"
+END
+
+CONTROLBAR:TurkiyeRapidDeployment
+"Gokbey &Landing"
+END
+
+CONTROLBAR:TooltipTurkiyeRapidDeployment
+"Gokbey Landing \n Recharge: 3:00"
+END
+
+SCIENCE:TurkiyeCommandoRaid
+"Commando Raid"
+END
+
+CONTROLBAR:ToolTipTurkiyeScienceCommandoRaid
+"A Maroon Beret and two spotter teams parachute wherever you point: eyes and charges behind the enemy's lines. \n \n Deploy from: Headquarters"
+END
+
+CONTROLBAR:TurkiyeCommandoRaid
+"Comman&do Raid"
+END
+
+CONTROLBAR:TooltipTurkiyeCommandoRaid
+"Commando Raid \n Recharge: 5:00"
+END
+
+OBJECT:TurkiyeKarguBase
+"Kargu Drone Base"
+END
+
+CONTROLBAR:ConstructTurkiyeKarguBase
+"&Kargu Drone Base"
+END
+
+OBJECT:TurkiyeHarekatMerkezi
+"Operations Center"
+END
+
+CONTROLBAR:ConstructTurkiyeHarekatMerkezi
+"&Operations Center"
+END
+
+CONTROLBAR:ToolTipTurkiyeHarekatMerkezi
+"Turkiye's technology building. The whole army fights under one battle plan at a time: Bombardment, Search and Destroy or Hold the Line. Researches Advanced Training and Chemical Suits, and opens the Kargu Drone Base, the Sakarya, the Koral, the Akinci and the Maroon Beret. \n \n Requires: Factory or Airfield \n Energy Required: 2"
+END
+
+OBJECT:TurkiyeKapalicarsi
+"Grand Bazaar"
+END
+
+CONTROLBAR:ConstructTurkiyeKapalicarsi
+"&Grand Bazaar"
+END
+
+CONTROLBAR:ToolTipTurkiyeKapalicarsi
+"Turkiye's black market. Pays 20 every 2 seconds and sells Countermeasures for the Bayraktar, the Akinci and the Kizilelma, and Worker Shoes for the engineers. \n \n Requires: Factory"
+END
+
+CONTROLBAR:ToolTipTurkiyeKarguBase
+"Sends a swarm of sixteen kamikaze drones anywhere on the map. Each one hunts down one of the most valuable targets in the circle and dives into it; spread-out armies suffer most. They climb to the ceiling and come down like Scud missiles, and nothing can shoot them on the way. \n \n Requires: Operations Center \n Energy Required: 10 \n Recharge: 5:00"
+END
+
+CONTROLBAR:TurkiyeKarguSwarm
+"&Kargu Swarm"
+END
+
+CONTROLBAR:TooltipTurkiyeKarguSwarm
+"Kargu Swarm \n Recharge: 5:00"
+END
+
+GUI:SuperweaponTurkiyeKarguSwarm
+"Kargu Swarm"
+END
+
+GUI:RandomMapTemplate
+"Map type"
+END
+
+GUI:RandomMapAnyTemplate
+"Surprise me"
+END
+
+GUI:RandomMapSize
+"Map size"
+END
+
+GUI:RandomMapSizeTiny
+"Tiny"
+END
+
+GUI:RandomMapSizeSmall
+"Small"
+END
+
+GUI:RandomMapSizeMedium
+"Medium"
+END
+
+GUI:RandomMapSizeLarge
+"Large"
+END
+
+GUI:RandomMapSizeHuge
+"Extra Large"
+END
+
+// The staging rooms' army screen, opened from a seat's army box.  %s in the Confirm label is the
+// army's name, %s in LeftOut the armies a plain Random never draws, and the two %d in Pool are the
+// ticked armies and the armies that can be ticked.
+GUI:FactionPickTitle
+"Select Army"
+END
+
+GUI:FactionPickRandomAll
+"Random All"
+END
+
+GUI:FactionPickCustom
+"Custom Selection"
+END
+
+GUI:FactionPickConfirm
+"Confirm %s"
+END
+
+GUI:FactionPickRandom
+"Random picks one of these armies for you when the match starts."
+END
+
+GUI:FactionPickLeftOut
+"Random never draws: %s. Tick it under Custom Selection to add it."
+END
+
+GUI:FactionPickPool
+"Random picks one of the %d armies ticked on the left, out of %d. Click an army to tick it or take it out."
+END
+
+// %s is a side's name as its heading reads (USA, China, Turkiye): the pool is that side and nothing else.
+GUI:FactionPickRandomSide
+"Random %s"
+END
+
+GUI:FactionPickSideHint
+"A side's box ticks or clears the whole side; its name leaves that side alone in the draw."
+END
+
+GUI:FactionPickSideNameHint
+"Click a side's name to play a random army of that side."
+END
+
+// the fork's player colours (MultiplayerReforged.ini); EA's eight are in the CSF
+Color:Teal
+"Teal"
+END
+
+Color:Lime
+"Lime"
+END
+
+Color:Navy
+"Navy"
+END
+
+Color:Magenta
+"Magenta"
+END
+
+Color:Brown
+"Brown"
+END
+
+Color:Lavender
+"Lavender"
+END
+
+Color:Coral
+"Coral"
+END
+
+Color:Olive
+"Olive"
+END
+
+// the LAN lobby's error box when the system bound the socket on another adapter; the first %ls is the
+// LAN IP chosen in Options, the second the address the system bound instead
+GUI:SocketRedirected
+"The LAN IP is %ls, but the system put the game's connection on %ls. A VPN split tunnel or a firewall redirected it, so nobody on your network can hear you. Turn split tunnelling off for the game and try again."
+END
+
+// the online service's one chat room; the lobby's room box shows GUI:<room name>
+GUI:Lobby
+"Lobby"
+END
+
+// EA's oldFactionsOnly box, read by players as a unit cap and mixed up with Unit Limit
+GUI:LimitArmies
+"Original Armies Only"
+END
+
+TOOLTIP:LimitArmies
+"Only the original USA, China and GLA armies can be picked, no generals' armies"
+END
+
+// a seat's colour left to chance; EA's label for it was "???"
+GUI:???
+"Random"
+END
+
+// the online login screen's one account field: the service takes the email or the nick
+GUI:OnlineLoginName
+"Email or Nickname"
+END
+
+// the online login screen under -online: its title, buttons, help text and status line
+GUI:OnlineLoginTitle
+"ZERO HOUR REFORGED ONLINE"
+END
+
+GUI:OnlineSignIn
+"SIGN IN"
+END
+
+GUI:OnlineForgotPassword
+"FORGOT PASSWORD"
+END
+
+GUI:OnlineKeepSignedIn
+"Keep me signed in"
+END
+
+TOOLTIP:OnlineKeepSignedIn
+"Stays signed in on this computer. Your password is never stored"
+END
+
+GUI:OnlineLoginHelp
+"Sign in with your zerohour.gg account: your email or your nickname, and your password."
+END
+
+GUI:OnlineLoginHelpRegister
+"No account yet? Create Account opens the sign-up page in your browser."
+END
+
+GUI:OnlineLoginHelpReset
+"Forgot your password? Forgot Password opens the reset page in your browser."
+END
+
+GUI:OnlineLoginSavedToken
+"Your saved sign-in will be used. No password needed."
+END
+
+GUI:OnlineSigningIn
+"Signing in..."
+END
+
+GUI:OnlineConnecting
+"Connecting to the server..."
+END
+
+GUI:OnlineCannotReachServer
+"The server cannot be reached. Check your connection, then press Sign In to try again."
+END
+
+GUI:OnlineOpenedInBrowser
+"Opened in your browser."
+END
+
+GUI:OnlineBrowserTestServer
+"Test server: no browser is opened."
+END
+
+GUI:OnlineBrowserFailed
+"Your browser could not be opened."
+END
+
+GUI:OnlineLoginEmpty
+"Enter your email or nickname and your password."
+END
+
+GUI:OnlineLoginBadLogin
+"Wrong email, nickname or password."
+END
+
+GUI:OnlineLoginThrottled
+"Too many attempts. Wait %d seconds and try again."
+END
+
+GUI:OnlineLoginThrottledNoRetry
+"Too many attempts. Wait a minute and try again."
+END
+
+GUI:OnlineLoginUnavailable
+"The account service cannot be reached. Try again shortly."
+END
+
+GUI:OnlineLoginExpired
+"Your password has changed. Enter it again."
+END
+
+GUI:OnlineLoginBanned
+"This account is banned."
+END
+
+GUI:OnlineLoginElsewhere
+"This account signed in from another computer."
+END
+
+// the online hub's info box when the server sent no message of the day
+GUI:OnlineHubWelcome
+"Welcome to Zero Hour Reforged online."
+END
+
+// EA's lobby and staging-room player tooltips without "Region:", which -online never knows
+TOOLTIP:OnlinePlayerInfo
+"\n %d wins/%d losses"
+END
+
+TOOLTIP:OnlineStagingPlayerInfo
+"\n Ping: %d ms \n %d wins/%d losses \n %d disconnects \n Favorite army: %ls"
+END
+
+// A vehicle transport's Evacuate asks for a spot, the transport goes there and empties; Alt empties it where it stands
+CONTROLBAR:ToolTipEvacuateAt
+"Go to the chosen spot and order all units to exit\nAlt: unload here"
+END
+
+GUI:QMSearchTime
+"Searching for an opponent: %d:%02d"
+END
+
+GUI:QMSearchTimePool
+"Searching for an opponent: %d:%02d, %d in the queue"
+END
+
+GUI:QMStartsIn
+"Match starts in %d"
+END
+
+GUI:QMOpponentFound
+"Opponent found: %ls"
+END
+
+GUI:QMAnOpponent
+"unknown player"
+END
+
+GUI:QMOpponentLeft
+"Your opponent left before the match started. You are back in the queue."
+END
+
+GUI:OnlinePingMs
+"%d ms"
+END
+
+GUI:OnlineRating
+"Rating %d"
+END
+
+GUI:OnlineRatingTier
+"%ls, rating %d"
+END
+
+GUI:OnlineLadderPlace
+"#%d on the ladder"
+END
+
+GUI:OnlinePlayerNotOnline
+"Not online right now"
+END
+
+GUI:OnlineTier_unranked
+"Unranked"
+END
+
+GUI:OnlineTier_private
+"Private"
+END
+
+GUI:OnlineTier_sergeant
+"Sergeant"
+END
+
+GUI:OnlineTier_lieutenant
+"Lieutenant"
+END
+
+GUI:OnlineTier_captain
+"Captain"
+END
+
+GUI:OnlineTier_major
+"Major"
+END
+
+GUI:OnlineTier_colonel
+"Colonel"
+END
+
+GUI:OnlineTier_general
+"General"
+END
+
+GUI:OnlineLadderPrev
+"PREVIOUS"
+END
+
+GUI:OnlineLadderNext
+"NEXT"
+END
+
+GUI:OnlineLadderButton
+"LADDER"
+END
+
+GUI:OnlineLadderRank
+"#"
+END
+
+GUI:OnlineLadderPlayer
+"Player"
+END
+
+GUI:OnlineLadderRating
+"Rating"
+END
+
+GUI:OnlineLadderTier
+"Rank"
+END
+
+GUI:OnlineLadderWins
+"Wins"
+END
+
+GUI:OnlineLadderLosses
+"Losses"
+END
+
+GUI:OnlineLadderLoading
+"Loading the ladder..."
+END
+
+GUI:OnlineLadderUnavailable
+"The ladder is not available right now. Try again in a minute."
+END
+
+GUI:OnlineLadderEmpty
+"No ranked players on this page."
+END
+
+GUI:OnlineRatedResult
+"Rating %+.1f -> %d"
+END
+
+GUI:OnlineUnrated
+"This match was not rated."
+END
+
+GUI:OnlineUnrated_custom
+"Custom games are not rated."
+END
+
+GUI:OnlineUnrated_desync
+"Not rated: the game went out of sync."
+END
+
+GUI:OnlineUnrated_grace
+"Not rated: a player left right at the start."
+END
+
+GUI:OnlineUnrated_nowinner
+"Not rated: nobody won."
+END
+
+GUI:OnlineUnrated_unconfirmed
+"Not rated: the result could not be confirmed."
+END
+
+GUI:OnlineUnrated_stalled
+"Not rated: the result could not be confirmed."
+END
+
+GUI:OnlineUnrated_seed
+"Not rated: the two sides reported different results."
+END
+
+GUI:OnlineUnrated_endframe
+"Not rated: the two sides reported different results."
+END
+
+GUI:OnlineUnrated_winners
+"Not rated: the two sides reported different results."
+END
+
+GUI:OnlineUnrated_cancelled
+"Not rated: the match was called off."
+END

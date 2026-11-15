@@ -1,0 +1,70 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2025-2026 by Olcay Seygan for Zero Hour Reforged; see the git history.
+
+// Used for dynamically linking to dbghelp.dll functions.
+
+// keep this always as first entry
+DBGHELP(SymInitialize,
+        BOOL,
+        (HANDLE hProcess, PCSTR UserSearchPath, BOOL fInvadeProcess))
+
+DBGHELP(SymGetOptions,
+        DWORD,
+        (void))
+
+DBGHELP(SymSetOptions,
+        DWORD,
+        (DWORD SymOptions))
+
+// Only the 64-bit entry points are asked for.  A 64-bit dbghelp.dll does not export StackWalk,
+// SymFunctionTableAccess, SymGetModuleBase, SymGetSymFromAddr or SymGetLineFromAddr at all, and one
+// missing name empties the whole table below.
+DBGHELP(SymGetSymFromAddr64,
+        BOOL,
+        (HANDLE hProcess, DWORD64 Address, PDWORD64 Displacement,
+        PIMAGEHLP_SYMBOL64 Symbol))
+
+DBGHELP(SymGetLineFromAddr64,
+        BOOL,
+        (HANDLE hProcess, DWORD64 dwAddr, PDWORD pdwDisplacement,
+        PIMAGEHLP_LINE64 Line))
+
+// StackWalk/SymFunctionTableAccess are the 32-bit-only originals.
+// On a current dbghelp.dll the legacy StackWalk fails outright (ERROR_PARTIAL_COPY
+// on its very first step), so the walker uses the 64-bit trio instead.
+DBGHELP(StackWalk64,
+        BOOL,
+        (DWORD MachineType, HANDLE hProcess, HANDLE hThread, LPSTACKFRAME64 StackFrame,
+        PVOID ContextRecord, PREAD_PROCESS_MEMORY_ROUTINE64 ReadMemoryRoutine,
+        PFUNCTION_TABLE_ACCESS_ROUTINE64 FunctionTableAccessRoutine,
+        PGET_MODULE_BASE_ROUTINE64 GetModuleBaseRoutine,
+        PTRANSLATE_ADDRESS_ROUTINE64 TranslateAddress))
+
+DBGHELP(SymFunctionTableAccess64,
+        PVOID,
+        (HANDLE hProcess, DWORD64 AddrBase))
+
+DBGHELP(SymGetModuleBase64,
+        DWORD64,
+        (HANDLE hProcess, DWORD64 dwAddr))
+
+// keep this always as last entry
+DBGHELP(SymCleanup,
+        BOOL,
+        (HANDLE hProcess)) 

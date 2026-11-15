@@ -1,0 +1,105 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2025-2026 by Olcay Seygan for Zero Hour Reforged; see the git history.
+
+// FILE: W3DSnow.h /////////////////////////////////////////////////////////
+
+#ifndef _W3DSNOW_H_
+#define _W3DSNOW_H_
+
+#include "GameClient/Snow.h"
+#include "W3DDevice/GameClient/WeatherParticleMath.h"
+
+class DX8IndexBufferClass;
+class RenderInfoClass;
+class TextureClass;
+struct IDirect3DVertexBuffer9;
+
+class W3DSnowManager : public SnowManager
+{
+  public :
+
+	W3DSnowManager(void);
+	~W3DSnowManager(void);
+
+	virtual void init( void );
+	virtual void reset( void );
+	virtual void update ( void);
+	virtual void updateIniSettings(void);
+	
+	void	render(RenderInfoClass &rinfo);
+	void	renderAsQuads(RenderInfoClass &rinfo, Int cubeOriginX, Int cubeOriginY, Int cubeDimX, Int cubeDimY);
+	void	renderSubBox(RenderInfoClass &rinfo, Int originX, Int originY, Int cubeDimX, Int cubeDimY );
+	void	ReleaseResources(void);
+	Bool	ReAcquireResources(void);
+
+ private:
+	void	updateWeather(void);
+	void	renderWeather(RenderInfoClass &rinfo);
+	void	drawWeatherLayer(RenderInfoClass &rinfo, Int layer, Real light);
+	void drawWeatherContacts(RenderInfoClass &rinfo, Real light);
+	void clearWeatherMotion(void);
+	Bool weatherDustCellDry(Int x,Int y,Real *arrival);
+	Real weatherDustFootprintFade(Real minX,Real minY,Real maxX,Real maxY);
+
+	// The Weather option.  None of it is allocated, loaded or read while the option is off.
+	struct WeatherDrop { Real x, y, phase, size; };	///< a drop's place in its tile and in its fall, 0 to 1
+	WeatherDrop *m_weatherDrops;
+	enum { WEATHER_LAYER_COUNT = 3, WEATHER_CONTACT_COUNT = 192, WEATHER_CONTACT_TRACKS = 256 };
+	TextureClass *m_weatherTextures[WEATHER_LAYER_COUNT];
+	TextureClass *m_weatherContactTextures[2];
+	struct WeatherContact { Vector3 position, normal; double born; Bool water; };
+	struct WeatherContactTrack { Vector3 position; double sampled; Real tile; Bool valid; };
+	WeatherContact *m_weatherContacts;
+	WeatherContactTrack *m_weatherContactTracks;
+	Int m_weatherContactNext, m_weatherContactCursor;
+	UnsignedInt m_weatherContactFrame;
+	WeatherParticleMath::Motion m_weatherMotion[WEATHER_LAYER_COUNT];
+    enum { WEATHER_DUST_CACHE_DIM=64 };
+    struct WeatherDustCell { Int x,y; UnsignedInt epoch; double sampled,admitted; Bool dry; };
+    WeatherDustCell *m_weatherDustCells;
+    UnsignedInt m_weatherDustEpoch,m_weatherDustRevision,m_weatherDustFrame;
+    const void *m_weatherDustWater;
+    Int m_weatherDustQueries;
+    UnsignedInt m_weatherRainSeed,m_weatherRainMatchSeed;
+    Real m_weatherRainEnvelope,m_weatherParticleDensity;
+	double m_weatherTime;			///< seconds; double, because it is multiplied by a speed and wrapped by the tile
+	const void *m_weatherMap;		///< the map m_weatherSandCells was counted on, with its samples: see W3DShaderManager's haze
+	const void *m_weatherMapData;
+	Int m_weatherMapWidth;
+#if defined(__linux__)
+    Int m_weatherMapHeight;
+#endif
+	Int m_weatherSandCells;
+	Int m_weatherCells;
+
+	DX8IndexBufferClass	*m_indexBuffer;
+	TextureClass *m_snowTexture;
+	IDirect3DVertexBuffer9*  m_VertexBufferD3D;
+	Int m_dwBase;	///<index to beginning of unused vertex buffer space.
+    Int m_dwFlush;	///<maximum amount of vertices to sumbit before rendering.
+	Int m_dwDiscard;	///<maximum index allowed before needing to discard the buffer.
+	Int m_leafDim;		///<horizontal dimensions of leaf nodes that are always rendered without visibility checks.
+	Real m_snowCeiling;	///<height at the top of the cube with camera at center.
+	Real m_heightTraveled;	///<height that snow flake traveled this frame.
+	Int m_totalRendered;	///<total number of snow particles rendered this frame - only for profiling.
+	Real m_cullOverscan;	///<how much extra padding to put on the sides of AABoxes when view culling.
+};
+
+#endif // _W3DSNOW_H_
+

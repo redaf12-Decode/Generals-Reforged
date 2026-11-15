@@ -1,0 +1,6892 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2025-2026 by Olcay Seygan for Zero Hour Reforged; see the git history.
+// Modified 2026 by İlyas Akın for the macOS/Linux port; see NOTICE.md and the git history.
+
+////////////////////////////////////////////////////////////////////////////////
+//																																						//
+//  (c) 2001-2003 Electronic Arts Inc.																				//
+//																																						//
+////////////////////////////////////////////////////////////////////////////////
+
+// FILE: GameLogic.cpp ////////////////////////////////////////////////////////////////////////////
+// GameLogic class implementation
+// Author: Michael S. Booth, October 2000
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "zhio.h"
+#include "Platform/SleepMilliseconds.h"
+#include "Lib/Clock.h"
+#include "Lib/WideCharFns.h"
+
+#include "Common/AudioAffect.h"
+#include "Common/AudioHandleSpecialValues.h"
+#include "Common/BuildAssistant.h"
+#include "Common/CopyProtection.h"
+#include "Common/CRCDebug.h"
+#include "Common/GameAudio.h"
+#include "Common/GameEngine.h"
+#include "Common/GameLOD.h"
+#include "Common/GameState.h"
+#include "Common/INI.h"
+#include "Common/LatchRestore.h"
+#include "Common/MapObject.h"
+#include "Common/MatchHistory.h"
+#include "Common/MultiplayerSettings.h"
+#include "Common/PerfTimer.h"
+#include "Common/Player.h"
+#include "Common/PlayerList.h"
+#include "Common/PlayerTemplate.h"
+#include "Common/Radar.h"
+#include "Common/RandomValue.h"
+#include "Common/Recorder.h"
+#include "Common/StatsCollector.h"
+#include "Common/ThingFactory.h"
+#include "Common/AudioEventInfo.h"
+#include "Common/Team.h"
+#include "Common/ThingTemplate.h"
+#include "GameClient/Water.h"
+#include "GameClient/Snow.h"
+#include "Common/WellKnownKeys.h"
+#include "Common/Xfer.h"
+#include "Common/XferCRC.h"
+#include "Common/XferDeepCRC.h"
+#include "Common/SimulationMathCrc.h"
+#include "Common/GameSpyMiscPreferences.h"
+
+#include "GameClient/ControlBar.h"
+#include "GameClient/Drawable.h"
+#include "GameClient/FXList.h"
+#include "GameClient/Eva.h"
+#include "GameClient/GameClient.h"
+#include "GameClient/GameText.h"
+#include "GameClient/GUICallbacks.h"
+#include "GameClient/InGameUI.h"
+#include "GameClient/LoadScreen.h"
+#include "GameClient/MapUtil.h"
+#include "GameClient/MessageBox.h"
+#include "GameClient/Mouse.h"
+#include "GameClient/ParticleSys.h"
+#include "GameClient/TerrainVisual.h"
+#if defined(__linux__)
+#include "Platform/RenderTiming.h"
+#endif
+#include "GameClient/View.h"
+#include "GameClient/ControlBar.h"
+#include "GameClient/CampaignManager.h"
+#include "GameClient/GameWindowTransitions.h"
+
+#include "GameLogic/AI.h"
+#include "GameLogic/AIPlayer.h"		// for the per-frame AI profile the slow-frame report prints
+#include "GameLogic/AIPathfind.h"
+#include "GameLogic/CaveSystem.h"
+#include "GameLogic/CrateSystem.h"
+#include "GameLogic/FPUControl.h"
+#include "GameLogic/GameLogic.h"
+#include "GameLogic/Locomotor.h"
+#include "GameLogic/Object.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/BodyModule.h"
+#include "GameLogic/Module/CreateModule.h"
+#include "GameLogic/Module/DestroyModule.h"
+#include "GameLogic/Module/OpenContain.h"
+#include "GameLogic/Module/RadarCoverageBehavior.h"
+#include "GameLogic/PartitionManager.h"
+#include "Common/ControlServer.h"
+#include "GameLogic/PolygonTrigger.h"
+#include "GameLogic/ScenarioDrill.h"
+#include "GameLogic/ScriptActions.h"
+#include "GameLogic/ScriptConditions.h"
+#include "GameLogic/ScriptEngine.h"
+#include "GameLogic/SidesList.h"
+#include "GameLogic/VictoryConditions.h"
+#include "GameLogic/Weapon.h"
+#include "GameLogic/GhostObject.h"
+
+#include "Common/DataChunk.h"
+#include "GameLogic/Scripts.h"
+
+#include "GameNetwork/GameSpy/BuddyThread.h"
+#include "GameNetwork/GameSpy/PeerDefs.h"
+#include "GameNetwork/GameSpy/ThreadUtils.h"
+#include "GameNetwork/LANAPICallbacks.h"
+#include "GameNetwork/CrcAgreement.h"
+#include "GameNetwork/NetworkInterface.h"
+#include "GameNetwork/GameSpy/PersistentStorageThread.h"
+
+#include <rts/profile.h>
+
+/* A hint that a cache line is about to be read, as PM_PREFETCH in PartitionManager.cpp. It decides
+	 nothing, so the sleepy heap's walk and the order the modules run in cannot depend on it. */
+#if defined(__GNUC__) || defined(__clang__)
+	#define GL_PREFETCH(addr) __builtin_prefetch(addr)
+#elif defined(_M_X64) || defined(_M_IX86)
+	#include <xmmintrin.h>
+	#define GL_PREFETCH(addr) _mm_prefetch((const char *)(addr), _MM_HINT_T0)
+#elif defined(_M_ARM64)
+	#include <intrin.h>
+	#define GL_PREFETCH(addr) __prefetch(addr)
+#else
+	#define GL_PREFETCH(addr) ((void)0)
+#endif
+
+DECLARE_PERF_TIMER(SleepyMaintenance)
+
+#include "Common/UnitTimings.h" //Contains the DO_UNIT_TIMINGS define jba.		 
+// If defined, the game times various units.
+#ifdef DO_UNIT_TIMINGS
+#pragma MESSAGE("*** WARNING *** DOING DO_UNIT_TIMINGS!!!!")
+Bool g_UT_gotUnit = false;
+const ThingTemplate *g_UT_curThing = NULL;
+Bool g_UT_startTiming = false;
+FILE *g_UT_timingLog=NULL;
+FILE *g_UT_commaLog=NULL;
+// Note - this is only for gathering timing data!  DO NOT DO THIS IN REGULAR CODE!!!  JBA
+#define BRUTAL_TIMING_HACK
+#include "../../GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DModelDraw.h"
+extern void externalAddTree(Coord3D location, Real scale, Real angle, AsciiString name);
+#endif
+
+
+#ifdef _INTERNAL
+// for occasional debugging...
+//#pragma optimize("", off)
+//#pragma MESSAGE("************************************** WARNING, optimization disabled for debugging purposes")
+#endif
+
+
+
+
+// I'm making this larger now that we know how big our maps are going to be. 
+enum { OBJ_HASH_SIZE	= 8192 };
+
+// Read both action branches, grouped scripts and audio-wait conditions. Inactive scripts can be
+// enabled by the cinematic later. This is a read-only walk, not script evaluation or a random pick.
+static void preloadMissionAudio()
+{
+	if (TheAudio == NULL || TheSidesList == NULL) return;
+	std::vector<AsciiString> events;
+	auto parameter = [&events](const Parameter *p) {
+		if (p && (p->getParameterType() == Parameter::SOUND || p->getParameterType() == Parameter::DIALOG
+				|| p->getParameterType() == Parameter::MUSIC) && !p->getString().isEmpty())
+			events.push_back(p->getString());
+	};
+	auto scripts = [&parameter](Script *first) {
+		for (Script *script = first; script; script = script->getNext())
+		{
+			ScriptAction *branches[] = { script->getAction(), script->getFalseAction() };
+			for (ScriptAction *branch : branches)
+				for (ScriptAction *action = branch; action; action = action->getNext())
+					for (Int i = 0; i < action->getNumParameters(); ++i)
+						parameter(action->getParameter(i));
+			for (OrCondition *either = script->getOrCondition(); either; either = either->getNextOrCondition())
+				for (Condition *condition = either->getFirstAndCondition(); condition; condition = condition->getNext())
+					for (Int i = 0; i < condition->getNumParameters(); ++i)
+						parameter(condition->getParameter(i));
+		}
+	};
+	for (Int side = 0; side < TheSidesList->getNumSides(); ++side)
+	{
+		ScriptList *list = TheSidesList->getSideInfo(side)->getScriptList();
+		if (!list) continue;
+		scripts(list->getScript());
+		for (ScriptGroup *group = list->getScriptGroup(); group; group = group->getNext())
+			scripts(group->getScript());
+	}
+	// Ambient loops pick another clip as the camera moves. They live on drawables, including
+	// map-specific overrides, rather than in script sound parameters.
+	for (Drawable *draw = TheGameClient->firstDrawable(); draw; draw = draw->getNextDrawable())
+	{
+		const ThingTemplate *t = draw->getTemplate();
+		t->collectVoiceEvents(events);
+		const AudioEventRTS *sounds[] = { draw->getAmbientSound(), t->getSoundAmbient(),
+			t->getSoundAmbientDamaged(), t->getSoundAmbientReallyDamaged(), t->getSoundAmbientRubble(),
+			t->getSoundMoveStart(), t->getSoundMoveLoop(), t->getSoundMoveLoopDamaged(), t->getSoundCreated() };
+		for (const AudioEventRTS *sound : sounds)
+			if (sound && !sound->getEventName().isEmpty()) events.push_back(sound->getEventName());
+	}
+	auto preload = [](std::vector<AsciiString>& names) {
+		std::sort(names.begin(), names.end(), [](const AsciiString& a, const AsciiString& b) {
+			return strcmp(a.str(), b.str()) < 0;
+		});
+		names.erase(std::unique(names.begin(), names.end()), names.end());
+		TheAudio->preloadAudioEvents(names);
+	};
+	preload(events);
+	// A unit built or reinforced later has no drawable yet. Gather every loaded template's voice
+	// slots and UnitSpecificSounds, through map overrides, before spending the rest on effects.
+	events.clear();
+	if (TheThingFactory)
+		for (const ThingTemplate *t = TheThingFactory->firstTemplate(); t; t = t->friend_getNextTemplate())
+			t->collectVoiceEvents(events);
+	// Also cover voice-tagged announcements and mod responses not attached to an object slot.
+	for (const auto& entry : TheAudio->getAllAudioEvents())
+		if (entry.second->m_soundType == AT_SoundEffect && BitTest(entry.second->m_type, ST_VOICE))
+			events.push_back(entry.first);
+	preload(events);
+	// Debris, impacts and explosions can be introduced by a weapon or a death module. Walk the
+	// loaded effect definitions without running any of them; mission audio gets the budget first.
+	events.clear();
+	if (TheFXListStore) TheFXListStore->collectAudioEvents(events);
+	preload(events);
+}
+
+/// The GameLogic singleton instance
+GameLogic *TheGameLogic = NULL;
+
+
+
+// ------------------------------------------------------------------------------------------------
+/** This enum is for loading screen bar progress */
+// ------------------------------------------------------------------------------------------------
+enum
+{
+	LOAD_PROGRESS_START =0,
+	LOAD_PROGRESS_POST_PARTICLE_INI_LOAD = LOAD_PROGRESS_START + 1,
+	LOAD_PROGRESS_POST_LOAD_MAP = LOAD_PROGRESS_POST_PARTICLE_INI_LOAD + 1,
+	LOAD_PROGRESS_SIDE_POPULATION = LOAD_PROGRESS_POST_LOAD_MAP + 1,  // Increment the next one by at least MAX_SLOTS
+	LOAD_PROGRESS_POST_SIDE_LIST_INIT = LOAD_PROGRESS_SIDE_POPULATION + 1 + MAX_SLOTS,
+	LOAD_PROGRESS_POST_PLAYER_LIST_RESET = LOAD_PROGRESS_POST_SIDE_LIST_INIT + 1,
+	LOAD_PROGRESS_POST_SCRIPT_ENGINE_NEW_MAP = LOAD_PROGRESS_POST_PLAYER_LIST_RESET + 1,
+	LOAD_PROGRESS_POST_VICTORY_CONDITION_SETUP = LOAD_PROGRESS_POST_SCRIPT_ENGINE_NEW_MAP + 2,
+	LOAD_PROGRESS_POST_VICTORY_CONDITION_SET_VICTORY_CONDITION = LOAD_PROGRESS_POST_VICTORY_CONDITION_SETUP + 1,
+	LOAD_PROGRESS_POST_GHOST_OBJECT_MANAGER_RESET = LOAD_PROGRESS_POST_VICTORY_CONDITION_SET_VICTORY_CONDITION + 1,
+	LOAD_PROGRESS_POST_TERRAIN_LOGIC_NEW_MAP = LOAD_PROGRESS_POST_GHOST_OBJECT_MANAGER_RESET + 1,
+	LOAD_PROGRESS_POST_BRIDGE_LOAD = LOAD_PROGRESS_POST_TERRAIN_LOGIC_NEW_MAP + 1,
+	LOAD_PROGRESS_POST_PATHFINDER_NEW_MAP = LOAD_PROGRESS_POST_BRIDGE_LOAD + 1,
+
+	LOAD_PROGRESS_LOOP_ALL_THE_FREAKN_OBJECTS = LOAD_PROGRESS_POST_BRIDGE_LOAD + 1,
+	LOAD_PROGRESS_MAX_ALL_THE_FREAKN_OBJECTS = 80,// THE END OF THE BIG ASS PROGRESS PAUSE
+
+	LOAD_PROGRESS_LOOP_INITIAL_NETWORK_BUILDINGS = LOAD_PROGRESS_MAX_ALL_THE_FREAKN_OBJECTS + 1,  // Increment the next one by at least MAX_SLOTS
+	LOAD_PROGRESS_POST_INITIAL_NETWORK_BUILDINGS = LOAD_PROGRESS_LOOP_INITIAL_NETWORK_BUILDINGS + MAX_SLOTS + 1,
+
+	LOAD_PROGRESS_POST_PRELOAD_ASSETS = LOAD_PROGRESS_POST_INITIAL_NETWORK_BUILDINGS + 1,
+	LOAD_PROGRESS_POST_STARTING_CAMERA = LOAD_PROGRESS_POST_PRELOAD_ASSETS + 1,
+	LOAD_PROGRESS_POST_STARTING_CAMERA_2 = LOAD_PROGRESS_POST_STARTING_CAMERA + 1,
+	LOAD_PROGRESS_END = 100,
+};
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+static Waypoint * findNamedWaypoint(AsciiString name)
+{
+	for (Waypoint *way = TheTerrainLogic->getFirstWaypoint(); way; way = way->getNext())
+	{
+		if (way->getName() == name)
+		{
+			return way;
+		}
+	}
+	return NULL;
+}
+
+/* setFPMode() moved to its own translation unit, Source/GameLogic/System/FPUControl.cpp, so a
+	 test can call it without linking the whole of GameLogic. */
+
+
+thread_local Bool GameLogic::s_isInUpdate = FALSE;
+
+// ------------------------------------------------------------------------------------------------
+/** GameLogic class constructor */
+// ------------------------------------------------------------------------------------------------
+GameLogic::GameLogic( void )
+{
+	//Added By Sadullah Nader
+	//Initializations missing and necessary
+	m_background = NULL;
+	m_CRC = 0;
+	s_isInUpdate = FALSE;
+
+	m_rankPointsToAddAtGameStart = 0;
+
+	for(Int i = 0; i < MAX_SLOTS; i++)
+	{
+		m_progressComplete[i] = FALSE;
+		m_progressCompleteTimeout[i] = 0;
+	}
+
+	m_shouldValidateCRCs = FALSE;
+	
+	m_startNewGame = FALSE;
+	//
+
+	m_frame = 0;
+	m_frameForClient = 0;
+	m_frameObjectsChangedTriggerAreas = 0;
+	m_width = 0;
+	m_height = 0;
+	m_objList = NULL;
+	m_curUpdateModule = NULL;
+	m_nextObjID = INVALID_ID;
+	m_nextObjIDFromSave = INVALID_ID;
+	m_startNewGame = FALSE;
+	m_gameMode = GAME_NONE;
+	m_rankLevelLimit = 1000;
+	m_peaceTimeEndFrame = 0;
+	m_kickVoteTarget = -1;
+	m_kickVoteEndFrame = 0;
+	m_kickVoteYesMask = 0;
+	m_unitCap = 0;
+	m_proRules = FALSE;
+	m_incomeSharing = INCOME_SHARING_OFF;
+	m_techRespawnDelay = 0;
+	m_supplyPileLimit = 0;
+	m_loadedRandomPending = FALSE;
+	m_loadedSleepyPending = FALSE;
+	m_gamePaused = FALSE;
+	m_inputEnabledMemory = TRUE;
+	m_mouseVisibleMemory = TRUE;
+	m_loadScreen = NULL;
+	m_forceGameStartByTimeOut = FALSE;
+#ifdef DUMP_PERF_STATS
+	m_overallFailedPathfinds = 0;
+#endif
+
+	m_loadingMap = FALSE;
+	m_loadingSave = FALSE;
+	m_loadingWithoutScreen = FALSE;
+	m_clearingGameData = FALSE;
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Utility function to set class variables to default values. */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::setDefaults( Bool loadingSaveGame )
+{
+	m_frame = 0;
+	m_width = DEFAULT_WORLD_WIDTH;
+	m_height = DEFAULT_WORLD_HEIGHT;
+	m_objList = NULL;
+#ifdef ALLOW_NONSLEEPY_UPDATES
+	m_normalUpdates.clear();
+#endif
+	for (std::vector<SleepyEntry>::iterator it = m_sleepyUpdates.begin(); it != m_sleepyUpdates.end(); ++it)
+	{
+		it->module->friend_setIndexInLogic(-1);
+	}
+	m_sleepyUpdates.clear();
+	m_curUpdateModule = NULL;
+
+	//
+	// only reset the next object ID allocater counter when we're not loading a save game.
+	// for save games, we read this value out of the save game file and it is important
+	// that we preserve it as we load and execute the game
+	//
+	if( loadingSaveGame == FALSE )
+		m_nextObjID = (ObjectID)1;
+
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+Bool GameLogic::isInSinglePlayerGame( void )
+{
+	return (m_gameMode == GAME_SINGLE_PLAYER ||
+		(TheRecorder && TheRecorder->getMode() == RECORDERMODETYPE_PLAYBACK && TheRecorder->getGameMode() == GAME_SINGLE_PLAYER));
+}
+
+
+//-------------------------------------------------------------------------------------------------
+/** Destroy all objects immediately */
+//-------------------------------------------------------------------------------------------------
+void GameLogic::destroyAllObjectsImmediate()
+{
+	// destroy all remaining objects
+	Object *obj;
+	Object *nextObj;
+	for( obj = m_objList; obj; obj = nextObj )
+	{
+		nextObj = obj->getNextObject();
+		destroyObject( obj );
+	}
+
+	// process the destroy list immediately
+	processDestroyList();
+	DEBUG_ASSERTCRASH( m_objList == NULL, ("destroyAllObjectsImmediate: Object list not cleared\n") );
+
+}  // end destroyAllObjectsImmediate
+
+//-------------------------------------------------------------------------------------------------
+/**GameLogic class destructor, the destruction order should mirror the
+ * initialization order */
+// ------------------------------------------------------------------------------------------------
+GameLogic::~GameLogic()
+{
+
+	// clear any object TOC we might have
+	m_objectTOC.clear();
+
+	if (m_background)
+	{
+		m_background->destroyWindows();
+		m_background->deleteInstance();
+		m_background = NULL;
+	}
+
+	// destroy all remaining objects
+	destroyAllObjectsImmediate();
+
+	// delete the logical terrain
+	delete TheTerrainLogic;
+	TheTerrainLogic = NULL;
+
+	delete TheGhostObjectManager;
+	TheGhostObjectManager=NULL;
+
+	// delete the partition manager
+	delete ThePartitionManager;
+	ThePartitionManager = NULL;
+
+	delete TheScriptActions;
+	TheScriptActions = NULL;
+
+	delete TheScriptConditions;
+	TheScriptConditions = NULL;
+
+	// delete the Script Engine
+	delete TheScriptEngine;
+	TheScriptEngine = NULL;
+	
+	// Null out TheGameLogic
+	TheGameLogic = NULL;
+}
+
+// ------------------------------------------------------------------------------------------------
+/** (re)initialize the instance. */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::init( void )
+{
+
+	setFPMode();
+
+	/// @todo Clear object and destroy lists
+	setDefaults( FALSE );
+
+	// create the partition manager
+	ThePartitionManager = NEW PartitionManager;
+	ThePartitionManager->init();
+	ThePartitionManager->setName("ThePartitionManager");
+
+
+	// Create system for holding deleted objects that are
+	// still in the partition manager because player has a fogged
+	// view of them.
+	TheGhostObjectManager = createGhostObjectManager();
+
+	// create the terrain logic
+	TheTerrainLogic = createTerrainLogic();
+	TheTerrainLogic->init();
+	TheTerrainLogic->setName("TheTerrainLogic");
+
+	// Create script engine system.
+	TheScriptActions = NEW ScriptActions;		 // Basically, a subsystem of TheScriptEngine.
+	TheScriptConditions = NEW ScriptConditions;	 // Basically, a subsystem of TheScriptEngine.
+	TheScriptEngine = NEW ScriptEngine;
+	TheScriptEngine->init();
+	TheScriptEngine->setName("TheScriptEngine");
+
+	// create a team for the player
+	//DEBUG_ASSERTCRASH(ThePlayerList, ("null ThePlayerList"));
+	//ThePlayerList->setLocalPlayer(0);
+
+	m_CRC = 0;
+	m_crcSnapshots.clear();
+	m_gamePaused = FALSE;
+	m_inputEnabledMemory = TRUE;
+	m_mouseVisibleMemory = TRUE;
+	for(Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		m_progressComplete[i] = FALSE;
+		m_progressCompleteTimeout[i] = 0;
+	}
+	m_forceGameStartByTimeOut = FALSE;
+
+	m_isScoringEnabled = TRUE;
+	m_showBehindBuildingMarkers = TRUE;
+	m_drawIconUI = TRUE;
+	m_showDynamicLOD = TRUE;
+	m_scriptHulkMaxLifetimeOverride = -1;
+
+	s_isInUpdate = FALSE;
+
+	m_rankPointsToAddAtGameStart = 0;
+}
+
+// the water table as it was before a map.ini's WaterSet blocks, put back by reset()
+static WaterSetting s_waterSettingsBeforeMapINI[ TIME_OF_DAY_COUNT ];
+static Bool s_waterSettingsSaved = FALSE;
+
+/* Whether this match's startNewGame found the map's map.ini and read it.  The mismatch dump writes
+	 it down: a map transfer that left the receiver without the file plays a different rule set on one
+	 machine (DESYNC-AUDIT.md), and both dumps agreeing on this line rules that out. */
+static Bool s_mapINILoaded = FALSE;
+
+//-------------------------------------------------------------------------------------------------
+/** Reset the game logic systems */
+//-------------------------------------------------------------------------------------------------
+void GameLogic::reset( void )
+{
+	m_thingTemplateBuildableOverrides.clear();
+	m_controlBarOverrides.clear();
+
+	// a load that failed part way must not hand its stream or heap order to the next one
+	m_loadedRandomPending = FALSE;
+	m_loadedSleepyPending = FALSE;
+	m_loadedSleepyOrder.clear();
+
+	// set the hash to be rather large. We need to optimize this value later.
+//	m_objHash.clear();
+//	m_objHash.resize(OBJ_HASH_SIZE);
+	m_objVector.clear();
+	m_objVector.resize(OBJ_HASH_SIZE, NULL);
+	m_frameForClient = 0;
+
+	/* Unpause properly rather than just clearing the flag.  Loading a save from the in-game menu
+		 resets while the game is paused, and setGamePaused is where the mouse comes back, the audio
+		 restarts and input is handed back to the player - clearing the flag by hand skips all of it,
+		 which is why the camera would not scroll at the screen edge after such a load. */
+	setGamePaused( FALSE );
+
+	m_inputEnabledMemory = TRUE;
+	m_mouseVisibleMemory = TRUE;
+	setFPMode();
+
+	// destroy all objects.  This is a clear-out the way clearGameData's is, and a Load from the in-game
+	// menu comes here without passing clearGameData: a paratrooper whose chute went first "landed" off
+	// the map, fired his death weapon, and its debris was built for a player list already emptied.
+	{
+		LatchRestore<Bool> clearing( m_clearingGameData, TRUE );
+		destroyAllObjectsImmediate();
+	}
+
+	m_nextObjID = (ObjectID)1;
+	m_pendingTechBuildings.clear();
+
+	m_frameObjectsChangedTriggerAreas = 0;
+
+	TheGhostObjectManager->reset();
+	ThePartitionManager->reset();
+	TheTerrainLogic->reset();
+	TheAI->reset();
+	TheScriptEngine->reset();
+
+	m_CRC = 0;
+	m_crcSnapshots.clear();
+	for(Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		m_progressComplete[i] = FALSE;
+		m_progressCompleteTimeout[i] = 0;
+	}
+	m_forceGameStartByTimeOut = FALSE;
+
+	if(TheStatsCollector)
+	{
+		delete TheStatsCollector;
+		TheStatsCollector = NULL;
+	}
+
+	// clear any table of contents we have
+	m_objectTOC.clear();
+
+	setDefaults( FALSE );
+
+	m_isScoringEnabled = TRUE;
+	m_showBehindBuildingMarkers = TRUE;
+	m_drawIconUI = TRUE;
+	m_showDynamicLOD = TRUE;
+	m_scriptHulkMaxLifetimeOverride = -1;
+
+	// Clean up any water transparency overrides that were generated for this map.
+	WaterTransparencySetting *wt = (WaterTransparencySetting*) TheWaterTransparency.getNonOverloadedPointer();
+	TheWaterTransparency = (WaterTransparencySetting*) wt->deleteOverrides();
+
+	// Clean up any weather overrides that were generated for this map.
+	WeatherSetting *ws = (WeatherSetting*) TheWeatherSetting.getNonOverloadedPointer();
+	TheWeatherSetting = (WeatherSetting*) ws->deleteOverrides();
+	// the snow manager copied the map's numbers when the Weather block was read
+	if (TheSnowManager)
+		TheSnowManager->updateIniSettings();
+
+	// WaterSet has no override chain: the block writes straight into the time-of-day table
+	if (s_waterSettingsSaved)
+	{
+		for (Int i = 0; i < TIME_OF_DAY_COUNT; ++i)
+			WaterSettings[ i ] = s_waterSettingsBeforeMapINI[ i ];
+		s_waterSettingsSaved = FALSE;
+	}
+
+	m_rankPointsToAddAtGameStart = 0;
+}  // end reset
+
+static Object * placeObjectAtPosition(Int slotNum, AsciiString objectTemplateName, Coord3D& pos, Player *pPlayer,
+																	const PlayerTemplate *pTemplate)
+{
+	const ThingTemplate* btt = TheThingFactory->findTemplate(objectTemplateName);
+
+	DEBUG_ASSERTCRASH(btt, ("TheThingFactory didn't find a template in placeObjectAtPosition()") );
+
+	Object *obj = TheThingFactory->newObject( btt, pPlayer->getDefaultTeam() );
+	DEBUG_ASSERTCRASH(obj, ("TheThingFactory didn't give me a valid Object for player %d's (%s) starting building\n",
+		slotNum, WideCharAsUtf8( pTemplate->getDisplayName().str() ).str()));
+	if (obj)
+	{
+		obj->setOrientation(obj->getTemplate()->getPlacementViewAngle());	
+		obj->setPosition( &pos );
+
+		//DEBUG_LOG(("Placed a starting building for %s at waypoint %s\n", playerName.str(), waypointName.str()));
+		CRCDEBUG_LOG(("Placed an object for %s at pos (%g,%g,%g)\n", WideCharAsUtf8( pPlayer->getPlayerDisplayName().str() ).str(),
+			pos.x, pos.y, pos.z));
+		DUMPCOORD3D(&pos);
+
+		Team *team = pPlayer->getDefaultTeam();
+		// Now onCreates were called at the constructor.  This magically created
+		// thing needs to be considered as Built for Game specific stuff.
+		for (BehaviorModule** m = obj->getBehaviorModules(); *m; ++m)
+		{
+			CreateModuleInterface* create = (*m)->getCreate();
+			if (!create)
+				continue;
+			create->onBuildComplete();
+		}
+
+		// Since the team now has members, activate it.
+		// srj sez: team should not be null, but could be for ill-formed user maps. so don't crash.
+		if (team)
+			team->setActive();
+		TheAI->pathfinder()->addObjectToPathfindMap(obj);
+		if (obj->getAIUpdateInterface() && !obj->isKindOf(KINDOF_IMMOBILE)) {
+			CRCDEBUG_LOG(("Not immobile - adjusting dest\n"));
+			if (TheAI->pathfinder()->adjustDestination(obj, obj->getAIUpdateInterface()->getLocomotorSet(), &pos)) {
+				DUMPCOORD3D(&pos);
+				TheAI->pathfinder()->updateGoal(obj, &pos, LAYER_GROUND);	// Units always start on the ground for now.  jba.
+				obj->setPosition( &pos );
+			}
+		}
+	}
+
+	return obj;
+}
+
+static void placeNetworkBuildingsForPlayer(Int slotNum, const GameSlot *pSlot, Player *pPlayer, const PlayerTemplate *pTemplate)
+{
+	Int startPos = pSlot->getStartPos();
+	AsciiString waypointName;
+	waypointName.format("Player_%d_Start", startPos+1); // start pos waypoints are 1-based
+
+	AsciiString rallyWaypointName;
+	rallyWaypointName.format("Player_%d_Rally", startPos+1); // start pos waypoints are 1-based
+
+	Waypoint *waypoint = findNamedWaypoint(waypointName);
+	Waypoint *rallyWaypoint = findNamedWaypoint(rallyWaypointName);
+	DEBUG_ASSERTCRASH(waypoint, ("Player %d has no starting waypoint (Player_%d_Start)\n", slotNum, startPos));
+	if (!waypoint)
+		return;
+
+	Coord3D pos = *waypoint->getLocation();
+	pos.z = TheTerrainLogic->getGroundHeight( pos.x, pos.y );
+
+	AsciiString buildingTemplateName = pTemplate->getStartingBuilding();
+
+	DEBUG_ASSERTCRASH(!buildingTemplateName.isEmpty(), ("no starting building type for player %d (playertemplate %s)\n",
+		slotNum, WideCharAsUtf8( pTemplate->getDisplayName().str() ).str()));
+	if (buildingTemplateName.isEmpty())
+		return;
+
+	DEBUG_LOG(("Placing starting building at waypoint %s\n", waypointName.str()));
+	Object *conYard = placeObjectAtPosition(slotNum, buildingTemplateName, pos, pPlayer, pTemplate);
+
+	if (!conYard)
+		return;
+
+	pPlayer->onStructureCreated(NULL, conYard);
+	// placeObjectAtPosition made it finished, so joining the team already counted its power, and
+	// onStructureConstructionComplete counts it again: a command center given EnergyProduction
+	// started every player at twice that, and the spare half stayed after it was sold
+	conYard->friend_adjustPowerForPlayer(FALSE);
+	pPlayer->onStructureConstructionComplete(NULL, conYard, FALSE);
+
+	//pos.x -= conYard->getGeometryInfo().getBoundingSphereRadius()/2;
+	pos.y -= conYard->getGeometryInfo().getBoundingSphereRadius()/2;
+	pos.z = TheTerrainLogic->getGroundHeight( pos.x, pos.y );
+
+	if (rallyWaypoint)
+	{
+		pos = *rallyWaypoint->getLocation();
+		pos.z = TheTerrainLogic->getGroundHeight( pos.x, pos.y );
+	}
+
+	for (Int i=0; i<MAX_MP_STARTING_UNITS; ++i)
+	{
+		AsciiString objName = pTemplate->getStartingUnit(i);
+		if (objName.isNotEmpty())
+		{
+			Coord3D objPos = pos;
+			FindPositionOptions options;
+			options.minRadius = conYard->getGeometryInfo().getBoundingSphereRadius() * 0.7f;
+			options.maxRadius = conYard->getGeometryInfo().getBoundingSphereRadius() * 1.3f;
+			DEBUG_LOG(("Placing starting object %d (%s)\n", i, objName.str()));
+			ThePartitionManager->update();
+			Bool foundPos = ThePartitionManager->findPositionAround(&pos, &options, &objPos);
+			if (foundPos)
+			{
+				Object *unit = placeObjectAtPosition(slotNum, objName, objPos, pPlayer, pTemplate);
+				if (unit) {
+					pPlayer->onUnitCreated(NULL, unit);
+				}
+			}
+			else
+			{
+				DEBUG_LOG(("Could not find position\n"));
+			}
+		}
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+LoadScreen *GameLogic::getLoadScreen( Bool loadingSaveGame )
+{
+	if( m_loadingWithoutScreen )
+		return NULL;
+
+	switch (m_gameMode)
+	{
+	case GAME_SHELL:
+		return NEW ShellGameLoadScreen;
+		break;                         
+	case GAME_SINGLE_PLAYER:
+	{
+		Campaign* currentCampaign = TheCampaignManager->getCurrentCampaign();
+		if( currentCampaign && loadingSaveGame == FALSE )
+		{
+			if ( currentCampaign->m_isChallengeCampaign) 
+			{
+				return NEW ChallengeLoadScreen;
+			}
+			return NEW SinglePlayerLoadScreen;
+		}
+		else
+			return NEW ShellGameLoadScreen;
+		break;
+	}
+	case GAME_SKIRMISH:
+		return NEW MultiPlayerLoadScreen;
+		break;
+	case GAME_LAN:
+		return NEW MultiPlayerLoadScreen;
+		break;
+	case GAME_REPLAY:
+		return NEW ShellGameLoadScreen;
+		break;
+	case GAME_INTERNET:
+		return NEW GameSpyLoadScreen;
+		break;
+	case GAME_NONE:
+	default:
+		return NULL;
+	}
+
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void handleNameChange( MapObject *mapObj )
+{
+	if( !mapObj->getName().compare( "AmericaTankLeopard" ) )
+	{
+		mapObj->setName( "AmericaTankCrusader" );
+		const ThingTemplate *thingTemplate = TheThingFactory->findTemplate( mapObj->getName() );
+		mapObj->setThingTemplate( thingTemplate );
+	}
+	if( !mapObj->getName().compare( "AmericaVehicleHumVee" ) )
+	{
+		mapObj->setName( "AmericaVehicleHumvee" );
+		const ThingTemplate *thingTemplate = TheThingFactory->findTemplate( mapObj->getName() );
+		mapObj->setThingTemplate( thingTemplate );
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+static void checkForDuplicateColors( GameInfo *game )
+{
+	if(!game)
+		return;
+	Int i;
+
+	// In QuickMatch, people can possibly set preferred color and house.
+	// Here, we check for collisions in the color choice.  If there is a
+	// collision, the first player will get the color, and the other(s)
+	// will map to random.
+	for (i=MAX_SLOTS-1; i>=0; --i)
+	{
+		GameSlot *slot = game->getSlot(i);
+
+		if (!slot || !slot->isOccupied())
+			continue;
+
+		Int colorIdx = slot->getColor();
+		if (colorIdx < 0 || colorIdx >= TheMultiplayerSettings->getNumColors())
+			continue; // don't need to fix up random ones
+
+		slot->setColor(-1);
+		if (!game->isColorTaken(colorIdx))
+		{
+			// we were the only one using the color.  it is safe to keep using it.
+			slot->setColor(colorIdx);
+		}
+		else if (colorIdx >= 0)
+		{
+			DEBUG_LOG(("Clearing color %d for player %d\n", colorIdx, i));
+		}
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+static void populateRandomSideAndColor( GameInfo *game )
+{
+	if(!game)
+		return;
+	Int i;
+
+	for (i=0; i<MAX_SLOTS; ++i)
+	{
+		GameSlot *slot = game->getSlot(i);
+
+		if (!slot || !slot->isOccupied())
+			continue;
+
+		// clean up random factions: plain Random draws from every playable template the data does not
+		// keep out (RandomExcluded), a pool from the templates the player ticked; both lists come from
+		// the INI and the slot string, the same on every machine
+		Int playerTemplateIdx = slot->getPlayerTemplate();
+		DEBUG_LOG(("Player %d has playerTemplate index %d\n", i, playerTemplateIdx));
+		if (IsRandomPlayerTemplate(playerTemplateIdx))
+		{
+			std::vector<Int> draw;
+			GetRandomDraw(playerTemplateIdx, game->oldFactionsOnly(), draw);
+			// our RNG is basically shit -- horribly nonrandom at the start of the sequence.
+			// get a few values at random to get rid of the dreck.
+			// there's no mathematical basis for this, but empirically, it helps a lot.
+			UnsignedInt silly = GetGameLogicRandomSeed() % 7;
+			for (Int poo = 0; poo < silly; ++poo)
+			{
+				GameLogicRandomValue(0, 1);	// ignore result
+			}
+			playerTemplateIdx = draw[GameLogicRandomValue(0, 1000) % draw.size()];
+			DEBUG_LOG(("Setting playerTemplateIdx %d to %d\n", i, playerTemplateIdx));
+			slot->setPlayerTemplate(playerTemplateIdx);
+		}
+		DEBUG_ASSERTCRASH(playerTemplateIdx == PLAYERTEMPLATE_OBSERVER || ThePlayerTemplateStore->getNthPlayerTemplate(playerTemplateIdx),
+			("Non-random bad playerTemplate %d in slot %d\n", playerTemplateIdx, i));
+
+		Int colorIdx = slot->getColor();
+		if (colorIdx < 0 || colorIdx >= TheMultiplayerSettings->getNumColors())
+		{
+			DEBUG_ASSERTCRASH(colorIdx == -1, ("Non-random bad color %d in slot %d\n", colorIdx, i));
+			while (colorIdx == -1)
+			{
+				colorIdx = GameLogicRandomValue(0, TheMultiplayerSettings->getNumColors()-1);
+				if (game->isColorTaken(colorIdx))
+					colorIdx = -1;
+			}
+			DEBUG_LOG(("Setting color %d to %d\n", i, colorIdx));
+			slot->setColor(colorIdx);
+		}
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+static void populateRandomStartPosition( GameInfo *game )
+{
+	if(!game)
+		return;
+
+	Int i;
+	Int numPlayers = MAX_SLOTS;
+	const MapMetaData *md = TheMapCache->findMap( game->getMap() );
+  DEBUG_ASSERTCRASH( md , ("Could not find map %s in the mapcache", game->getMap().str()));
+	/* The map cache is this machine's own.  Without the map it deals over all MAX_SLOTS spots where a
+		 machine that has it deals over the map's, so a network game or a replay refuses the start (the
+		 corrupt-map path in update) instead of splitting into two games on the first draw. */
+	if (md == NULL && (TheGameLogic->isInMultiplayerGame() || TheRecorder->getMode() == RECORDERMODETYPE_PLAYBACK))
+	{
+		DEBUG_LOG(("populateRandomStartPosition: no map %s in the cache, a network game or replay is refused\n", game->getMap().str()));
+		throw ERROR_CORRUPT_FILE_FORMAT;
+	}
+	if (md)
+		numPlayers = md->m_numPlayers;
+	else
+		DEBUG_LOG(("populateRandomStartPosition: no map %s, start spots are dealt without distances\n", game->getMap().str()));
+
+	// generate a map of start spot distances
+	Real startSpotDistance[MAX_SLOTS][MAX_SLOTS];
+	for (i=0; i<MAX_SLOTS; ++i)
+	{
+		for (Int j=0; j<MAX_SLOTS; ++j)
+		{
+			if (md && i != j && (i<numPlayers && j<numPlayers))
+			{
+				AsciiString w1, w2;
+				w1.format("Player_%d_Start", i+1);
+				w2.format("Player_%d_Start", j+1);
+				WaypointMap::const_iterator c1 = md->m_waypoints.find(w1);
+				WaypointMap::const_iterator c2 = md->m_waypoints.find(w2);
+				if (c1 == md->m_waypoints.end() || c2 == md->m_waypoints.end())
+				{
+					// couldn't find a waypoint.  must be kinda far away.
+					startSpotDistance[i][j] = 1000000.0f;
+				}
+				else
+				{
+					Coord3D p1 = c1->second;
+					Coord3D p2 = c2->second;
+					startSpotDistance[i][j] = sqrt( sqr(p1.x-p2.x) + sqr(p1.y-p2.y) );
+				}
+			}
+			else
+			{
+				startSpotDistance[i][j] = 0.0f; // not gonna need this
+			}
+		}
+	}
+
+	// see if a start spot has been chosen at all yet
+	Bool hasStartSpotBeenPicked = FALSE;
+	Bool taken[MAX_SLOTS];
+	for (i=0; i<MAX_SLOTS; ++i)
+	{
+		taken[i] = (i<numPlayers)?FALSE:TRUE;
+	}
+	for (i=0; i<MAX_SLOTS; ++i)
+	{
+		GameSlot *slot = game->getSlot(i);
+
+		if (!slot || !slot->isOccupied() || slot->getPlayerTemplate() == PLAYERTEMPLATE_OBSERVER)
+			continue;
+
+		Int posIdx = slot->getStartPos();
+		if (posIdx >= 0 || posIdx >= numPlayers)
+		{
+			hasStartSpotBeenPicked = TRUE;
+			taken[posIdx] = TRUE;
+		}
+	}
+
+#if 0  //GS  The old way puts everyone as far apart as possible.
+	// now pick non-observer spots
+	for (i=0; i<MAX_SLOTS; ++i)
+	{
+		GameSlot *slot = game->getSlot(i);
+
+		if (!slot || !slot->isOccupied() || slot->getPlayerTemplate() == PLAYERTEMPLATE_OBSERVER)
+			continue;
+
+		// clean up random start spots
+		Int posIdx = slot->getStartPos();
+		if (posIdx < 0 || posIdx >= numPlayers)
+		{
+			DEBUG_ASSERTCRASH(posIdx == -1, ("Non-random bad start position %d in slot %d\n", posIdx, i));
+			if (hasStartSpotBeenPicked)
+			{
+				// pick the farthest spot away
+				Real farthestDistance = 0.0f;
+				Int farthestIndex = -1;
+				for (posIdx = 0; posIdx < numPlayers; ++posIdx)
+				{
+					if (!taken[posIdx])
+					{
+						if (farthestIndex < 0)
+						{
+							farthestIndex = posIdx; // take this one as best if none else
+							for (Int n=0; n<numPlayers; ++n)
+							{
+								if (taken[n] && n != posIdx)
+									farthestDistance += startSpotDistance[posIdx][n];
+							}
+						}
+						else
+						{
+							Real dist = 0.0f;
+							for (Int n=0; n<numPlayers; ++n)
+							{
+								if (taken[n] && n != posIdx)
+									dist += startSpotDistance[posIdx][n];
+							}
+							if (dist > farthestDistance)
+							{
+								farthestDistance = dist;
+								farthestIndex = posIdx;
+							}
+						}
+					}
+				}
+				DEBUG_ASSERTCRASH(farthestIndex >= 0, ("Couldn't find a farthest spot!\n"));
+				slot->setStartPos(farthestIndex);
+				taken[farthestIndex] = TRUE;
+			}
+			else
+			{
+				// We're the first real spot.  Pick randomly.
+				// This while loop shouldn't be neccessary, since we're first.  Why not, though?
+				while (posIdx == -1)
+				{
+					posIdx = GameLogicRandomValue(0, numPlayers-1);
+					if (game->isStartPositionTaken(posIdx))
+						posIdx = -1;
+				}
+				DEBUG_LOG(("Setting start position %d to %d (random choice)\n", i, posIdx));
+				slot->setStartPos(posIdx);
+				taken[posIdx] = TRUE;
+				hasStartSpotBeenPicked = TRUE;
+			}
+		}
+	}
+#else  //GS  The new way puts teammates next to each other.
+	Int teamPosIdx[MAX_SLOTS];
+	for (i=0; i<MAX_SLOTS; ++i)
+		teamPosIdx[i] = -1;  //team has no starting position yet
+
+	// now pick non-observer spots
+	for (i=0; i<MAX_SLOTS; ++i)
+	{
+		GameSlot *slot = game->getSlot(i);
+
+		if (!slot || !slot->isOccupied() || slot->getPlayerTemplate() == PLAYERTEMPLATE_OBSERVER)
+			continue;  //slot not used
+
+		Int posIdx = slot->getStartPos();
+		if (posIdx >= 0  &&  posIdx < numPlayers)
+			continue;  //position already assigned
+		DEBUG_ASSERTCRASH(posIdx == -1, ("Non-random bad start position %d in slot %d\n", posIdx, i));
+
+		//choose a starting position
+		Int team = slot->getTeamNumber();
+		if( !hasStartSpotBeenPicked )
+		{	// We're the first real spot.  Pick randomly.
+			while (posIdx == -1)
+			{	// This while loop shouldn't be neccessary, since we're first.  Why not, though?
+				posIdx = GameLogicRandomValue(0, numPlayers-1);
+				if (game->isStartPositionTaken(posIdx))
+					posIdx = -1;
+			}
+			DEBUG_LOG(("Setting start position %d to %d (random choice)\n", i, posIdx));
+			hasStartSpotBeenPicked = TRUE;
+			slot->setStartPos(posIdx);
+			taken[posIdx] = TRUE;
+			if( team > -1 )
+				teamPosIdx[team] = posIdx;  //remember where this team is
+		} else
+		{	//pick teams far apart, team members close together
+			if( team < 0  ||  teamPosIdx[ team ] == -1 )  //if team None or team not yet placed
+			{	//pick position furthest from all other teams
+				Real farthestDistance = 0.0f;
+				Int farthestIndex = -1;
+				for (posIdx = 0; posIdx < numPlayers; ++posIdx)
+				{
+					if (taken[posIdx])
+						continue;  //skip occupied positions
+
+					if (farthestIndex < 0)
+					{	//take this one as best if none else
+						farthestIndex = posIdx;
+						for (Int n=0; n<numPlayers; ++n)
+						{
+							if (taken[n] && n != posIdx)
+								farthestDistance += startSpotDistance[posIdx][n];
+						}
+					}
+					else
+					{	//find empty position furthest from all taken positions
+						Real dist = 0.0f;
+						for (Int n=0; n<numPlayers; ++n)
+						{
+							if (taken[n] && n != posIdx)
+								dist += startSpotDistance[posIdx][n];
+						}
+						if (dist > farthestDistance)
+						{
+							farthestDistance = dist;
+							farthestIndex = posIdx;
+						}
+					}
+				} //for posInx
+
+				DEBUG_ASSERTCRASH(farthestIndex >= 0, ("Couldn't find a farthest spot!\n"));
+				slot->setStartPos(farthestIndex);
+				taken[farthestIndex] = TRUE;
+				if( team > -1 )
+					teamPosIdx[team] = farthestIndex;  //remember where this team is
+			} //pick farthest
+			else  //team already has a starting position
+			{	//pick position closest to team
+				Real closestDist = FLT_MAX;
+				Int  closestIdx = 0;
+				for( Int n=0;  n < numPlayers;  ++n )
+				{
+					Real dist = startSpotDistance[ teamPosIdx[team] ][n];
+					if( !taken[n]  &&  dist < closestDist )
+					{	//found a better match
+						closestDist = dist;
+						closestIdx = n;
+					}
+				} //for n
+				DEBUG_ASSERTCRASH( closestDist < FLT_MAX, ("Couldn't find a closest starting positon!\n"));
+				slot->setStartPos(closestIdx);
+				taken[closestIdx] = TRUE;
+			}
+		}
+	} //for i
+#endif 0
+
+	// now go back & assign observer spots
+	Int numPlayersInGame = 0;
+	for (i=0; i<MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = game->getConstSlot(i);
+		if (slot->isOccupied() && slot->getPlayerTemplate() != PLAYERTEMPLATE_OBSERVER)
+			++numPlayersInGame;
+	}
+	for (i=0; i<MAX_SLOTS; ++i)
+	{
+		GameSlot *slot = game->getSlot(i);
+
+		if (!slot || !slot->isOccupied())
+			continue;
+
+		if (slot->getPlayerTemplate() != PLAYERTEMPLATE_OBSERVER)
+			continue;
+
+		// clean up random start spots
+		Int posIdx = -1;
+		if (numPlayersInGame == 0)
+			posIdx = 0;
+		while (posIdx == -1)
+		{
+			posIdx = GameLogicRandomValue(0, numPlayers-1);
+			if (!game->isStartPositionTaken(posIdx))
+				posIdx = -1;
+		}
+		DEBUG_LOG(("Setting observer start position %d to %d\n", i, posIdx));
+		slot->setStartPos(posIdx);
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Update the load screen progress */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::updateLoadProgress( Int progress )
+{
+
+	if( m_loadScreen )
+		m_loadScreen->update( progress );
+
+}  // end updateLoadProgress
+
+// ------------------------------------------------------------------------------------------------
+/** Delete the load screen */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::deleteLoadScreen( void )
+{
+
+	if( m_loadScreen )
+	{
+
+		delete m_loadScreen;
+		m_loadScreen = NULL;
+
+	}  // end if
+
+}  // end deleteLoadScreen
+
+// ------------------------------------------------------------------------------------------------
+/** startNewGame threw ERROR_CORRUPT_FILE_FORMAT part-way through the map.  Take down what the start
+	* had put up, as a failed save load does, and say why on the menu it was started from. */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::refuseCorruptMap( void )
+{
+	DEBUG_LOG(("GameLogic::refuseCorruptMap - '%s' does not load, back to the menus\n", TheGlobalData->m_mapName.str()));
+
+	UnicodeString mapName;
+	mapName.translate( TheGlobalData->m_mapName );
+
+	deleteLoadScreen();
+	TheWritableGlobalData->m_loadScreenRender = FALSE;
+	setLoadingMap( FALSE );
+	TheMouse->setVisibility( TRUE );
+
+	if( TheRecorder->getMode() == RECORDERMODETYPE_RECORD )
+		TheRecorder->stopRecording();
+
+	clearGameData( FALSE );
+	TheShell->showShell( TRUE );
+
+	UnicodeString msg;
+	msg.format( TheGameText->fetch( "GUI:MapCorrupt" ), mapName.str() );
+	MessageBoxOk( TheGameText->fetch( "GUI:Error" ), msg, NULL );
+
+}  // end refuseCorruptMap
+
+// ------------------------------------------------------------------------------------------------
+/** Entry point for starting a new game, the engine is already in clean state at this
+	* point and ready to load up with all the data */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::startNewGame( Bool loadingSaveGame )
+{
+	// a vote is about one match; none carries into the next, or into a loaded one
+	m_kickVoteTarget = -1;
+	m_kickVoteEndFrame = 0;
+	m_kickVoteYesMask = 0;
+
+	#ifdef DUMP_PERF_STATS
+	__int64 startTime64;
+	__int64 endTime64,freq64;
+	GetPrecisionTimerTicksPerSec(&freq64);
+	GetPrecisionTimer(&startTime64);
+	#endif
+
+	setLoadingMap( TRUE );
+
+	if( loadingSaveGame == FALSE )
+	{
+
+		// record pristine map name when we're loading from the map (not a save game)
+		TheGameState->setPristineMapName( TheGlobalData->m_mapName );
+
+		//
+		// sanity, the pristine map should never start with "Save", otherwise that would be
+		// a map from the save directory
+		//
+		if (TheGameState->isInSaveDirectory(TheGlobalData->m_mapName))
+		{
+
+			DEBUG_CRASH(( "FATAL SAVE/LOAD ERROR! - Setting a pristine map name that refers to a map in the save directory.  The pristine map should always refer to the ORIGINAL map in the Maps directory, if the pristine map string is corrupt then map.ini files will not load correctly.\n" ));
+
+		}  // end if
+
+		if( m_startNewGame == FALSE )
+		{
+			/// @todo: Here is where we would look at the game mode & play an intro movie or something.
+			// Failing that, we just set the flag so the actual game can start from a uniform
+			// entry point (startNewGame() called from update()).
+			if( m_gameMode == GAME_SINGLE_PLAYER )
+			{
+
+				if(m_background)
+				{
+					m_background->destroyWindows();
+					m_background->deleteInstance();
+					m_background = NULL;
+				}
+				m_loadScreen = getLoadScreen( loadingSaveGame );
+				if(m_loadScreen)
+				{
+					TheWritableGlobalData->m_loadScreenRender = TRUE;	///< mark it so only a few select things are rendered during load
+					m_loadScreen->init(NULL);
+				}
+
+			}
+
+			m_startNewGame = TRUE;
+			return;
+
+		}  
+
+	}  // end if
+
+	m_rankLevelLimit = 1000;	// this is reset every game.
+#if defined(__linux__)
+	if (!loadingSaveGame && !isInShellGame())
+		PosixGpuTimingLoadMarker("load-begin", m_frame);
+#endif
+	// the score screen's graphs are the last match's: a match clears them, the shell map never does
+	if( m_gameMode != GAME_SHELL )
+		TheMatchHistory.reset();
+	setDefaults( loadingSaveGame );
+	TheWritableGlobalData->m_loadScreenRender = TRUE;	///< mark it so only a few select things are rendered during load	
+	TheWritableGlobalData->m_TiVOFastMode = FALSE;	//always disable the TIVO fast-forward mode at the start of a new game.
+
+	/* Every switch below puts something into the match that the other machines never hear about, and
+		 none of them is in the INI checksum, so a player who types one joins a lobby like anyone else
+		 and the match comes apart on the first order instead of being refused at the door. They set up
+		 an unattended measurement, so a network game runs the host's options whatever the command line
+		 said.  No switch changes how a unit decides: the movement A/B switches that used to sit in this
+		 list were taken out of the game, and a new rule goes in on for everybody or not at all.
+		 Anything new that reaches GameLogic from the command line belongs in this list on the day it
+		 is written. */
+	if (isInMultiplayerGame())
+	{
+		/* A -netgame match is the exception for -scenario: it has no lobby, every machine in it was
+			 started from a script with the same command line, and a busy network game is the one load
+			 the multiplayer catch-up could not otherwise be tested under.  Only one that actually
+			 started, though: a -netgame that failed its own checks leaves this copy at the menus, and
+			 a LAN lobby joined from there is an ordinary match.  The file itself is agreed on by
+			 nobody, so this stays a test route; a replay of it needs the same -scenario again. */
+		if (!TheGlobalData->m_netGameStarted)
+			TheWritableGlobalData->m_scenarioFile.clear();		// -scenario
+		TheWritableGlobalData->m_peaceTime = 0;						// -peacetime, and the host's options string is read below
+		TheWritableGlobalData->m_unitLimit = FALSE;						// -unitlimit, the same
+	}
+	/* The playback of a network game is not a network game, but it replays one that ran the host's
+		 options, so a switch given to the playback has to be dropped the same way. */
+	else if (TheRecorder && TheRecorder->getMode() == RECORDERMODETYPE_PLAYBACK
+					 && (TheRecorder->getGameMode() == GAME_LAN || TheRecorder->getGameMode() == GAME_INTERNET))
+	{
+		TheWritableGlobalData->m_peaceTime = 0;
+		TheWritableGlobalData->m_unitLimit = FALSE;
+	}
+
+	m_showBehindBuildingMarkers = TRUE;
+	m_drawIconUI = TRUE;
+	m_showDynamicLOD = TRUE;
+	m_scriptHulkMaxLifetimeOverride = -1;
+
+	Campaign* currentCampaign = TheCampaignManager->getCurrentCampaign();
+	Bool isChallengeCampaign = m_gameMode == GAME_SINGLE_PLAYER && currentCampaign && currentCampaign->m_isChallengeCampaign;
+
+	// Fill in the game color and Factions before we do the Load Screen
+	GameInfo *game = NULL;
+	TheGameInfo = NULL;
+	Int localSlot = 0;
+	if (TheNetwork)
+	{
+		if (TheLAN)
+		{
+			DEBUG_LOG(("Starting network game\n"));
+			TheGameInfo = game = TheLAN->GetMyGame();
+		}
+		else
+		{
+			DEBUG_LOG(("Starting gamespy game\n"));
+			TheGameInfo = game = TheGameSpyGame;	/// @todo: MDC add back in after demo
+		}
+	}
+	else
+	{
+		if (TheRecorder && TheRecorder->getMode() == RECORDERMODETYPE_PLAYBACK)
+		{
+			TheGameInfo = game = TheRecorder->getGameInfo();
+		}
+		else if(m_gameMode == GAME_SKIRMISH)
+		{
+		  TheGameInfo = game = TheSkirmishGameInfo;
+		}
+		else if(isChallengeCampaign)
+		{
+			TheGameInfo = game = TheChallengeGameInfo;
+		}
+	}
+
+  // On a NEW game, we need to copy the superweapon restrictions from the game info to here
+  // (because TheGameInfo is not always saved and doesn't carry over to replays). On a save
+  // game, we save the superweapon restrictions in GameLogic::xfer()
+  if ( !loadingSaveGame )
+  {
+    if ( TheGameInfo )
+    {
+      m_superweaponRestriction = TheGameInfo->getSuperweaponRestriction();
+      m_peaceTimeEndFrame = TheGameInfo->getPeaceTime() * 60 * LOGICFRAMES_PER_SECOND;
+      m_unitCap = TheGameInfo->getUnitLimit()
+                  ? (UnsignedInt)UnitLimitPerPlayer( TheGameInfo->getNumNonObserverPlayers() ) : 0;
+      m_incomeSharing = TheGameInfo->getIncomeSharing();
+      m_techRespawnDelay = TheGameInfo->getTechRespawn() * 60 * LOGICFRAMES_PER_SECOND;
+      m_supplyPileLimit = TheGameInfo->getSupplyPileLimit();
+    }
+    else
+    {
+      // ??? Apparently this is legit? Oh well, use defaults
+      m_superweaponRestriction = 0;
+      m_peaceTimeEndFrame = 0;
+      m_unitCap = 0;
+      m_incomeSharing = INCOME_SHARING_OFF;
+      m_techRespawnDelay = 0;
+      m_supplyPileLimit = 0;
+    }
+
+    /* Pro Rules hold in the modes people play each other in, when the lobby's check box is ticked,
+       and never in a skirmish, which has no box.  A replay asks the mode it was recorded in, or a
+       LAN game that refused an Aurora would play back as a skirmish that built it; the box itself
+       travels in the replay's options string as PR. */
+    const Int proRulesMode = (TheRecorder && TheRecorder->getMode() == RECORDERMODETYPE_PLAYBACK)
+                             ? TheRecorder->getGameMode() : m_gameMode;
+    m_proRules = (proRulesMode == GAME_LAN || proRulesMode == GAME_INTERNET)
+                 && TheGameInfo && TheGameInfo->getProRules();
+    /* -unitlimit is the lobby's check box for an -autoskirmish run, which has no lobby to tick it
+       in.  A network game reads the host's options string instead, and the switch is cleared for
+       one above. */
+    if ( TheGlobalData->m_unitLimit && TheGameInfo )
+      m_unitCap = (UnsignedInt)UnitLimitPerPlayer( TheGameInfo->getNumNonObserverPlayers() );
+
+    /* -peacetime is the one way past the no-computer-players rule in GameInfo::getPeaceTime(), and
+       it is deliberate: an unattended run is nothing but bots, so without this there would be no
+       way to watch what the truce does to a match or to prove a change to it still replays. No
+       player can reach it - a network game reads the host's options string, not this. */
+    if ( TheGlobalData->m_peaceTime > 0 )
+      m_peaceTimeEndFrame = TheGlobalData->m_peaceTime * 60 * LOGICFRAMES_PER_SECOND;
+  }
+
+	checkForDuplicateColors( game );
+
+	Bool isSkirmishOrSkirmishReplay = FALSE;
+	if (game)
+	{
+		// Random color, position and faction are drawn off the logical seed.  A restarted game puts
+		// the pre-draw values back so the same draws happen again (see GameInfo::handleOriginalSetups).
+		if (!loadingSaveGame)
+			game->handleOriginalSetups();
+
+		for (Int i=0; i<MAX_SLOTS; ++i)
+		{
+			GameSlot *slot = game->getSlot(i);
+			if (slot->isAI())
+			{
+				isSkirmishOrSkirmishReplay = TRUE;
+				continue;
+			}
+		}
+	} else {
+		if (m_gameMode == GAME_SINGLE_PLAYER)	{
+			if (TheSkirmishGameInfo) {
+				if (TheGameInfo == TheSkirmishGameInfo)
+					TheGameInfo = NULL;	// or it is left pointing at freed memory
+				delete TheSkirmishGameInfo;
+				TheSkirmishGameInfo = NULL;
+			}
+		}
+	}
+
+	populateRandomSideAndColor( game );
+	populateRandomStartPosition( game );
+
+	//****************************//
+	// Start the LoadScreen Now!	//
+	//****************************//
+
+	// Get the m_loadScreen for this kind of game
+	if(!m_loadScreen)
+	{
+		m_loadScreen = getLoadScreen( loadingSaveGame );
+		if(m_loadScreen)
+		{
+			TheMouse->setVisibility(FALSE);
+			m_loadScreen->init(game);
+
+			// 
+			updateLoadProgress( LOAD_PROGRESS_START );
+		}
+	}
+	if(m_background)
+	{
+		m_background->destroyWindows();
+		m_background->deleteInstance();
+		m_background = NULL;
+	}
+	setFPMode();
+	if(TheCampaignManager)
+		TheCampaignManager->SetVictorious(FALSE);
+	m_startNewGame = FALSE;
+
+	// update the loadscreen 
+	if(m_loadScreen)
+		updateLoadProgress(LOAD_PROGRESS_POST_PARTICLE_INI_LOAD);
+
+	// reset the frame counter
+	m_frame = 0;
+
+	// before loading the map, load the map.ini file in the same directory.
+	loadMapINI( TheGlobalData->m_mapName );
+
+	// load a map
+	TheTerrainLogic->loadMap( TheGlobalData->m_mapName, false );
+	// anytime the world's size changes, must reset the partition mgr
+	//ThePartitionManager->init();
+
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_LOAD_MAP);
+
+	#ifdef DUMP_PERF_STATS
+	GetPrecisionTimer(&endTime64);
+	char Buf[256];
+	sprintf(Buf,"After terrainlogic->loadmap=%f\n",((double)(endTime64-startTime64)/(double)(freq64)*1000.0));
+		//DEBUG_LOG(("Placed a starting building for %s at waypoint %s\n", playerName.str(), waypointName.str()));
+	DEBUG_LOG(("%s", Buf));
+	#endif
+
+	Int progressCount = LOAD_PROGRESS_SIDE_POPULATION;
+	if (game)
+	{
+		 
+		if (TheGameEngine->isMultiplayerSession() || isSkirmishOrSkirmishReplay)
+		{
+			// Saves off any player, and resets the sides to 0 players so we can add the skirmish players.
+			TheSidesList->prepareForMP_or_Skirmish();
+		}
+
+		//DEBUG_LOG(("Starting LAN game with %d players\n", game->getNumPlayers()));
+		Dict d;
+		for (int i=0; i<MAX_SLOTS; ++i)
+		{
+			// Add a Side to TheSidesList
+			GameSlot *slot = game->getSlot(i);
+
+			if (!slot || !slot->isHuman())
+			{
+				m_progressComplete[i] = TRUE;
+				lastHeardFrom(i);
+			}
+
+			if (!slot || !slot->isOccupied())
+				continue;
+
+			d.clear();
+			AsciiString playerName;
+			playerName.format("player%d", i);
+			d.setAsciiString(TheKey_playerName, playerName);
+			// A takeover seat is an AI slot everywhere in the lobby, but the player it makes is human:
+			// no AIPlayer is attached, so its base just sits there until you take it over in game.
+			d.setBool(TheKey_playerIsHuman, slot->isHuman() || slot->isTakeover());
+			d.setUnicodeString(TheKey_playerDisplayName, slot->getName());
+			const PlayerTemplate* pt;
+			if (slot->getPlayerTemplate() >= 0)
+				pt = ThePlayerTemplateStore->getNthPlayerTemplate(slot->getPlayerTemplate());
+			else
+				pt = ThePlayerTemplateStore->findPlayerTemplate( TheNameKeyGenerator->nameToKey("FactionObserver") );
+			if (pt)
+			{
+				d.setAsciiString(TheKey_playerFaction, KEYNAME(pt->getNameKey()));
+			}
+			
+			if (game->isPlayerPreorder(i))
+			{
+				d.setBool(TheKey_playerIsPreorder, TRUE);
+			}
+					
+			AsciiString enemiesString, alliesString;
+			Int team = slot->getTeamNumber();
+			DEBUG_LOG(("Looking for allies of player %d, team %d\n", i, team));
+			for(int j=0; j < MAX_SLOTS; ++j)
+			{
+				GameSlot *teamSlot = game->getSlot(j);
+				// for check to see if we're trying to add ourselves
+				if(i == j || !teamSlot->isOccupied())
+					continue;
+				
+				DEBUG_LOG(("Player %d is team %d\n", j, teamSlot->getTeamNumber()));
+
+				AsciiString teamPlayerName;
+				teamPlayerName.format("player%d", j);
+				// if our team is None, or our team is not equal to their team, 
+				// then their our enemy
+				Bool isEnemy = FALSE;
+				if(team == -1 || teamSlot->getTeamNumber() != team ) isEnemy = TRUE;
+				DEBUG_LOG(("Player %d is %s\n", j, (isEnemy)?"enemy":"ally"));
+
+				if (isEnemy)
+				{
+					if(!enemiesString.isEmpty())
+						enemiesString.concat(" ");
+					enemiesString.concat(teamPlayerName);
+				}
+				else
+				{
+					// he's on our team, add him!
+					if(!alliesString.isEmpty())
+						alliesString.concat(" ");
+					alliesString.concat(teamPlayerName);
+				}				
+			}
+			d.setAsciiString(TheKey_playerAllies, alliesString);
+			d.setAsciiString(TheKey_playerEnemies, enemiesString);
+			DEBUG_LOG(("Player %d's teams are: allies=%s, enemies=%s\n", i,alliesString.str(),enemiesString.str()));
+/*
+
+			Int colorIdx = slot->getColor();
+			if (colorIdx < 0 || colorIdx >= TheMultiplayerSettings->getNumColors())
+			{
+				DEBUG_ASSERTCRASH(colorIdx == -1, ("Non-random bad color %d in slot %d\n", colorIdx, i));
+				while (colorIdx == -1)
+				{
+					colorIdx = GameLogicRandomValue(0, TheMultiplayerSettings->getNumColors()-1);
+					if (game->isColorTaken(colorIdx))
+						colorIdx = -1;
+				}
+				DEBUG_LOG(("Setting color %d to %d\n", i, colorIdx));
+				slot->setColor(colorIdx);
+			}
+			*/
+
+			d.setInt(TheKey_playerColor, TheMultiplayerSettings->getColor(slot->getColor())->getColor());
+			d.setInt(TheKey_playerNightColor, TheMultiplayerSettings->getColor(slot->getColor())->getNightColor());
+			d.setInt(TheKey_multiplayerStartIndex, slot->getStartPos());
+			// Player's Handicap reads it; absent at full health, so such a seat's dict is the one it always was
+			if (slot->getHandicap() != HANDICAP_FULL)
+			{
+				const Real handicap = slot->getHandicap() / (Real)HANDICAP_FULL;
+				d.setReal(TheNameKeyGenerator->nameToKey("HANDICAP_MAXHEALTH_GENERIC"), handicap);
+				d.setReal(TheNameKeyGenerator->nameToKey("HANDICAP_MAXHEALTH_BUILDINGS"), handicap);
+				d.setReal(TheNameKeyGenerator->nameToKey("HANDICAP_BUILDTIME_GENERIC"), 1.0f / handicap);
+				d.setReal(TheNameKeyGenerator->nameToKey("HANDICAP_BUILDTIME_BUILDINGS"), 1.0f / handicap);
+			}
+//			d.setBool(TheKey_multiplayerIsLocal, slot->isLocalPlayer());
+//			d.setBool(TheKey_multiplayerIsLocal, slot->getIP() == game->getLocalIP());
+			//
+			// getLocalSlotNum() returns -1 when no slot belongs to us, and getSlot(-1) returns NULL.
+			// A replay is the ordinary way to get here with no local slot at all: the header carries
+			// -1 when the recording side never identified its own seat, and the reply to that used to
+			// be a null dereference before the map had even loaded. Nobody's slot is the local one in
+			// that case, which is also the truthful answer.
+			//
+			GameSlot *localGameSlot = game->getSlot(game->getLocalSlotNum());
+			d.setBool(TheKey_multiplayerIsLocal, localGameSlot != NULL && slot->isHuman()
+								&& (slot->getName().compare(localGameSlot->getName().str()) == 0));
+
+/*
+			if (slot->getIP() == game->getLocalIP())
+			{
+				localSlot = i;
+				DEBUG_LOG(("GameLogic::StartNewGame - local slot is %d\n", localSlot));
+			}
+*/
+
+			if (isSkirmishOrSkirmishReplay) 
+			{
+				d.setBool(TheKey_playerIsSkirmish, true);
+				//
+				// Two answers from one seat. skirmishDifficulty is a GameDifficulty, because that is
+				// what gates the scripts baked into every shipped map and .scb; skirmishAISkill is
+				// the ladder rung, which is what decides how well the AI plays.  The two carry the
+				// same three steps and are still not the same question.  See AI-ROADMAP.md D7.
+				//
+				switch (slot->getState()) {
+					case SLOT_EASY_AI:
+						d.setInt(TheKey_skirmishDifficulty, DIFFICULTY_EASY);
+						d.setInt(TheKey_skirmishAISkill, AISKILL_EASY); break;
+					case SLOT_MED_AI:
+						d.setInt(TheKey_skirmishDifficulty, DIFFICULTY_NORMAL);
+						d.setInt(TheKey_skirmishAISkill, AISKILL_MEDIUM); break;
+					case SLOT_BRUTAL_AI:
+						d.setInt(TheKey_skirmishDifficulty, DIFFICULTY_HARD);
+						d.setInt(TheKey_skirmishAISkill, AISKILL_BRUTAL); break;
+					default: break;	 // no setting.
+				}
+				// absent for Normal, so a Normal seat's dict is the one it always was
+				if (slot->getAIPersonality() != AIPERSONA_NORMAL)
+					d.setInt(TheKey_skirmishAIPersonality, slot->getAIPersonality());
+			}
+
+			// by index: the name went through an ASCII translate and back, which no name with a
+			// letter outside Latin-1 survives, so such a player started with the host's camera
+			if (slot->isHuman() && i == game->getLocalSlotNum()) {
+				localSlot = i;
+			}
+			TheSidesList->addSide(&d);
+
+			AsciiString playerTeamName;
+			playerTeamName.set("team");
+			playerTeamName.concat(playerName);
+
+			d.clear();
+			d.setAsciiString(TheKey_teamName, playerTeamName);
+			d.setAsciiString(TheKey_teamOwner, playerName);
+			d.setBool(TheKey_teamIsSingleton, true);
+			TheSidesList->addTeam(&d);
+
+			DEBUG_LOG(("Added side %d\n", i));
+			updateLoadProgress(progressCount + i);
+		}		
+	}
+	//if(m_gameMode != GAME_REPLAY)
+	//{
+	
+		// Always add in an observer Player
+		Dict d;
+		d.setAsciiString(TheKey_playerName, "ReplayObserver");
+		d.setBool(TheKey_playerIsHuman, TRUE);
+		d.setUnicodeString(TheKey_playerDisplayName, UnicodeString(u"Observer"));
+		const PlayerTemplate* pt;
+		pt = ThePlayerTemplateStore->findPlayerTemplate( TheNameKeyGenerator->nameToKey("FactionObserver") );
+		if (pt)
+		{
+			d.setAsciiString(TheKey_playerFaction, KEYNAME(pt->getNameKey()));
+		}
+		d.setAsciiString(TheKey_playerAllies, AsciiString::TheEmptyString);
+		d.setAsciiString(TheKey_playerEnemies, AsciiString::TheEmptyString);
+		d.setInt(TheKey_playerColor, TheMultiplayerSettings->getColor(0)->getColor());
+		d.setInt(TheKey_playerNightColor, TheMultiplayerSettings->getColor(0)->getNightColor());
+		d.setInt(TheKey_multiplayerStartIndex, 0);
+		d.setBool(TheKey_multiplayerIsLocal, FALSE);
+
+		TheSidesList->addSide(&d);	
+		d.clear();
+		d.setAsciiString(TheKey_teamName, "teamReplayObserver");
+		d.setAsciiString(TheKey_teamOwner, "ReplayObserver");
+		d.setBool(TheKey_teamIsSingleton, true);
+		TheSidesList->addTeam(&d);
+	//}
+	TheSidesList->validateSides();		
+
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_SIDE_LIST_INIT);
+
+	// update the player list to match the new map.
+	TheTeamFactory->reset();
+	ThePlayerList->newGame();
+
+	// the AI's unit-against-unit tables, here on the loading screen rather than at its first team choice
+	AIPlayer::prepareMatchupTables();
+
+	// update the loadscreen
+	updateLoadProgress(LOAD_PROGRESS_POST_PLAYER_LIST_RESET);
+
+	// Tell the script engine that a newe set of scripts is loaded.
+	TheScriptEngine->newMap();
+
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_SCRIPT_ENGINE_NEW_MAP);
+
+	if (TheGameEngine->isMultiplayerSession() || isSkirmishOrSkirmishReplay)
+	{
+		// if there are no other teams (happens for debugging) don't end the game immediately
+		Int numTeams = 0; // this can be higher than expected, but is accurate for determining 0, 1, 2+
+		Int lastTeam = -1;
+		if (game)
+		{
+			for (int i=0; i<MAX_SLOTS; ++i)
+			{
+				const GameSlot *slot = game->getConstSlot(i);
+				if (slot->isOccupied() && slot->getPlayerTemplate() != PLAYERTEMPLATE_OBSERVER)
+				{
+					if (slot->getTeamNumber() == -1 || slot->getTeamNumber() != lastTeam)
+					{
+						++numTeams;
+						lastTeam = slot->getTeamNumber();
+					}
+				}
+			}
+		}
+
+		if (numTeams > 1)
+		{
+			// add in the multiplayer victory/defeat scripts
+			AsciiString path = "Data\\Scripts\\MultiplayerScripts.scb";
+			CachedFileInputStream theInputStream;
+			if (theInputStream.open(path))
+			{ 
+				ChunkInputStream *pStrm = &theInputStream;
+				DataChunkInput file( pStrm );
+				file.registerParser( AsciiString("PlayerScriptsList"), AsciiString::TheEmptyString, ScriptList::ParseScriptsDataChunk );
+				if (!file.parse(NULL)) {
+					DEBUG_LOG(("ERROR - Unable to read in multiplayer scripts.\n"));
+					return;
+				}
+				ScriptList *scripts[MAX_PLAYER_COUNT];
+				Int count = ScriptList::getReadScripts(scripts);
+				if (count)
+				{
+					// a map can be saved with no script list for a side, the first one these go to included
+					// (a player's custom map, a crash at the start of a skirmish): it gets an empty one
+					ScriptList *pSL = TheSidesList->getSideInfo(0)->getScriptList();
+					if (pSL == NULL)
+					{
+						pSL = newInstance(ScriptList);
+						TheSidesList->getSideInfo(0)->setScriptList(pSL);
+					}
+					Script *next = scripts[0]->getScript();
+					while (next)
+					{
+						Script *dupe = next->duplicate();
+						pSL->addScript(dupe, 0);
+						next = next->getNext();
+					}
+				}
+				for (Int i=0; i<count; ++i)
+				{
+					scripts[i]->deleteInstance();
+				}
+			}
+		}
+
+		/*
+		// add multiplayer single-player defeat script
+		if (numTeams > 1)
+		{
+			AsciiString name;
+			name.format("MultiplayerPlayerDefeat"); // name is for the ui in the editor
+			Script *pNewScript = newInstance(Script);
+			pNewScript->setName(name);
+
+			Condition *pFalse1 = newInstance(Condition)(Condition::MULTIPLAYER_PLAYER_DEFEAT);
+			OrCondition *pOr = newInstance(OrCondition);
+			pOr->setFirstAndCondition(pFalse1);
+			pNewScript->setOrCondition(pOr);
+
+			ScriptAction *action = newInstance(ScriptAction)(ScriptAction::LOCALDEFEAT);
+			pNewScript->setAction(action);
+
+			ScriptList *pSL = TheSidesList->getSideInfo(0)->getScriptList();
+			pSL->addScript(pNewScript, 0); // adds this as the player's first script (index 0)
+		}
+
+		// add multiplayer victory scripts
+		if (numTeams > 1)
+		{
+			AsciiString name;
+			name.format("MultiplayerVictory"); // name is for the ui in the editor
+			Script *pNewScript = newInstance( Script );
+			pNewScript->setName(name);
+
+			Condition *pFalse1 = newInstance(Condition)(Condition::MULTIPLAYER_ALLIED_VICTORY);
+			OrCondition *pOr = newInstance(OrCondition);
+			pOr->setFirstAndCondition(pFalse1);
+			pNewScript->setOrCondition(pOr);
+
+			ScriptAction *action = newInstance(ScriptAction)(ScriptAction::VICTORY);
+			pNewScript->setAction(action);
+
+			ScriptList *pSL = TheSidesList->getSideInfo(0)->getScriptList();
+			pSL->addScript(pNewScript, 0); // adds this as the player's first script (index 0)
+		}
+
+		// add multiplayer defeat scripts
+		if (numTeams > 1)
+		{
+			AsciiString name;
+			name.format("MultiplayerDefeat"); // name is for the ui in the editor
+			Script *pNewScript = newInstance(Script);
+			pNewScript->setName(name);
+
+			Condition *pFalse1 = newInstance(Condition)(Condition::MULTIPLAYER_ALLIED_DEFEAT);
+			OrCondition *pOr = newInstance(OrCondition);
+			pOr->setFirstAndCondition(pFalse1);
+			pNewScript->setOrCondition(pOr);
+
+			ScriptAction *action = newInstance(ScriptAction)(ScriptAction::DEFEAT);
+			pNewScript->setAction(action);
+
+			ScriptList *pSL = TheSidesList->getSideInfo(0)->getScriptList();
+			pSL->addScript(pNewScript, 0); // adds this as the player's first script (index 0)
+		}
+		*/
+	}
+
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_VICTORY_CONDITION_SETUP);
+
+	// set the radar as on a new map
+	TheRadar->newMap( TheTerrainLogic );
+	TheInGameUI->setClientQuiet( FALSE ); // okay to start beeping and stuff
+
+	// Tell the multiplayer victory condition singleton that the players are created
+	TheVictoryConditions->cachePlayerPtrs();
+	TheVictoryConditions->setVictoryConditions(VICTORY_NOBUILDINGS);
+
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_VICTORY_CONDITION_SET_VICTORY_CONDITION);
+
+	// set the world extents to that of the map
+	Region3D extent;
+	TheTerrainLogic->getExtent( &extent );
+
+	TheGameLogic->setWidth( extent.hi.x - extent.lo.x );
+	TheGameLogic->setHeight( extent.hi.y - extent.lo.y );
+
+	// anytime the world's size changes, must reset the partition mgr
+	ThePartitionManager->init();
+	ThePartitionManager->refreshShroudForLocalPlayer();// Can't do this until after init, and doesn't seem right to do in init
+
+	// An observer watches from behind whichever player's eyes it picks, so its fog memory has to be
+	// kept for every player from the first frame - there is no going back and remembering later.
+	// A player watches only their own, which is what the extra snapshots are worth avoiding.
+	TheGhostObjectManager->setTrackAllPlayers( ThePlayerList->getLocalPlayer()->isPlayerObserver() );
+	TheGhostObjectManager->setLocalPlayerIndex(ThePlayerList->getLocalPlayer()->getPlayerIndex());
+	TheGhostObjectManager->reset();
+	
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_GHOST_OBJECT_MANAGER_RESET);
+
+	// update the terrain logic now that all is loaded
+	TheTerrainLogic->newMap( loadingSaveGame );
+
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_TERRAIN_LOGIC_NEW_MAP);
+
+	#ifdef DUMP_PERF_STATS
+	GetPrecisionTimer(&endTime64);
+	sprintf(Buf,"After terrainlogic->newmap=%f\n",((double)(endTime64-startTime64)/(double)(freq64)*1000.0));
+	DEBUG_LOG(("%s", Buf));
+	#endif
+
+		// Special case, load any bridge map objects.
+ 	const ThingTemplate *thingTemplate;
+	MapObject *pMapObj;
+	for (pMapObj = MapObject::getFirstMapObject(); pMapObj; pMapObj = pMapObj->getNext()) 
+	{
+
+		if (pMapObj->getFlag(FLAG_BRIDGE_FLAGS) || pMapObj->getFlag(FLAG_ROAD_FLAGS)) 
+			continue;	// these roads & bridges are special cased in the terrain side.
+
+		// get thing template based from map object name
+		thingTemplate = pMapObj->getThingTemplate();
+		if( thingTemplate == NULL )
+			continue;	
+
+		Bool isBridgeLikeObject = false;
+
+		if (thingTemplate->isBridge()) 
+			isBridgeLikeObject = true;
+		if (thingTemplate->isKindOf(KINDOF_WALK_ON_TOP_OF_WALL)) 
+			isBridgeLikeObject = true;
+
+		if (!isBridgeLikeObject)
+			continue;
+
+		Team *team = ThePlayerList->getNeutralPlayer()->getDefaultTeam();
+		// create new object in the world
+		Object *obj = TheThingFactory->newObject( thingTemplate, team ); //, OBJECT_STATUS_LOADING_FROM_MAP );
+		if( obj )
+		{
+			Coord3D pos = *pMapObj->getLocation();
+			pos.z += TheTerrainLogic->getGroundHeight( pos.x, pos.y );
+
+			Real angle = normalizeAngle(pMapObj->getAngle());  
+			obj->setOrientation(angle);
+			obj->setPosition( &pos );
+			if (thingTemplate->isBridge()) {
+				TheTerrainLogic->addLandmarkBridgeToLogic(obj);
+			}
+			if (thingTemplate->isKindOf(KINDOF_WALK_ON_TOP_OF_WALL)) {
+				TheAI->pathfinder()->addWallPiece(obj);
+			}
+
+			// Do this after positioning the object, because we may place objects in response to keys
+			// in the map object properties.
+			// update this object instance with properties from the map object
+			obj->updateObjValuesFromMapProperties( pMapObj->getProperties() );
+		}  // end if
+
+	}	// for, loading bridge map objects
+
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_BRIDGE_LOAD);
+
+	// refresh the radar to reflect loaded bridges
+	TheRadar->refreshTerrain( TheTerrainLogic );
+
+	// tell the AI about it
+	// Note that it is important that the pathfinder be called before the map objects are loaded.
+	TheAI->pathfinder()->newMap( );
+
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_PATHFINDER_NEW_MAP);
+
+	// reveal the map for the permanent observer.  The observer side goes in after the map's own, and a
+	// map whose sides already fill all MAX_PLAYER_COUNT seats leaves it no room (SidesList::addSide
+	// drops it), so such a match simply has no observer to reveal for.
+	Player *replayObserver = ThePlayerList->findPlayerWithNameKey(TheNameKeyGenerator->nameToKey("ReplayObserver"));
+	if (replayObserver)
+	{
+		ThePartitionManager->revealMapForPlayerPermanently( replayObserver->getPlayerIndex() );
+		DEBUG_LOG(("Reveal shroud for %s whose index is %d\n", WideCharAsUtf8( replayObserver->getPlayerDisplayName().str() ).str(), replayObserver->getPlayerIndex()));
+	}
+	else
+	{
+		DEBUG_LOG(("No ReplayObserver: the map's %d sides leave no seat for one\n", TheSidesList->getNumSides()));
+	}
+	
+	if (game)
+	{
+		for (int i=0; i<MAX_SLOTS; ++i)
+		{
+			GameSlot *slot = game->getSlot(i);
+			
+			if (!slot || !slot->isOccupied())
+				continue;
+			
+			AsciiString playerName;
+			playerName.format("player%d", i);
+			Player *player = ThePlayerList->findPlayerWithNameKey(TheNameKeyGenerator->nameToKey(playerName));
+			
+			if (slot->getPlayerTemplate() == PLAYERTEMPLATE_OBSERVER)
+			{
+				DEBUG_LOG(("Clearing shroud for observer %s in playerList slot %d\n", playerName.str(), player->getPlayerIndex()));
+				ThePartitionManager->revealMapForPlayerPermanently( player->getPlayerIndex() );
+			}
+			else
+			{
+				// remove shroud for the player in MP games
+				if (!TheMultiplayerSettings->isShroudInMultiplayer())
+					ThePartitionManager->revealMapForPlayer( player->getPlayerIndex() );
+			}
+		}
+	}
+
+	#ifdef DUMP_PERF_STATS
+	GetPrecisionTimer(&endTime64);
+	sprintf(Buf,"Before loading objects=%f\n",((double)(endTime64-startTime64)/(double)(freq64)*1000.0));
+	DEBUG_LOG(("%s", Buf));
+	#endif
+
+	Bool useTrees = TheGlobalData->m_useTrees;
+
+	// If forceFluffToProp == true, removable objects get created on client only. [7/14/2003]
+	// If static lod is HIGH, we don't do force fluff to client side only (create logic side props, more expensive. jba)
+	// Ultra is High with more turned on, so it keeps the logic side props High has.
+	Bool forceFluffToProp = TheGameLODManager->getStaticLODLevel() != STATIC_GAME_LOD_HIGH
+		&& TheGameLODManager->getStaticLODLevel() != STATIC_GAME_LOD_ULTRA;
+	if (TheGameLODManager->getStaticLODLevel() == STATIC_GAME_LOD_CUSTOM && 
+			TheGlobalData->m_useShadowVolumes) {
+		// Custom LOD, and volumetric shadows turned on - very high detail.  So use logic props too. jba. [7/14/2003]
+		forceFluffToProp = false;
+	}
+
+	if (TheRecorder && TheRecorder->isMultiplayer()) {
+		useTrees = TRUE; // Always use trees in multiplayer, cause we want it to sync properly. jba.
+		forceFluffToProp = TRUE; // Always do client side fluff - faster, and syncs properly. jba.
+	}
+
+	progressCount = LOAD_PROGRESS_LOOP_ALL_THE_FREAKN_OBJECTS;
+	Int timer = Clock_Milliseconds();
+	if( loadingSaveGame ) {
+		// Loading a loadingSaveGame, need to add the trees to the client. jba. [8/11/2003]
+		for (pMapObj = MapObject::getFirstMapObject(); pMapObj; pMapObj = pMapObj->getNext()) 
+		{
+			// get thing template based from map object name
+			thingTemplate = pMapObj->getThingTemplate();
+			if( thingTemplate == NULL )
+				continue;
+			// don't create trees and shrubs if this is one and we have that option off
+			if( thingTemplate->isKindOf( KINDOF_SHRUBBERY ) && !useTrees )
+				continue;
+
+			Coord3D pos = *pMapObj->getLocation();
+			pos.z += TheTerrainLogic->getGroundHeight( pos.x, pos.y );
+			Real angle = normalizeAngle(pMapObj->getAngle());
+			if (thingTemplate->isKindOf(KINDOF_OPTIMIZED_TREE)) {
+				// Opt trees and props just get drawables to tell the client about it, then deleted. jba [6/5/2003]
+				// This way there is no logic object to slow down partition manager and core logic stuff.				
+				Drawable *draw = TheThingFactory->newDrawable(thingTemplate, DRAWABLE_STATUS_NONE);
+				if (draw) {
+					draw->setOrientation(angle);
+					draw->setPosition( &pos );
+					TheGameClient->destroyDrawable(draw);
+				}
+			}
+		}
+	} 
+	else 
+	{
+
+		for (pMapObj = MapObject::getFirstMapObject(); pMapObj; pMapObj = pMapObj->getNext()) 
+		{
+		
+			if (pMapObj->getFlag(FLAG_BRIDGE_FLAGS) || pMapObj->getFlag(FLAG_ROAD_FLAGS)) {
+				continue;	// roads & bridges are special cased in the terrain side.
+			}
+			//Kris: Added this function so that we can rename objects and preserve them. If the patch
+			//      entry is missing for a particular unit, it doesn't get added to the world.
+			handleNameChange( pMapObj );
+
+			// get thing template based from map object name
+			thingTemplate = pMapObj->getThingTemplate();
+
+			//
+			// if no template continue, some map objects don't have thing templates like
+			// lights (handled in the device).  Objects that are test objects have a 
+			// test string (designated with *** and the define TEST_STRING) and will 
+			// have temporary templates created 'on the fly' during a 
+			// ThingFactory->findTemplate() call when loading from the map file
+			//
+			if( thingTemplate == NULL )
+				continue;
+
+			Bool isBridgeLikeObject = false;
+			if (thingTemplate->isBridge()) isBridgeLikeObject = true;
+			if (thingTemplate->isKindOf(KINDOF_WALK_ON_TOP_OF_WALL)) isBridgeLikeObject = true;
+			if (isBridgeLikeObject)
+				continue;	// bridges have to be added earlier.
+
+			// don't create trees and shrubs if this is one and we have that option off
+			if( thingTemplate->isKindOf( KINDOF_SHRUBBERY ) && !useTrees )
+				continue;
+
+			Coord3D pos = *pMapObj->getLocation();
+			pos.z += TheTerrainLogic->getGroundHeight( pos.x, pos.y );
+			Real angle = normalizeAngle(pMapObj->getAngle());
+			if (thingTemplate->isKindOf(KINDOF_OPTIMIZED_TREE)) {
+				// Opt trees and props just get drawables to tell the client about it, then deleted. jba [6/5/2003]
+				// This way there is no logic object to slow down partition manager and core logic stuff.
+				
+				Drawable *draw = TheThingFactory->newDrawable(thingTemplate, DRAWABLE_STATUS_NONE);
+				if (draw) {
+					draw->setOrientation(angle);
+					draw->setPosition( &pos );
+
+					TheGameClient->destroyDrawable(draw);
+				}
+				continue;
+			}
+#if 1
+			Bool isProp = thingTemplate->isKindOf(KINDOF_PROP);
+			Bool isFluff = false;
+			if (thingTemplate->isKindOf(KINDOF_CLEARED_BY_BUILD)) {
+				if (thingTemplate->getFenceWidth() == 0.0f) {
+					// Objects that are cleared by building, but aren't fences, are fluff. jba. [7/14/2003]
+					isFluff = true;
+				}
+			}
+			if (isProp || (isFluff && forceFluffToProp)) {
+				TheTerrainVisual->addProp(thingTemplate, &pos, angle);
+				continue;
+			}
+#endif
+			
+			// Get the team information
+			DEBUG_ASSERTCRASH(pMapObj->getProperties()->getType(TheKey_originalOwner) == Dict::DICT_ASCIISTRING, ("unit %s has no original owner specified (obsolete map file)\n",pMapObj->getName().str()));
+			AsciiString originalOwner = pMapObj->getProperties()->getAsciiString(TheKey_originalOwner);
+			Team *team = ThePlayerList->validateTeam(originalOwner);
+
+			// create new object in the world
+			Object *obj = TheThingFactory->newObject( thingTemplate, team ); //, OBJECT_STATUS_LOADING_FROM_MAP );
+			if( obj )
+			{
+				if(pMapObj->getFlag(FLAG_DRAWS_IN_MIRROR) || obj->isKindOf(KINDOF_CAN_CAST_REFLECTIONS)) 
+				{
+					Drawable* draw = obj->getDrawable();
+					if(draw)
+						draw->setDrawableStatus( DRAWABLE_STATUS_DRAWS_IN_MIRROR );
+				}
+				obj->setOrientation(angle);
+				obj->setPosition( &pos );
+
+				// Do this after positioning the object, because we may place objects in response to keys
+				// in the map object properties.
+				// update this object instance with properties from the map object
+				obj->updateObjValuesFromMapProperties( pMapObj->getProperties() );
+
+				PathfindLayerEnum	layer = TheTerrainLogic->getLayerForDestination(&pos);
+				obj->setLayer(layer);
+				// Now onCreates were called at the constructor.  This magically created
+				// thing needs to be considered as Built for Game specific stuff.
+				for (BehaviorModule** m = obj->getBehaviorModules(); *m; ++m)
+				{
+					CreateModuleInterface* create = (*m)->getCreate();
+					if (!create)
+						continue;
+					create->onBuildComplete();
+				}
+
+				// Since the team now has members, activate it.
+				team->setActive();
+				TheAI->pathfinder()->addObjectToPathfindMap( obj );
+
+			}  // end if
+		
+			if(Clock_Milliseconds() > timer + 500)
+			{
+				if(progressCount < LOAD_PROGRESS_MAX_ALL_THE_FREAKN_OBJECTS)
+					progressCount ++;
+				updateLoadProgress(progressCount);
+				timer = Clock_Milliseconds();
+			}
+
+		}	// for, loading map objects
+
+	}  // end if, not loading save game
+
+	#ifdef DUMP_PERF_STATS
+	GetPrecisionTimer(&endTime64);
+	sprintf(Buf,"After loading objects=%f\n",((double)(endTime64-startTime64)/(double)(freq64)*1000.0));
+	DEBUG_LOG(("%s", Buf));
+	#endif
+
+	progressCount = LOAD_PROGRESS_LOOP_INITIAL_NETWORK_BUILDINGS;
+	// place initial network buildings/units
+	if (game && !loadingSaveGame)
+	{
+		for (int i=0; i<MAX_SLOTS; ++i)
+		{
+			GameSlot *slot = game->getSlot(i);
+			
+			if (!slot || !slot->isOccupied())
+				continue;
+			
+			AsciiString playerName;
+			playerName.format("player%d", i);
+			Player *player = ThePlayerList->findPlayerWithNameKey(TheNameKeyGenerator->nameToKey(playerName));
+			
+			if (slot->getPlayerTemplate() == PLAYERTEMPLATE_OBSERVER)
+			{
+				slot->setPlayerTemplate(0);
+				const PlayerTemplate *pt = ThePlayerTemplateStore->findPlayerTemplate( TheNameKeyGenerator->nameToKey("FactionObserver") );
+				if (pt)
+				{
+					for (Int j=0; j<ThePlayerTemplateStore->getPlayerTemplateCount(); ++j)
+					{
+						if (pt == ThePlayerTemplateStore->getNthPlayerTemplate(j))
+						{
+							slot->setPlayerTemplate(j);
+							break;
+						}
+					}
+				}
+				DEBUG_LOG(("Setting observer's playerTemplate to %d in slot %d\n", slot->getPlayerTemplate(), i));
+			}
+			else
+			{
+				const PlayerTemplate* pt = NULL;
+				pt = ThePlayerTemplateStore->getNthPlayerTemplate(slot->getPlayerTemplate());
+
+				// Prevent from loading the disabled Generals, in case your game peer hacked their GUI.
+				// The game will start, but the cheater will be instantly defeated because he has no troops.
+				// This is also enforced at GUI setup (GUIUtil.cpp and UserPreferences.cpp).
+				// @todo: unlock these when something rad happens
+				Bool disallowLockedGenerals = TRUE;
+				const GeneralPersona *general = TheChallengeGenerals->getGeneralByTemplateName(pt->getName());
+				Bool startsLocked = general ? !general->isStartingEnabled() : FALSE;
+				if (disallowLockedGenerals && startsLocked)
+					continue;
+
+				// prevent from loading disallowed templates, in case your peer hacked their GUI.
+        
+
+        // So that the global flag for restricting factions to "OLD" is applied only in the appropriate context!
+        // Trouble was that skirmish games would get no command centers upon start, if this was set true in a GameSpyMenu
+        if ( isInInternetGame() )
+        {
+				  if ( game->oldFactionsOnly() && !pt->isOldFaction() )
+				    continue;
+        }
+
+
+
+
+				placeNetworkBuildingsForPlayer(i, slot, player, pt);
+			}
+
+			updateLoadProgress(progressCount++);
+
+		}
+	}
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_INITIAL_NETWORK_BUILDINGS);
+
+	//
+	// tell the client to pre-load some assets that we will use such as faction things we
+	// will build and various damage states for all the structures on the map so that we
+	// don't have big pauses when building those objects or switching to those states
+	//
+	// EA wrote that and left it behind a flag that no shipping build could set, so the game read
+	// a unit's models on whichever logic frame the first one of its kind appeared: 18ms of a 33ms
+	// frame for the first Ranger out of a barracks, and the opening of a match is nothing but
+	// first appearances.  It is not a flag any more.  The shell map is the one exception - it
+	// builds none of this and would only pay the loading second for nothing.  Nor does a replay's
+	// rewind, which reloads the map it was just drawing: the models are all still in memory, and
+	// the walk over them held the picture for three quarters of a second.
+	//
+	if( !isInShellGame() && !m_loadingWithoutScreen )
+	{
+		preloadMissionAudio();
+		if (TheGlobalData->m_preloadEverything)
+		{
+			for (Int td = TIME_OF_DAY_FIRST; td < TIME_OF_DAY_COUNT; ++td)
+				TheGameClient->preloadAssets((TimeOfDay)td);
+		}
+		else
+		{
+			TheGameClient->preloadAssets( TheGlobalData->m_timeOfDay );
+		}
+		if (TheGlobalData->m_assetPreloading)
+			TheDisplay->preloadRenderPipelines();
+	}
+
+	//put this here somewhat randomly.
+	TheControlBar->hideCommunicator( FALSE );
+
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_PRELOAD_ASSETS);
+
+	TheTacticalView->setAngleAndPitchToDefault();
+	// the opening zoom is the view's to pick from client settings (View::setZoomToStart)
+	TheTacticalView->setZoomToStart( isInShellGame() );
+
+	if( TheRecorder )
+		TheRecorder->initControls();
+
+	// Note - WorldBuilderDoc.cpp also uses initial camera position, so if changed, update both.  jba
+	// Note - We construct the multiplayer start spot name manually here, so change this if you
+	//        change TheKey_Player_1_Start etc.  mdc
+	AsciiString startingCamName = TheNameKeyGenerator->keyToName(TheKey_InitialCameraPosition);
+	Bool watchingFromNowhere = FALSE;
+	if (game)
+	{
+		GameSlot *slot = game->getSlot(localSlot);
+		DEBUG_ASSERTCRASH(slot, ("Starting a LAN game without ourselves!"));
+
+		//
+		// An observer has no start position, so this built the name "Player_0_Start", found no such
+		// waypoint, and fell through to the corner of the map below - which is where every match
+		// watched from the stands used to open, looking at nothing.
+		//
+		watchingFromNowhere = slot->getPlayerTemplate() == PLAYERTEMPLATE_OBSERVER;
+		if (slot->isHuman() && !watchingFromNowhere)
+		{
+			Int startPos = slot->getStartPos();
+			startingCamName.format("Player_%d_Start", startPos+1); // start pos waypoints are 1-based
+			DEBUG_LOG(("Using %s as the multiplayer initial camera position\n", startingCamName.str()));
+		}
+	}
+
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_STARTING_CAMERA);
+
+	Waypoint *way = watchingFromNowhere ? NULL : findNamedWaypoint(startingCamName);
+	if (way)
+	{
+		Coord3D pos = *way->getLocation();
+		TheTacticalView->lookAt( &pos );
+	}
+	else
+	{
+		//
+		// Nowhere of our own to look: watching rather than playing, or a map with no camera
+		// waypoint on it. The middle of the map is the one answer that is right for both of those,
+		// where the corner the game used to pick was right for neither.
+		//
+		Region3D extent;
+		TheTerrainLogic->getExtent( &extent );
+		Coord3D pos;
+		pos.x = extent.lo.x + extent.width() * 0.5f;
+		pos.y = extent.lo.y + extent.height() * 0.5f;
+		pos.z = 0;
+		TheTacticalView->lookAt( &pos );
+		DEBUG_ASSERTLOG(watchingFromNowhere, ("Failed to find initial camera position waypoint %s\n", startingCamName.str()));
+	}
+
+	// Set up the camera height based on the map height & globalData.
+	TheTacticalView->initHeightForMap();
+	TheTacticalView->setAngleAndPitchToDefault();
+	// the opening zoom is the view's to pick from client settings (View::setZoomToStart)
+	TheTacticalView->setZoomToStart( isInShellGame() );
+
+	// update the loadscreen 
+	updateLoadProgress(LOAD_PROGRESS_POST_STARTING_CAMERA_2);
+
+	// update partition info - We need to do the initial update so that it can be queried
+	// during the first frame.  jba.
+	ThePartitionManager->update();
+
+	#ifdef DUMP_PERF_STATS
+	GetPrecisionTimer(&endTime64);
+	sprintf(Buf,"After partition manager update=%f\n",((double)(endTime64-startTime64)/(double)(freq64)*1000.0));
+	DEBUG_LOG(("%s", Buf));
+	#endif
+
+
+	// final step, run newMap for all players
+	if( loadingSaveGame == FALSE )
+		ThePlayerList->newMap();
+
+	if ( isChallengeCampaign )
+	{
+		// Establish local player relationships with other teams as
+		// they're set up for "ThePlayer" in challenge mode map.
+		// Some designers have used "ThePlayer" as an empty player for Generals' 
+		// Challenge maps which they reference in script and by which they set 
+		// player relationships.  The skirmish local player will receive these
+		// relationships.  If there is no "ThePlayer", we have to assume that
+		// all players on the map are the local player's enemy, except neutral
+		// and civilian players.
+		Player *localPlayer = ThePlayerList->getLocalPlayer();
+		DEBUG_ASSERTCRASH(localPlayer, ("Local player has not been established for Challenge map."));
+		Player *placeholderThePlayer = ThePlayerList->findPlayerWithNameKey(NAMEKEY("ThePlayer"));
+		DEBUG_ASSERTCRASH(placeholderThePlayer, ("Challenge maps without player \"ThePlayer\" assume that the local player is mutual enemies with all other players except the neutral and civilian players."));
+
+		if (placeholderThePlayer)
+		{
+			PlayerMaskType thePlayerEnemysMask = ThePlayerList->getPlayersWithRelationship(placeholderThePlayer->getPlayerIndex(), ALLOW_ENEMIES);
+			while( thePlayerEnemysMask )
+			{
+				// set local player enemy relationships based on "ThePlayer" enemy relationships
+				Player *thePlayerEnemy = ThePlayerList->getEachPlayerFromMask(thePlayerEnemysMask);
+				thePlayerEnemy->setPlayerRelationship(localPlayer, ENEMIES);
+				localPlayer->setPlayerRelationship(thePlayerEnemy, ENEMIES);
+			}
+		} 
+		else 
+		{
+			// This map has no "ThePlayer" by which to model the local player's 
+			// relationships, so make assumptions.
+			for (Int i = 0; i < ThePlayerList->getPlayerCount(); i++)
+			{
+				Relationship rel = NEUTRAL;
+				Player *thatPlayer = ThePlayerList->getNthPlayer(i);
+				if (thatPlayer == localPlayer)
+				{
+					rel = ALLIES;
+				} 
+				else if (thatPlayer != ThePlayerList->getNeutralPlayer()
+					&& thatPlayer != ThePlayerList->findPlayerWithNameKey(NAMEKEY("PlyrCivilian")))
+				{
+					rel = ENEMIES;
+				} 
+				thatPlayer->setPlayerRelationship(localPlayer, rel);
+				localPlayer->setPlayerRelationship(thatPlayer, rel);
+			}
+		}
+	}
+
+
+	// reset all the skill points in a single player game
+	if(loadingSaveGame == FALSE && isInSinglePlayerGame())
+	{
+		for (Int i=0; i<MAX_PLAYER_COUNT; ++i)
+		{
+			Player *pPlayer = ThePlayerList->getNthPlayer(i);
+			if (pPlayer && pPlayer->getPlayerType() != PLAYER_HUMAN)
+				pPlayer = NULL;
+
+			if (pPlayer)
+			{
+				pPlayer->addSkillPoints(m_rankPointsToAddAtGameStart);
+				DEBUG_LOG(("GameLogic::startNewGame() - adding m_rankPointsToAddAtGameStart==%d to player %d(%s)\n",
+					m_rankPointsToAddAtGameStart, i, WideCharAsUtf8( pPlayer->getPlayerDisplayName().str() ).str()));
+			}
+		}
+	}
+
+	// Saved heights/triggers arrive after startNewGame(TRUE); that path warms at
+	// the end of GameState::gameStatePostProcessLoad instead.
+	if (!loadingSaveGame && TheTerrainVisual)
+		TheTerrainVisual->prewarmMapRenderData();
+#if defined(__linux__)
+	if (!loadingSaveGame && !isInShellGame())
+		PosixGpuTimingLoadMarker("load-ready", m_frame);
+#endif
+	updateLoadProgress(LOAD_PROGRESS_END);
+
+	if(isInMultiplayerGame() && TheNetwork)
+	{
+		TheNetwork->loadProgressComplete();
+		TheNetwork->liteupdate();
+	}
+
+	while(!isProgressComplete())
+	{
+		updateLoadProgress(101); // keep greater then 100
+		testTimeOut();
+		/* A wall-clock wait between polls, not a simulation step: no logic frame runs in this loop
+			 or the fade below, and how many times either polls is not part of any CRC. */
+		sleepMilliseconds( 100 );
+	}
+
+	// if we're in a load game, don't fade yet
+	if( loadingSaveGame == FALSE )
+	{
+		TheTransitionHandler->setGroup("FadeWholeScreen");
+		while(!TheTransitionHandler->isFinished())
+		{
+			TheWindowManager->update();
+			if(!TheTransitionHandler->isFinished())
+			{
+				TheDisplay->draw();
+				setFPMode();
+				sleepMilliseconds( 33 );
+			}
+			
+		}
+	}
+
+	if(m_loadScreen)
+	{
+		TheMouse->setVisibility(TRUE);
+
+/*
+		//
+		// delete load screen only when not loading a save game, for save games we still
+		// have more work to do and the load screen will be deleted elsewhere after
+		// we're all done with the load game progress
+		//
+		if( loadingSaveGame == FALSE )
+*/
+			deleteLoadScreen();
+
+	}
+	
+	#ifdef DUMP_PERF_STATS
+	GetPrecisionTimer(&endTime64);
+	sprintf(Buf,"After delete load screen=%f\n",((double)(endTime64-startTime64)/(double)(freq64)*1000.0));
+	DEBUG_LOG(("%s", Buf));
+	#endif
+
+	if(m_gameMode == GAME_SHELL)
+	{
+		if(TheShell->getScreenCount() == 0)
+			TheShell->push( AsciiString("Menus/MainMenu.wnd") );
+		else if (TheShell->top())
+		{
+			TheShell->top()->hide(FALSE);
+			TheShell->top()->bringForward();
+		}
+		HideControlBar();
+	}
+	else
+	{
+		
+//		TheShell->hideShell();
+		if(TheStatsCollector)
+		{
+			TheStatsCollector->reset();
+		}
+		else if( TheGlobalData->m_playStats > 0)
+		{
+			TheStatsCollector = NEW StatsCollector;
+			TheStatsCollector->reset();
+		}
+
+///		ShowControlBar(FALSE);
+
+		// explicitly set the Control bar to Observer Mode
+		if(m_gameMode == GAME_REPLAY )
+		{
+			
+			// a map that filled every seat has no observer (see the reveal above); the replay then
+			// watches from the seat it was recorded in
+			Player *observer = ThePlayerList->findPlayerWithNameKey(TheNameKeyGenerator->nameToKey("ReplayObserver"));
+			if (observer)
+				ThePlayerList->setLocalPlayer(observer);
+			TheRadar->forceOn(TRUE);
+			ThePartitionManager->refreshShroudForLocalPlayer();
+			TheControlBar->setControlBarSchemeByPlayer( ThePlayerList->getLocalPlayer());
+			DEBUG_LOG(("Start of a replay game %s, %d\n",WideCharAsUtf8( ThePlayerList->getLocalPlayer()->getPlayerDisplayName().str() ).str(), ThePlayerList->getLocalPlayer()->getPlayerIndex()));
+		}
+		else
+			TheControlBar->setControlBarSchemeByPlayer(ThePlayerList->getLocalPlayer());
+//		ShowControlBar();
+		
+	}
+	TheTacticalView->setOkToAdjustHeight(TRUE);
+
+// If defined, the game times various units.
+#ifdef DO_UNIT_TIMINGS
+	g_UT_curThing = TheThingFactory->firstTemplate();
+	g_UT_startTiming = true;
+	g_UT_gotUnit = false;
+	g_UT_timingLog = zh_fopen("TimingLog.txt", "w");	 
+	g_UT_commaLog = zh_fopen("TimingCDL.txt", "w");
+	fputs("Full,100*ms,NoPart-NoSpawn,,No Spawn,100*ms,Logic,100*ms,Thing,Model,Kind,Side,DrawCalls All,DrawCalls NoPart-NoSpawn,DrawCalls NoSpawn\n", g_UT_commaLog); 
+
+	// Turn off shadows
+	TheWritableGlobalData->m_useShadowVolumes = false;
+	TheWritableGlobalData->m_debugIgnoreAsserts = TRUE;
+
+	// Just look somewhere.  lookAt does some terrain specific setup, so it is good
+	// to call it.  jba
+	Coord3D thePos;
+	thePos.x = 50;
+	thePos.y = 50;
+	thePos.z = 0;
+		TheTacticalView->lookAt( &thePos );
+#endif
+
+
+	// @todo remove this hack
+//	TheGlobalData->m_inGame = TRUE;
+
+	//
+	// A skirmish used to open with everyone's command centre selected (findAndSelectCommandCenter,
+	// run for every active player so the state stayed identical on every machine). Nothing is
+	// selected now: the first thing you do in a game is pick what you want, and starting with a
+	// building selected means the first click on the ground is a rally point you did not ask for -
+	// and the command bar opens on a menu you were not looking at.
+	//
+	// Still done for everyone or for no one: the selection is logic state (it builds an AIGroup),
+	// so it has to be the same decision on every peer.
+	//
+	TheControlBar->initSpecialPowershortcutBar(ThePlayerList->getLocalPlayer());
+
+	if(m_gameMode == GAME_SHELL)
+	{
+		HideControlBar();
+	}
+	else
+	{
+		ShowControlBar(FALSE);
+	}
+
+#ifdef DO_UNIT_TIMINGS
+	// Turn off the UI
+	HideControlBar();
+#endif
+	TheWritableGlobalData->m_loadScreenRender = FALSE;	///< mark to resume rendering as normal
+	
+	// if we're in a gamespy game, mark us as playing
+	if (TheGameSpyBuddyMessageQueue && TheGameSpyGame && isInInternetGame())
+	{
+		BuddyRequest req;
+		req.buddyRequestType = BuddyRequest::BUDDYREQUEST_SETSTATUS;
+		req.arg.status.status = GP_PLAYING;
+		strcpy(req.arg.status.statusString, "Playing");
+		strlcpy(req.arg.status.locationString, WideCharStringToMultiByte(TheGameSpyGame->getGameName().str()).c_str(), ARRAY_SIZE(req.arg.status.locationString));
+		TheGameSpyBuddyMessageQueue->addRequest(req);
+	}	
+	
+  if( loadingSaveGame == FALSE )
+  {
+    // Drawables need to do some work on level start; give them a chance to do it
+    Drawable * drawable = TheGameClient->getDrawableList();
+  
+    while ( drawable != NULL )
+    {
+      drawable->onLevelStart();
+      drawable = drawable->getNextDrawable();
+    }
+  }
+  
+	//Added By Sadullah Nader
+	//Added to fix the quit menu 
+	//ReAllows quit menu to work during loading scene
+	//setGameLoading(FALSE);
+	setLoadingMap( FALSE );
+
+#ifdef DUMP_PERF_STATS
+	GetPrecisionTimer(&endTime64);
+	sprintf(Buf,"Total startnewgame=%f\n",((double)(endTime64-startTime64)/(double)(freq64)*1000.0));
+	DEBUG_LOG(("%s", Buf));
+#endif
+
+	//Assume that getting this far means we've successfully entered an online game.
+	//Add an additional disconnection to player stats in case he doesn't complete this game. -MW
+	if (TheGameSpyInfo)
+		TheGameSpyInfo->updateAdditionalGameSpyDisconnections(1);
+
+  
+  if ( isInReplayGame() && TheInGameUI && TheGameText )
+  {
+		TheInGameUI->message( TheGameText->fetch( "GUI:FastForwardInstructions" ) );
+  }
+
+
+}  // end startNewGame
+
+//-----------------------------------------------------------------------------------------
+//-----------------------------------------------------------------------------------------
+
+
+
+
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void GameLogic::loadMapINI( AsciiString mapName )
+{
+	s_mapINILoaded = FALSE;
+
+	if (!TheMapCache) {
+		// Need the map cache to get the map and user map directories.
+		return;
+	}
+
+	char filename[_MAX_PATH];
+	char fullFledgeFilename[_MAX_PATH];
+
+	//
+	// bounded copies: mapName arrives from the lobby, the network or a replay file, and an
+	// over-long path used to run straight off the end of these _MAX_PATH buffers.
+	//
+	memset(filename, 0, _MAX_PATH);
+	strncpy(filename, mapName.str(), _MAX_PATH - 1);
+	filename[_MAX_PATH - 1] = 0;
+
+	//
+	// if map name begins with a "SAVE_DIRECTORY\", then the map refers to a map
+	// that has been extracted from a save game file ... in that case we need to get
+	// the pristine map name string in order to manipulate and load the right map.ini
+	// for that map from it's original location
+	//
+	if (TheGameState->isInSaveDirectory(filename))
+	{
+		strncpy( filename, TheGameState->getSaveGameInfo()->pristineMapName.str(), _MAX_PATH - 1 );
+		filename[_MAX_PATH - 1] = 0;
+	}
+
+	// sanity
+	int length = strlen(filename);
+	if (length < 4) { 
+		return;
+	}
+
+	// back up over the ".map" extension and to the first directory separator
+	char *extension = filename + length - 4;
+	while ((extension > filename) && (*extension != '\\') && (*extension != '/')) {
+		--extension;
+	}
+	*extension = 0;
+
+
+	//
+	// A map's rules file comes with the map, and a map with a block this game does not know
+	// (a DeleteKey, say) threw out of here and took the whole game down at the loading screen.
+	// Keep what parsed up to the bad line and play on: every machine in a match has the same file,
+	// the map CRC sees to that, so each stops at the same line and the rules still agree.
+	//
+	//
+	// Everything below is undone when the match ends: each store a map's rules file may write to
+	// keeps what it overwrote and its reset() puts it back (INI.cpp's isMapINIBlock names them), so
+	// the next match plays the game's own rules whatever map came before, on every machine alike.
+	//
+	if (!s_waterSettingsSaved)
+	{
+		for (Int i = 0; i < TIME_OF_DAY_COUNT; ++i)
+			s_waterSettingsBeforeMapINI[ i ] = WaterSettings[ i ];
+		s_waterSettingsSaved = TRUE;
+	}
+
+	snprintf(fullFledgeFilename, _MAX_PATH, "%s\\map.ini", filename); fullFledgeFilename[_MAX_PATH-1] = 0;
+	s_mapINILoaded = TheFileSystem->doesFileExist(fullFledgeFilename);
+	if (s_mapINILoaded) {
+		DEBUG_LOG(("Loading map.ini\n"));
+		INI ini;
+		ini.setSkipUnknownFields( TRUE );
+		try {
+			ini.load( AsciiString(fullFledgeFilename), INI_LOAD_CREATE_OVERRIDES, NULL );
+		} catch (...) {
+			DEBUG_LOG(("%s does not parse, the rest of it is ignored\n", fullFledgeFilename));
+		}
+	}
+
+	snprintf(fullFledgeFilename, _MAX_PATH, "%s\\solo.ini", filename); fullFledgeFilename[_MAX_PATH-1] = 0;
+	if (TheFileSystem->doesFileExist(fullFledgeFilename)) {
+		DEBUG_LOG(("Loading solo.ini\n"));
+		INI ini;
+		ini.setSkipUnknownFields( TRUE );
+		try {
+			ini.load( AsciiString(fullFledgeFilename), INI_LOAD_CREATE_OVERRIDES, NULL );
+		} catch (...) {
+			DEBUG_LOG(("%s does not parse, the rest of it is ignored\n", fullFledgeFilename));
+		}
+	}
+
+	// A weapon's projectile and OCLs are names until the store's post-process pass turns them into
+	// pointers, and that pass ran once at startup, before any map. A weapon a map.ini made or edited
+	// kept the names only, and every unit carrying it refused to fire.
+	TheWeaponStore->postProcessLoad();
+	// the same for a command button's picture, which the bar looked up once at startup
+	TheControlBar->postProcessCommands();
+
+	// No error here. There could've just *not* been a map.ini file.
+
+	// now look for a string file
+	snprintf(fullFledgeFilename, _MAX_PATH, "%s\\map.str", filename); fullFledgeFilename[_MAX_PATH-1] = 0;
+
+	if (TheFileSystem->doesFileExist(fullFledgeFilename)) {
+		TheGameText->initMapStringFile(fullFledgeFilename);
+	}
+
+	// we want to do this before doing the actual map load!
+	if (TheDisplay)
+	{
+		const char* ASSET_USAGE_FILE_NAME = "AssetUsage.txt";
+		snprintf(fullFledgeFilename, _MAX_PATH, "%s\\%s", filename, ASSET_USAGE_FILE_NAME); fullFledgeFilename[_MAX_PATH-1] = 0;
+		// note: call this EVEN IF THE FILE IN QUESTION DOES NOT EXIST.
+		TheDisplay->doSmartAssetPurgeAndPreload(fullFledgeFilename);
+	}
+
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Process the destroy list, destroying all pending objects.
+ * The destroy list exists to ensure that all objects have a chance to
+ * see each other at each simulation frame - the object list is the
+ * same at the start of the update as it is at the end of the update. */
+// ------------------------------------------------------------------------------------------------
+//DECLARE_PERF_TIMER(processDestroyList)
+void GameLogic::processDestroyList( void )
+{
+	//USE_PERF_TIMER(processDestroyList)
+
+	for( ObjectPointerListIterator iterator = m_objectsToDestroy.begin(); iterator != m_objectsToDestroy.end(); iterator++ )
+	{
+		Object* currentObject = (*iterator);
+
+#ifdef ALLOW_NONSLEEPY_UPDATES
+		for (std::list<UpdateModulePtr>::iterator it = m_normalUpdates.begin(); it != m_normalUpdates.end(); /* nothing */)
+		{
+			if ((*it)->friend_getObject() == currentObject)
+			{
+				it = m_normalUpdates.erase(it);
+			}
+			else
+			{
+				++it;
+			}
+		}
+#endif
+
+		/*
+			this looks odd, but is necessary; since erasing a single entry can shuffle others in the list
+			(in order to maintain its heap-ness), we must do two passes: one to find the updates for this
+			object, another to actually erase 'em. 
+			
+			(in case you're wondering: yes, this is still more efficient than just deleting them
+			and rebalancing the entire heap afterwards, at least for real-world maps, since an individual
+			rebalance is O(log N) and a full rebalance is O(N)... so unless you are deleting the majority
+			of the objects in the world every frame, we come out well ahead this way.)
+		*/
+
+		const Int MAX_SUO = 256;
+		UpdateModulePtr sleepyUpdatesForThisObject[MAX_SUO];
+		Int numSUO = 0;
+
+		/* The object's own modules say where they sit in the heap, which is the order a scan of the whole
+			 heap met them in.  That scan, one per death, took 3.7 ms of a 17 ms frame in a late fight. */
+		for (BehaviorModule** b = currentObject->getBehaviorModules(); *b && numSUO < MAX_SUO; ++b)
+		{
+#ifdef DIRECT_UPDATEMODULE_ACCESS
+			UpdateModulePtr u = (UpdateModulePtr)((*b)->getUpdate());
+#else
+			UpdateModulePtr u = (*b)->getUpdate();
+#endif
+			if (u && u->friend_getIndexInLogic() >= 0)
+			{
+				sleepyUpdatesForThisObject[numSUO++] = u;
+			}
+		}
+		std::sort(sleepyUpdatesForThisObject, sleepyUpdatesForThisObject + numSUO,
+			[](UpdateModulePtr a, UpdateModulePtr b) { return a->friend_getIndexInLogic() < b->friend_getIndexInLogic(); });
+
+		for (--numSUO; numSUO >= 0; --numSUO)
+		{
+			// have to re-get idx each time since each call to erase might change others.
+			Int idx = sleepyUpdatesForThisObject[numSUO]->friend_getIndexInLogic();
+			DEBUG_ASSERTCRASH(m_sleepyUpdates[idx].module == sleepyUpdatesForThisObject[numSUO], ("Hmm, expected update mismatch here"));
+			eraseSleepyUpdate(idx);
+			DEBUG_ASSERTCRASH(sleepyUpdatesForThisObject[numSUO]->friend_getIndexInLogic() == -1, ("Hmm, expected index to be -1 here"));
+		}
+
+
+		currentObject->removeFromList(&m_objList);//remove from object list
+
+		// remove object from lookup table
+		removeObjectFromLookupTable( currentObject );
+
+		currentObject->friend_deleteInstance();//actual delete
+	}
+
+	m_objectsToDestroy.clear();//list full of bad pointers now, clear it.  If anyone's deletion resulted
+	//in the request for a new deletion (sub-object), the new object was added to the end of this list.
+}
+
+//-------------------------------------------------------------------------------------------------
+/** One executed network command into the digest the next CRC snapshot carries.  Reads the message
+	* and nothing else, so logic state and the CRC are untouched.  MSG_LOGIC_CRC is left out: it orders
+	* nothing, and its argument is the very number the digest is there to explain. */
+//-------------------------------------------------------------------------------------------------
+static void digestCommand( CRCSnapshotRing &ring, UnsignedInt frame, const GameMessage *msg )
+{
+	const GameMessage::Type type = msg->getType();
+	if( type <= GameMessage::MSG_BEGIN_NETWORK_MESSAGES || type >= GameMessage::MSG_END_NETWORK_MESSAGES
+			|| type == GameMessage::MSG_LOGIC_CRC )
+		return;
+
+	// FNV-1a over each argument's own bytes, never the whole union, whose unused tail is whatever was there
+	UnsignedInt hash = 2166136261u;
+	for( Int i = 0; i < msg->getArgumentCount(); ++i )
+	{
+		const GameMessageArgumentType *arg = msg->getArgument( i );
+		size_t size = sizeof( arg->integer );
+		switch( msg->getArgumentDataType( i ) )
+		{
+			case ARGUMENTDATATYPE_BOOLEAN:			size = sizeof( arg->boolean ); break;
+			case ARGUMENTDATATYPE_LOCATION:			size = sizeof( arg->location ); break;
+			case ARGUMENTDATATYPE_PIXEL:				size = sizeof( arg->pixel ); break;
+			case ARGUMENTDATATYPE_PIXELREGION:	size = sizeof( arg->pixelRegion ); break;
+			case ARGUMENTDATATYPE_WIDECHAR:			size = sizeof( arg->wChar ); break;
+			default: break;
+		}
+		const UnsignedByte *bytes = (const UnsignedByte *)arg;
+		for( size_t b = 0; b < size; ++b )
+			hash = ( hash ^ bytes[b] ) * 16777619u;
+	}
+
+	ring.addCommand( frame, msg->getPlayerIndex(), (Int)type, hash );
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Process the command list passed to the logic from the network */
+//-------------------------------------------------------------------------------------------------
+void GameLogic::processCommandList( CommandList *list )
+{
+	m_cachedCRCs.clear();
+	m_shouldValidateCRCs = FALSE;
+
+	GameMessage* msg;
+
+	// the inputs beside the CRC snapshots (CRCSnapshotRing.h); only read by writeMismatchDump
+	const Bool digestCommands = TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE;
+
+	for( msg = list->getFirstMessage(); msg; msg = msg->next() )
+	{
+#ifdef _DEBUG
+		DEBUG_ASSERTCRASH(msg != NULL && msg != (GameMessage*)0xdeadbeef, ("bad msg"));
+#endif
+		if( digestCommands )
+			digestCommand( m_crcSnapshots, m_frame, msg );
+		logicMessageDispatcher( msg, NULL );
+	}
+
+	// a shift prefix belongs to the order right behind it in the same frame, never to a later one
+	for( Int i = 0; i < ThePlayerList->getPlayerCount(); i++ )
+		ThePlayerList->getNthPlayer( i )->getOrderQueue()->forgetNextOrderMode();
+
+	if (m_shouldValidateCRCs && !TheNetwork->sawCRCMismatch())
+	{
+		Bool sawCRCMismatch = FALSE;
+		UnsignedInt mismatchFrame = 0;
+		Int numPlayers = 0;
+		DEBUG_ASSERTCRASH(TheNetwork, ("No Network!"));
+		if (TheNetwork)
+		{
+			for (Int i=0; i<MAX_SLOTS; ++i)
+			{
+				if (TheNetwork->isPlayerConnected(i))
+					++numPlayers;
+			}
+
+			/* The decision itself lives in CrcAgreement.h, where it can be tested without a room
+				 full of machines.  Two ways to get a mismatch that never happened, both about players
+				 on their way out: a CRC that has not arrived yet from somebody the network still calls
+				 connected, and a CRC that arrives from somebody who is already gone.  Neither is
+				 evidence that anyone computed anything differently. */
+			/* m_cachedCRCs is keyed by player index and the network is indexed by slot, which are not the
+				 same number - player 0 is the neutral player, so the human sitting in slot 0 is player 1.
+				 EA handed the player index straight to isPlayerConnected().  A player index with no slot
+				 behind it (no GameInfo at all, for instance) counts as present rather than as gone: the
+				 point of this is to stop blaming people who left, not to switch the check off. */
+			Bool connected[MAX_PLAYER_COUNT];
+			for (Int p = 0; p < MAX_PLAYER_COUNT; ++p)
+			{
+				const Int slot = ThePlayerList->getSlotIndex(p);
+				connected[p] = (slot < 0) ? TRUE : TheNetwork->isPlayerConnected(slot);
+			}
+
+			/* Only CRCs of one logic frame are held against each other.  A frame some connected player
+				 sent no CRC for on this execution frame is too few, and skipped: its CRCs landed on
+				 different execution frames (MSG_LOGIC_CRC in update()), and nobody disagreed. */
+			for (std::map<UnsignedInt, std::map<Int, UnsignedInt> >::const_iterator frameIt = m_cachedCRCs.begin();
+					 frameIt != m_cachedCRCs.end() && !sawCRCMismatch; ++frameIt)
+			{
+				Bool reported[MAX_PLAYER_COUNT];
+				UnsignedInt crcs[MAX_PLAYER_COUNT];
+				for (Int p = 0; p < MAX_PLAYER_COUNT; ++p)
+				{
+					reported[p] = FALSE;
+					crcs[p] = 0;
+				}
+				for (std::map<Int, UnsignedInt>::const_iterator crcIt = frameIt->second.begin();
+						 crcIt != frameIt->second.end(); ++crcIt)
+				{
+					if (crcIt->first >= 0 && crcIt->first < MAX_PLAYER_COUNT)
+					{
+						reported[crcIt->first] = TRUE;
+						crcs[crcIt->first] = crcIt->second;
+					}
+				}
+
+				switch (crcAgreement( reported, crcs, connected, MAX_PLAYER_COUNT, numPlayers ))
+				{
+					case CRC_AGREEMENT_TOO_FEW:
+						DEBUG_LOG(("Only %d CRCs of frame %d from %d connected players on frame %d - not comparing\n",
+							frameIt->second.size(), frameIt->first, numPlayers, m_frame));
+						break;
+
+					case CRC_AGREEMENT_MISMATCH:
+						DEBUG_CRASH(("CRC mismatch!"));
+						sawCRCMismatch = TRUE;
+						mismatchFrame = frameIt->first;
+						break;
+
+					case CRC_AGREEMENT_AGREE:
+						break;
+				}
+			}
+		}
+
+		if (sawCRCMismatch)
+		{
+#ifdef DEBUG_LOGGING
+			const std::map<Int, UnsignedInt> &mismatched = m_cachedCRCs[mismatchFrame];
+			DEBUG_LOG(("CRC Mismatch - saw %d CRCs of frame %d from %d players\n", mismatched.size(), mismatchFrame, numPlayers));
+			for (std::map<Int, UnsignedInt>::const_iterator crcIt = mismatched.begin(); crcIt != mismatched.end(); ++crcIt)
+			{
+				Player *player = ThePlayerList->getNthPlayer(crcIt->first);
+				DEBUG_LOG(("CRC from player %d (%s) = %X\n", crcIt->first,
+					WideCharAsUtf8( player?player->getPlayerDisplayName().str():u"<NONE>" ).str(), crcIt->second));
+			}
+#endif DEBUG_LOGGING
+			TheNetwork->setSawCRCMismatch();
+
+			// write down what the world looked like on the frame that diverged, while we still have it
+			writeMismatchDump( numPlayers, mismatchFrame );
+
+			/* Playing on is the worst of the options: two worlds that already disagree keep diverging
+				 for the rest of the match, every order after this point lands somewhere different on
+				 each machine, and the players only find out at the score screen.  Stop here instead -
+				 every machine detects the same mismatch on the same frame, so everyone stops together. */
+			TheMessageStream->appendMessage( GameMessage::MSG_CLEAR_GAME_DATA );
+		}
+	}
+
+}  // end processCommandList
+
+// ------------------------------------------------------------------------------------------------
+/** The lobby options string with every human slot's address taken out: the dump is uploaded with
+	* crash reports.  A human slot is "H<name>,<ip>,<port>,<eight more fields>:", and the name may hold
+	* a comma, so the two fields go by their place from the end. */
+// ------------------------------------------------------------------------------------------------
+static AsciiString lobbyOptionsWithoutAddresses( const AsciiString &options )
+{
+	std::string in( options.str() );
+	std::string out;
+	size_t tokenStart = 0;
+	while( tokenStart < in.size() )
+	{
+		size_t tokenEnd = in.find_first_of( ":;=", tokenStart );
+		if( tokenEnd == std::string::npos )
+			tokenEnd = in.size();
+		std::string token = in.substr( tokenStart, tokenEnd - tokenStart );
+
+		std::vector<size_t> commas;
+		for( size_t c = token.find( ',' ); c != std::string::npos; c = token.find( ',', c + 1 ) )
+			commas.push_back( c );
+		// fields n-8 and n-7 are the address and the port, so drop from the 8th comma from the end to the 6th
+		if( !token.empty() && token[0] == 'H' && commas.size() >= 8 )
+			token.erase( commas[ commas.size() - 8 ], commas[ commas.size() - 6 ] - commas[ commas.size() - 8 ] );
+
+		out += token;
+		if( tokenEnd < in.size() )
+			out += in[ tokenEnd ];
+		tokenStart = tokenEnd + 1;
+	}
+	return AsciiString( out.c_str() );
+}
+
+// ------------------------------------------------------------------------------------------------
+/** One number for a snapshot's command digest, so a line per frame says whether two dumps were
+	* given the same orders on it. */
+// ------------------------------------------------------------------------------------------------
+static UnsignedInt commandDigest( const CRCSnapshot *snap )
+{
+	UnsignedInt hash = 2166136261u;
+	for( size_t i = 0; i < snap->m_commands.size(); ++i )
+	{
+		const CRCCommandEntry &c = snap->m_commands[i];
+		const UnsignedInt fields[] = { c.m_frame, (UnsignedInt)c.m_player, (UnsignedInt)c.m_type, c.m_count, c.m_argHash };
+		for( size_t f = 0; f < sizeof( fields ) / sizeof( fields[0] ); ++f )
+			hash = ( hash ^ fields[f] ) * 16777619u;
+	}
+	return hash;
+}
+
+// ------------------------------------------------------------------------------------------------
+/** A mismatch says the worlds diverged; it does not say where.  This writes down everything we
+	* kept about the frame that diverged, so that two players' dumps can be diffed: the first object
+	* whose running CRC differs is the object whose state differs, and the fields printed next to it
+	* usually say how.  Every machine writes its own file at the same frame. */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::writeMismatchDump( Int numPlayers, UnsignedInt crcFrame )
+{
+	// the CRCs just compared were computed the run-ahead's worth of frames ago, on crcFrame
+	const std::map<Int, UnsignedInt> &compared = m_cachedCRCs[ crcFrame ];
+	Int slot = m_crcSnapshots.findSlotByFrame( crcFrame );
+	// a run-ahead longer than the ring (a high ping at the start of a match) leaves that frame out of it
+	const Bool slotFromCRC = slot >= 0;
+	if( slot < 0 )
+		slot = m_crcSnapshots.getNewestSlot();
+
+	AsciiString fname = TheGlobalData->getPath_UserData();
+	fname.concat( "MismatchDump.txt" );
+
+	// a file the user's disk may refuse to give us - the one place a guard is earned
+	FILE *fp = zh_fopen( fname.str(), "w" );
+	if( fp == NULL )
+	{
+		DEBUG_LOG(( "writeMismatchDump - could not open %s\n", fname.str() ));
+		return;
+	}
+
+	fprintf( fp, "Mismatch detected on frame %d\n", m_frame );
+	fprintf( fp, "Local player is slot %d of %d connected players; %d CRCs were compared\n",
+		TheNetwork ? TheNetwork->getLocalPlayerID() : 0, numPlayers, compared.size() );
+	// every player's dump carries the same two, which is how the reports from one match are paired up
+	fprintf( fp, "Map %s, seed %d\n", TheGameInfo->getMap().str(), TheGameInfo->getSeed() );
+	// what both ends agreed in the lobby and whether this machine read the map's rules file: two dumps
+	// that differ here never started the same game
+	fprintf( fp, "Lobby options %s\n", lobbyOptionsWithoutAddresses( GameInfoToAsciiString( TheGameInfo ) ).str() );
+	fprintf( fp, "map.ini %s\n\n", s_mapINILoaded ? "loaded" : "not present" );
+
+	/* Two machines that never agreed about arithmetic produce a mismatch that looks exactly like a
+		 logic bug.  This number depends on the machine's math and nothing else, so the first thing to
+		 compare between two dumps is this line: same value, the game states diverged; different value,
+		 they were never going to agree and no amount of reading the object table below will say why. */
+	fprintf( fp, "Simulation math fingerprint 0x%8.8X (FPU mode 0x%4.4X, expected 0x%4.4X)\n",
+		SimulationMathCrc::calculate(), getFPMode(), expectedFPMode() );
+
+	/* The line above is the machine's own C runtime, and it is allowed to differ - the
+		 simulation no longer calls it for anything.  This one is the integer trigonometry the
+		 simulation does run on, and it is the same number on every machine that built the same
+		 source, so two dumps that disagree here have a build problem, not a game problem. */
+	fprintf( fp, "Simulation trig fingerprint 0x%8.8X\n\n",
+		SimulationMathCrc::calculateSimulationTrig() );
+
+	fprintf( fp, "CRCs of frame %d:\n", crcFrame );
+	for( std::map<Int, UnsignedInt>::const_iterator crcIt = compared.begin();
+			 crcIt != compared.end(); ++crcIt )
+	{
+		Player *player = ThePlayerList->getNthPlayer( crcIt->first );
+		AsciiString name;
+		if( player )
+			name.translate( player->getPlayerDisplayName() );
+		fprintf( fp, "  player %d (%s) CRC 0x%8.8X\n", crcIt->first, name.str(), crcIt->second );
+	}
+
+	const CRCSnapshot *snap = m_crcSnapshots.getSlot( slot );
+	if( snap == NULL )
+	{
+		fprintf( fp, "\nNo CRC snapshot was retained for this frame.\n" );
+		fclose( fp );
+		// the launcher finds the log of this match by this line, so it is written either way
+		DEBUG_LOG(( "Mismatch on frame %d (no snapshot) - wrote %s\n", m_frame, fname.str() ));
+		return;
+	}
+
+	fprintf( fp, "\nDiverging frame is %d (world CRC 0x%8.8X, logic random seed CRC 0x%8.8X, %d objects)\n",
+		snap->m_frame, snap->m_totalCRC, snap->m_randomSeed, snap->m_objects.size() );
+	if( !slotFromCRC )
+		fprintf( fp, "Frame %d is no longer retained, so this is the newest one; compare it with the same frame in the other dump.\n", crcFrame );
+
+	// the parts getCRC folds in, in its order (CRCSection): the first line that differs between two
+	// dumps is the part that diverged, and when it is not the objects the table below will agree
+	static const char *const sectionNames[ CRC_SECTION_COUNT ] =
+	{
+		"objects",
+		"partition (logic random seed, shroud)",
+		"players (battle plans, skill points, science points, money)",
+		"AI (pathfinder, AI data, AI groups)",
+		"scripts",
+	};
+	fprintf( fp, "World CRC at the end of each part:\n" );
+	for( Int s = 0; s < CRC_SECTION_COUNT; ++s )
+		fprintf( fp, "  0x%8.8X after %s\n", snap->m_sectionCRC[s], sectionNames[s] );
+
+	fprintf( fp, "\nPlayers on that frame:\n%7s %12s %12s %15s  %s\n", "player", "money", "skillPoints", "sciencePoints", "name" );
+	for( size_t i = 0; i < snap->m_players.size(); ++i )
+	{
+		const CRCPlayerEntry &p = snap->m_players[i];
+		Player *player = ThePlayerList->getNthPlayer( (Int)i );
+		AsciiString name;
+		if( player )
+			name.translate( player->getPlayerDisplayName() );
+		fprintf( fp, "%7d %12u %12d %15d  %s\n", (Int)i, p.m_money, p.m_skillPoints, p.m_sciencePurchasePoints, name.str() );
+	}
+	fprintf( fp, "\n" );
+
+	/* What the machine was told to do between the frame before and this one (CRCSnapshot::m_commands).
+		 Same lines in both dumps and a different world: the same orders ran differently.  A line that
+		 differs: the machines were given different orders. */
+	fprintf( fp, "Commands executed since the frame before (digest 0x%8.8X):\n%7s %7s %6s %10s  %s\n",
+		commandDigest( snap ), "frame", "player", "count", "argHash", "command" );
+	for( size_t i = 0; i < snap->m_commands.size(); ++i )
+	{
+		const CRCCommandEntry &c = snap->m_commands[i];
+		fprintf( fp, "%7u %7d %6u 0x%8.8X  %s\n", c.m_frame, c.m_player, c.m_count, c.m_argHash,
+			GameMessage::getCommandTypeAsAsciiString( (GameMessage::Type)c.m_type ).str() );
+	}
+	fprintf( fp, "\n" );
+
+	fprintf( fp, "Diff this section against another player's file; the first differing running CRC is the object that diverged.\n\n" );
+	fprintf( fp, "%6s %8s %10s %12s %12s %12s %10s  %s\n",
+		"index", "objectID", "runningCRC", "x", "y", "z", "health", "template" );
+
+	for( size_t i = 0; i < snap->m_objects.size(); ++i )
+	{
+		const CRCObjectEntry &e = snap->m_objects[i];
+		Object *obj = findObjectByID( (ObjectID)e.m_id );
+		const char *templateName = obj ? obj->getTemplate()->getName().str() : "<destroyed since>";
+		fprintf( fp, "%6d %8d 0x%8.8X %12.4f %12.4f %12.4f %10.3f  %s\n",
+			i, e.m_id, e.m_runningCRC, e.m_x, e.m_y, e.m_z, e.m_health, templateName );
+	}
+
+	fprintf( fp, "\nOther retained CRC frames:\n" );
+	for( Int n = 0; n < m_crcSnapshots.getNumSnapshots(); ++n )
+	{
+		const CRCSnapshot *other = m_crcSnapshots.getSlot( m_crcSnapshots.getNthNewestSlot( n ) );
+		if( other == NULL || other == snap )
+			continue;
+		fprintf( fp, "  frame %d: world CRC 0x%8.8X, %d objects, %d command runs before it, digest 0x%8.8X\n",
+			other->m_frame, other->m_totalCRC, other->m_objects.size(), other->m_commands.size(), commandDigest( other ) );
+	}
+
+	fclose( fp );
+
+	DEBUG_LOG(( "Mismatch on frame %d (diverging frame %d) - wrote %s\n", m_frame, snap->m_frame, fname.str() ));
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+Bool GameLogic::isIntroMoviePlaying()
+{
+	/// @todo remove this hack
+	return m_startNewGame && TheDisplay->isMoviePlaying();
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void GameLogic::selectObject(Object *obj, Bool createNewSelection, PlayerMaskType playerMask, Bool affectClient)
+{
+	if (!obj) 
+	{
+		return;
+	}
+
+	if (!obj->isMassSelectable() && !createNewSelection) 
+	{
+		DEBUG_LOG(("GameLogic::selectObject() - Object attempted to be added to selection, but isn't mass-selectable.\n"));
+		return;
+	}
+
+	while( playerMask ) 
+	{
+		Player *player = ThePlayerList->getEachPlayerFromMask(playerMask);
+		if( !player ) 
+		{
+			return;
+		}
+
+		AIGroup *group = NULL;
+		CRCGEN_LOG(( "Creating AIGroup in GameLogic::selectObject()\n" ));
+		group = TheAI->createGroup();
+		group->add(obj);
+
+		// add all selected agents to the AI group
+		if (createNewSelection)	
+		{
+			player->setCurrentlySelectedAIGroup(group);
+		} 
+		else 
+		{
+			player->addAIGroupToCurrentSelection(group);
+		}
+
+		TheAI->destroyGroup(group);
+
+		if( affectClient ) 
+		{
+			Drawable *draw = obj->getDrawable();
+			if( draw ) 
+			{
+				TheInGameUI->selectDrawable(draw);
+			}
+		}
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void GameLogic::deselectObject(Object *obj, PlayerMaskType playerMask, Bool affectClient)
+{
+	if (!obj) {
+		return;
+	}
+
+	while (playerMask) {
+		Player *player = ThePlayerList->getEachPlayerFromMask(playerMask);
+		if (!player) {
+			return;
+		}
+
+		AIGroup *group = NULL;
+		CRCGEN_LOG(( "Removing a unit from a selected group in GameLogic::deselectObject()\n" ));
+		group = TheAI->createGroup();
+		player->getCurrentSelectionAsAIGroup(group);
+		
+		Bool deleted = FALSE;
+		Bool actuallyRemoved = FALSE;
+		
+		if (group) {
+			deleted = group->remove(obj);
+			actuallyRemoved = TRUE;
+		}
+		
+		if (actuallyRemoved) {
+			// Set this to be the currently selected group.
+			if (!deleted) {
+				player->setCurrentlySelectedAIGroup(group);
+				// Then, cleanup the group.
+				TheAI->destroyGroup(group);
+			} else {
+				// NULL will clear the group.
+				player->setCurrentlySelectedAIGroup(NULL);
+			}
+
+			if (affectClient) {
+				Drawable *draw = obj->getDrawable();
+				if (draw) {
+					TheInGameUI->deselectDrawable(draw);
+				}
+			}
+		}
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+inline void GameLogic::validateSleepyUpdate() const
+{
+// pretty slow, so do only for DEBUG for now. turn on if you suspect wonkiness.
+#if defined(_DEBUG) && defined(DEBUG_CRASHING)	// it only asserts
+	#define SLEEPY_DEBUG
+#endif
+#ifdef SLEEPY_DEBUG
+	int sz = m_sleepyUpdates.size();
+	if (sz == 0)
+		return;
+
+	int i;
+	//DEBUG_LOG(("\n\n"));
+	//for (i = 0; i < sz; ++i)
+	//{
+	//	DEBUG_LOG(("u %04d: %08lx %08lx\n",i,m_sleepyUpdates[i].module,m_sleepyUpdates[i].module->friend_getNextCallFrame()));
+	//}
+	for (i = 0; i < sz; ++i)
+	{
+		DEBUG_ASSERTCRASH(m_sleepyUpdates[i].module->friend_getIndexInLogic() == i, ("index mismatch: expected %d, got %d\n",i,m_sleepyUpdates[i].module->friend_getIndexInLogic()));
+		DEBUG_ASSERTCRASH(m_sleepyUpdates[i].priority == m_sleepyUpdates[i].module->friend_getPriority(), ("sleepy priority copy is stale at %d\n",i));
+		UnsignedInt pri = m_sleepyUpdates[i].priority;
+		if (i > 0)
+		{
+			Int i0 = (i+1)/2-1;
+			UnsignedInt pri0 = m_sleepyUpdates[i0].priority;
+			DEBUG_ASSERTCRASH(pri >= pri0, ("sleepyUpdates are munged (0)"));
+		}
+		Int i1 = 2*(i+1)-1;
+		Int i2 = 2*(i+1);
+		if (i1 < sz)
+		{
+			UnsignedInt pri1 = m_sleepyUpdates[i1].priority;
+			DEBUG_ASSERTCRASH(pri <= pri1, ("sleepyUpdates are munged (1)"));
+		}
+		if (i2 < sz)
+		{
+			UnsignedInt pri2 = m_sleepyUpdates[i2].priority;
+			DEBUG_ASSERTCRASH(pri <= pri2, ("sleepyUpdates are munged (2)"));
+		}
+	}
+#endif
+}
+
+// ------------------------------------------------------------------------------------------------
+void GameLogic::eraseSleepyUpdate(Int i)
+{
+	USE_PERF_TIMER(SleepyMaintenance)
+
+	DEBUG_ASSERTCRASH(i >= 0 && i < m_sleepyUpdates.size(), ("bad sleepy idx"));
+
+	// swap with the final item, toss the final item, then rebalance
+	m_sleepyUpdates[i].module->friend_setIndexInLogic(-1);
+
+	Int final = m_sleepyUpdates.size() - 1;
+	if (i < final)
+	{
+		m_sleepyUpdates[i] = m_sleepyUpdates[final];
+		m_sleepyUpdates[i].module->friend_setIndexInLogic(i);
+		m_sleepyUpdates.pop_back();
+		rebalanceSleepyUpdate(i);
+	}
+	else
+	{
+		m_sleepyUpdates.pop_back();
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+inline Bool isLowerPriority(const SleepyEntry& a, const SleepyEntry& b)
+{
+	// return true iff a is lower pri than b.
+	// remember: lower ordinal value means higher priority.
+	// therefore, higher ordinal value means lower priority.
+	return a.priority > b.priority;
+}
+
+// ------------------------------------------------------------------------------------------------
+Int GameLogic::rebalanceParentSleepyUpdate(Int i)
+{
+	USE_PERF_TIMER(SleepyMaintenance)
+
+	DEBUG_ASSERTCRASH(i >= 0 && i < m_sleepyUpdates.size(), ("bad sleepy idx"));
+
+	Int parent = ((i+1)>>1)-1;
+	while (parent >= 0 && isLowerPriority(m_sleepyUpdates[parent], m_sleepyUpdates[i]))
+	{
+		SleepyEntry a = m_sleepyUpdates[parent];
+		SleepyEntry b = m_sleepyUpdates[i];
+
+		m_sleepyUpdates[i] = a;
+		m_sleepyUpdates[parent] = b;
+
+		a.module->friend_setIndexInLogic(i);
+		b.module->friend_setIndexInLogic(parent);
+
+		i = parent;
+		parent = ((parent+1)>>1)-1;
+	}
+
+	return i;
+}
+
+// ------------------------------------------------------------------------------------------------
+Int GameLogic::rebalanceChildSleepyUpdate(Int i)
+{
+	USE_PERF_TIMER(SleepyMaintenance)
+
+	DEBUG_ASSERTCRASH(i >= 0 && i < m_sleepyUpdates.size(), ("bad sleepy idx"));
+
+	/* Every sleepy module that runs sinks from the top of this heap again, so this is the busiest loop
+		 of the scheduler. The sinking entry moves down through a hole: each child that has to rise moves
+		 up one slot and takes its new index, and the sinking entry is written once, where it stops.
+		 Swapping at every level wrote both entries and both modules' indices each time, and every module
+		 is a cache line of its own. The comparisons are the ones the swapping walk made, so every entry
+		 ends in the same slot, ties included, and the modules run in the same order. Which child sorts
+		 first is a coin toss a branch keeps guessing wrong, so the pick is a sum instead. */
+	SleepyEntry *entries = m_sleepyUpdates.data();
+	const Int sz = (Int)m_sleepyUpdates.size();
+	const SleepyEntry sinking = entries[i];
+	const Int start = i;
+
+	// our children are i*2+1 and i*2+2
+	Int child = ((i+1)<<1)-1;
+	while (child < sz)
+	{
+		/* The level below is read next, and which half of it depends on the comparison about to be made.
+			 Its four entries are one or two cache lines, so asking for both now has them in by then: a late
+			 heap holds a few thousand entries and each level of the walk was a miss waiting on the last. */
+		const Int grandchild = ((child+1)<<1)-1;
+		if (grandchild < sz)
+			GL_PREFETCH(&entries[grandchild]);
+		if (grandchild + 3 < sz)
+			GL_PREFETCH(&entries[grandchild + 3]);
+
+		// choose the higher-priority of the two children; we must be higher-pri than that.
+		if (child < sz-1)
+			child += (Int)isLowerPriority(entries[child], entries[child+1]);
+
+		// if we're higher-pri than our children, we're done.
+		if (!isLowerPriority(sinking, entries[child]))
+			break;
+
+		entries[i] = entries[child];
+		entries[i].module->friend_setIndexInLogic(i);
+		i = child;
+		child = ((i+1)<<1)-1;
+	}
+
+	if (i != start)
+	{
+		entries[i] = sinking;
+		sinking.module->friend_setIndexInLogic(i);
+	}
+	return i;
+}
+
+// ------------------------------------------------------------------------------------------------
+void GameLogic::rebalanceSleepyUpdate(Int i)
+{
+	USE_PERF_TIMER(SleepyMaintenance)
+
+	i = rebalanceParentSleepyUpdate(i);
+	i = rebalanceChildSleepyUpdate(i);
+}
+
+// ------------------------------------------------------------------------------------------------
+void GameLogic::remakeSleepyUpdate()
+{
+	USE_PERF_TIMER(SleepyMaintenance)
+
+	Int parent = m_sleepyUpdates.size() / 2;
+  while (true) 
+	{
+    rebalanceChildSleepyUpdate(parent);
+    if (parent == 0)
+			break;
+    --parent;
+  }
+
+	validateSleepyUpdate();
+}
+
+// ------------------------------------------------------------------------------------------------
+void GameLogic::pushSleepyUpdate(UpdateModulePtr u)
+{
+	USE_PERF_TIMER(SleepyMaintenance)
+
+	DEBUG_ASSERTCRASH(u != NULL, ("You may not pass null for sleepy update info"));
+
+	SleepyEntry e = { u->friend_getPriority(), u };
+	m_sleepyUpdates.push_back(e);
+	u->friend_setIndexInLogic(m_sleepyUpdates.size() - 1);
+
+	rebalanceParentSleepyUpdate(m_sleepyUpdates.size()-1);
+}
+
+// ------------------------------------------------------------------------------------------------
+UpdateModulePtr GameLogic::peekSleepyUpdate() const
+{
+	USE_PERF_TIMER(SleepyMaintenance)
+
+	UpdateModulePtr u = m_sleepyUpdates.front().module;
+	DEBUG_ASSERTCRASH(u->friend_getIndexInLogic() == 0, ("index mismatch: expected %d, got %d\n",0,u->friend_getIndexInLogic()));
+	return u;
+}
+
+// ------------------------------------------------------------------------------------------------
+void GameLogic::popSleepyUpdate()
+{
+	USE_PERF_TIMER(SleepyMaintenance)
+
+	Int sz = m_sleepyUpdates.size();
+	if (sz == 0)
+	{
+		DEBUG_CRASH(("should not happen"));
+		return;
+	}
+
+	m_sleepyUpdates[0].module->friend_setIndexInLogic(-1);
+	if (sz > 1)
+	{
+		m_sleepyUpdates[0] = m_sleepyUpdates[sz-1];
+		m_sleepyUpdates[0].module->friend_setIndexInLogic(0);
+		m_sleepyUpdates.pop_back();
+		rebalanceChildSleepyUpdate(0);
+	}
+	else
+	{
+		m_sleepyUpdates.pop_back();
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// this should be called only by UpdateModule, thanks.
+// ------------------------------------------------------------------------------------------------
+//DECLARE_PERF_TIMER(friend_awakenUpdateModule)
+void GameLogic::friend_awakenUpdateModule(Object* obj, UpdateModulePtr u, UnsignedInt whenToWakeUp)
+{
+	//USE_PERF_TIMER(friend_awakenUpdateModule)
+	UnsignedInt now = TheGameLogic->getFrame();
+	DEBUG_ASSERTCRASH(whenToWakeUp >= now, ("setWakeFrame frame is in the past... are you sure this is what you want?"));
+
+	if (u == m_curUpdateModule)
+	{
+		DEBUG_CRASH(("You should not call setWakeFrame() from inside your update(), because it will be ignored, in favor of the return code from update.\n"));
+		return;
+	}
+
+	if (whenToWakeUp == u->friend_getNextCallFrame())
+		return;	// my, that was easy
+
+	if ((now > 0) && (u->friend_getNextCallFrame() == now) && (whenToWakeUp == now + 1))
+	{
+		// subtle but important case: if we already awake, and someone calls 
+		// setWakeFrame(self, UPDATE_SLEEP_NONE), we don't want to reset our wake frame,
+		// since that would prevent us from getting called THIS frame. since UPDATE_SLEEP_NONE
+		// really means "wake up as soon as possible", we don't want to change our status
+		// if we are already awake. (srj)
+		return;
+	}
+
+	Int idx = u->friend_getIndexInLogic();
+	if (obj->isInList(&m_objList))
+	{
+		if (idx < 0 || idx >= m_sleepyUpdates.size())
+		{
+			RELEASE_CRASH("fatal error! sleepy update module illegal index.\n");
+			return;
+		}
+
+		if (m_sleepyUpdates[idx].module != u)
+		{
+			RELEASE_CRASH("fatal error! sleepy update module index mismatch.\n");
+			return;
+		}
+
+		// update the value.
+		u->friend_setNextCallFrame(whenToWakeUp);
+		m_sleepyUpdates[idx].priority = u->friend_getPriority();
+
+		// rebalance.
+		rebalanceSleepyUpdate(idx);
+		
+		// validate. (harmless except in debug mode)
+		validateSleepyUpdate();
+
+		return;
+	}
+	else
+	{
+		if (idx != -1)
+		{
+			RELEASE_CRASH("fatal error! sleepy update module index mismatch.\n");
+			return;
+		}
+
+		// this can happen if stuff happens during object initialization. fortunately, 
+		// it's easy to deal with:
+		u->friend_setNextCallFrame(whenToWakeUp);
+		return;
+	}
+}
+
+
+
+
+
+
+
+// ------------------------------------------------------------------------------------------------
+#ifdef DO_UNIT_TIMINGS
+
+void drawGraph( const char* style, Real scale, double value )
+{
+  for ( Int t = 0; t < value*scale; ++t)
+  {
+    DEBUG_LOG((style));
+    if ( t%200 == 199 )
+      DEBUG_LOG(("...\n"));
+  }
+
+  DEBUG_LOG(("\n"));
+
+}
+
+
+	enum {TIME_FRAMES=20};
+	enum {SETTLE_FRAMES=10};
+static void unitTimings(void)
+{
+	static Int settleFrames = 0;
+	static Int timeFrames = 0;
+	enum { INFANTRY, VEHICLE, STRUCTURE, OTHER, END}; 
+	static Int unitTypes = INFANTRY;
+	AsciiString sides[16];
+
+
+	const Int UNIT_X = 10;
+	const Int UNIT_Y = 10;
+	const Int TOTAL_UNITS = UNIT_X*UNIT_Y;
+
+
+	const Int UNIT_SPACING = 30;
+	const Int UNIT_BORDER = 30;
+
+
+	Int sideCount = 0;
+  #define no_SINGLE_UNIT "AmericaInfantryRanger"
+
+#define DO_FACTION
+#ifdef DO_FACTION
+	sides[sideCount++] = "America";
+	sides[sideCount++] = "China";
+	sides[sideCount++] = "GLA";
+
+  //The MissionDisk new 'sides'
+	sides[sideCount++] = "AmericaSuperWeaponGeneral";
+	sides[sideCount++] = "AmericaLaserGeneral";
+	sides[sideCount++] = "AmericaAirForceGeneral";
+	sides[sideCount++] = "ChinaTankGeneral";
+	sides[sideCount++] = "ChinaInfantryGeneral";
+	sides[sideCount++] = "ChinaNukeGeneral";
+	sides[sideCount++] = "GLAToxinGeneral";
+	sides[sideCount++] = "GLADemolitionGeneral";
+	sides[sideCount++] = "GLAStealthGeneral";
+
+//  sides[sideCount++] = "*"; // wildcard for unspecified side
+
+
+#endif
+
+#define DO_CIVILIAN
+#ifdef DO_CIVILIAN
+	sides[sideCount++] = "Civilian";
+#endif
+
+#define DO_SINGLE_KIND
+#ifdef DO_SINGLE_KIND
+	static KindOfType goalKind = KINDOF_STRUCTURE;
+	//static KindOfType goalKind = KINDOF_INFANTRY;
+	//static KindOfType goalKind = KINDOF_VEHICLE;
+#endif
+
+	sides[sideCount] = "";
+	static bool veryFirstTime = true;
+
+
+	static Int side = 0;
+
+	static __int64 startTime64;
+	static __int64 endTime64,freq64;
+	static int drawCallTotal;
+	static enum { LOGIC, NO_PARTICLES, NO_SPAWN, ALL} mode;
+	static double timeAll, timeAllNoAnim, timeNoPart, timeNoSpawn, timeLogic, timeLogicNoAnim;
+	static float drawCallAll,drawCallNoPart,drawCallNoSpawn,drawCallLogic;
+	
+	if (settleFrames>0) {
+		settleFrames--;
+		if (settleFrames>0) return;
+
+		startTime64 = Clock_Ticks();
+		freq64 = Clock_Ticks_Per_Second();
+		timeFrames = TIME_FRAMES;
+
+		// reset the draw counter
+		drawCallTotal = 0;
+		return;
+	}
+	if (timeFrames>0) {
+		drawCallTotal += TheDisplay->getLastFrameDrawCalls();
+		timeFrames--;
+		if (timeFrames>0) return;
+		
+		endTime64 = Clock_Ticks();
+		double timeToUpdate = ((double)(endTime64-startTime64) / (double)(freq64));
+
+//		Real timeToUpdateMicrosec = timeToUpdate*1E6/(TIME_FRAMES * TOTAL_UNITS);
+		timeToUpdate *= 100.0f/TIME_FRAMES;
+
+
+		if (mode == LOGIC) {
+			timeLogic = timeToUpdate;
+			drawCallLogic = (float)drawCallTotal / (float)(TIME_FRAMES * TOTAL_UNITS);  // 100 units for TIME_FRAMES
+
+			mode = ALL;
+			settleFrames = SETTLE_FRAMES;
+			//g_timing_no_anim = true;
+			Coord3D thePos;
+			thePos.x = 50;
+			thePos.y = 50;
+			thePos.z = 0;
+			TheTacticalView->lookAt( &thePos );
+			return;
+		}
+		if (mode == ALL) {
+			timeAll = timeToUpdate;
+			drawCallAll = (float)drawCallTotal / (float)(TIME_FRAMES * TOTAL_UNITS);  // 100 units for TIME_FRAMES
+
+			mode = NO_PARTICLES; 
+			settleFrames = SETTLE_FRAMES;
+			if (TheParticleSystemManager->getParticleCount()>1) {
+				TheParticleSystemManager->reset();
+				DEBUG_LOG(("Starting noParticles - \n"));
+			}
+			return;
+		} 
+		if (mode == NO_PARTICLES) {
+			timeNoPart = timeToUpdate;
+			drawCallNoPart = (float)drawCallTotal / (float)(TIME_FRAMES * TOTAL_UNITS);  // 100 units for TIME_FRAMES
+
+			mode = NO_SPAWN;
+			Object *obj = TheGameLogic->getFirstObject();
+			Bool gotSpawn;
+			while (obj) {
+				if (obj->getTemplate() != g_UT_curThing) {
+					TheGameLogic->destroyObject(obj);
+					gotSpawn = true;
+				}
+				obj = obj->getNextObject();
+			}	
+			if (gotSpawn) {
+				DEBUG_LOG(("Starting noSpawn - \n"));
+				settleFrames = SETTLE_FRAMES;
+				return;
+			}
+		}	
+		if (mode==NO_SPAWN) {
+			timeNoSpawn = timeToUpdate;
+			drawCallNoSpawn = (float)drawCallTotal / (float)(TIME_FRAMES * TOTAL_UNITS);  // 100 units for TIME_FRAMES
+		}
+		if (g_UT_curThing==NULL) return;
+
+
+		char remark[2048];
+    Real graphScale = 20.0f;
+		AsciiString thingName = g_UT_curThing->getName();
+		if (veryFirstTime) {
+			thingName = "No Object";
+		}
+
+    sprintf(remark, "All %f: (%d ms) for %d %s's\n", timeAll, (Int)(timeAll*1000/TIME_FRAMES), TOTAL_UNITS, thingName.str() );
+    DEBUG_LOG((remark));
+    drawGraph( "@", graphScale, timeAll );
+
+		sprintf(remark, "Without Particles %f\n", timeNoPart);
+    DEBUG_LOG((remark));
+    drawGraph( "@", graphScale, timeNoPart );
+        
+ 		sprintf(remark, "Without Spawn %f  \n", timeNoSpawn );
+    DEBUG_LOG((remark));
+    drawGraph( "@", graphScale, timeNoSpawn );
+
+ 		sprintf(remark, "Logic %f \n", timeLogic);
+    DEBUG_LOG((remark));
+    drawGraph( "@", graphScale, timeLogic );
+    
+    
+		sprintf(remark, "DrawCalls for %s \n", thingName.str() ) ;
+		DEBUG_LOG((remark));
+
+		sprintf(remark, "All %f\n", drawCallAll );
+		DEBUG_LOG((remark));
+    drawGraph( "#", graphScale, drawCallAll );
+
+		sprintf(remark, "Without Particles %f\n", drawCallNoPart );
+		DEBUG_LOG((remark));
+    drawGraph( "#", graphScale, drawCallNoPart );
+
+		sprintf(remark, "Without Spawn %f \n", drawCallNoSpawn );
+		DEBUG_LOG((remark));
+    drawGraph( "#", graphScale, drawCallNoSpawn );
+
+		sprintf(remark, "Draw Call Logic %f \n", drawCallLogic );
+		DEBUG_LOG((remark));
+    drawGraph( "#", graphScale, drawCallLogic );
+
+
+		if (g_UT_timingLog) {
+			fputs(remark, g_UT_timingLog);
+		}
+		if (g_UT_commaLog) {
+			AsciiString type;
+			if (unitTypes == INFANTRY) {
+				type="Infantry";
+			}	else if (unitTypes == VEHICLE) {
+				type="Vehicle";
+			}	else if (unitTypes == STRUCTURE) {
+				type="Structure";
+			}	else {
+				type="Other";
+			}						 
+			AsciiString modelName;
+			ModelConditionFlags state;
+			state.clear();
+			const ModuleInfo& mi = g_UT_curThing->getDrawModuleInfo();
+			if (mi.getCount() > 0)
+			{
+				const ModuleData* mdd = mi.getNthData(0);
+				const W3DModelDrawModuleData* md = mdd ? mdd->getAsW3DModelDrawModuleData() : NULL;
+				if (md)
+				{
+					modelName = md->getBestModelNameForWB(state);
+				}
+			}
+			if (veryFirstTime) {
+				modelName = "**NO MODEL**";
+				veryFirstTime = false;
+			}
+			sprintf(remark, "%f,%d,%f,%d,%f,%d,%f,%d,%s,%s,%s,%s,%f,%f,%f\n", timeAll, 
+			(Int)(timeAll*1000/TIME_FRAMES),timeNoPart, 
+			(Int)(timeNoPart*1000/TIME_FRAMES),timeNoSpawn, 
+			(Int)(timeNoSpawn*1000/TIME_FRAMES),timeLogic, 
+			(Int)(timeLogic*1000/TIME_FRAMES), thingName.str(), modelName.str(), type.str(),
+			sides[side].str(),
+			drawCallAll,drawCallNoPart,drawCallNoSpawn);
+			fputs(remark, g_UT_commaLog);
+		}
+		TheParticleSystemManager->reset();
+		g_UT_gotUnit = false;
+	}
+
+#ifdef SINGLE_UNIT
+	if (g_UT_curThing && g_UT_startTiming) {
+		if (g_UT_curThing->getName()==SINGLE_UNIT) {
+			if (g_UT_timingLog) {
+				fclose(g_UT_timingLog);
+				g_UT_timingLog = NULL;
+			}
+			if (g_UT_commaLog) {
+				fclose(g_UT_commaLog);
+				g_UT_commaLog = NULL;
+			}
+			return;
+		}
+		while (g_UT_curThing->friend_getNextTemplate() 
+			&& g_UT_curThing->friend_getNextTemplate()->getName()!=SINGLE_UNIT) 
+			g_UT_curThing = g_UT_curThing->friend_getNextTemplate();
+		
+	}
+#endif
+
+	Object *obj = TheGameLogic->getFirstObject();
+	while (obj) {
+		TheGameLogic->destroyObject(obj);
+		obj = obj->getNextObject();
+	}												
+
+	if (g_UT_startTiming && g_UT_curThing && !g_UT_gotUnit) {
+		TheWritableGlobalData->m_framesPerSecondLimit = 10000;
+		TheWritableGlobalData->m_useFpsLimit = false;
+		while (!g_UT_gotUnit) {
+			if (veryFirstTime) {
+				g_UT_gotUnit = true;
+				break;
+			}
+			g_UT_curThing = g_UT_curThing->friend_getNextTemplate();
+
+			if (g_UT_curThing == NULL) {
+				unitTypes++;
+				if (unitTypes==END) {
+					side++;
+					unitTypes = INFANTRY;
+					if (sides[side].isEmpty() ) // end of sides list
+          {
+						g_UT_startTiming = false;
+						if (g_UT_timingLog) 
+            {
+							fclose(g_UT_timingLog);
+							g_UT_timingLog = NULL;
+						}
+						if (g_UT_commaLog) 
+            {
+							fclose(g_UT_commaLog);
+							g_UT_commaLog = NULL;
+						}
+						break;
+					}
+				}
+				g_UT_curThing = TheThingFactory->firstTemplate();
+			}
+
+			const ThingTemplate* btt = g_UT_curThing;
+
+#ifndef SINGLE_UNIT
+      Bool unspecified = FALSE;
+			if (btt->getDefaultOwningSide() != sides[side]) 
+      {
+        if (sides[side] == "*")
+        {
+          if ( btt->getDefaultOwningSide() == ("") )// wildcard for unspecified side
+            unspecified = TRUE;
+          else
+            continue;
+        }
+        else
+    		  continue;
+
+			}
+
+			if (unitTypes == INFANTRY) {
+				if (!btt->isKindOf(KINDOF_INFANTRY)) continue;
+			}	else if (unitTypes == VEHICLE) {
+				if (!btt->isKindOf(KINDOF_VEHICLE)) continue;
+			}	else if (unitTypes == STRUCTURE) {
+				if (!btt->isKindOf(KINDOF_STRUCTURE)) continue;
+			}	else {
+				if (btt->isKindOf(KINDOF_INFANTRY)) continue;
+				if (btt->isKindOf(KINDOF_VEHICLE)) continue;
+				if (btt->isKindOf(KINDOF_STRUCTURE)) continue;
+			}
+#endif
+#ifdef DO_SINGLE_KIND
+			if (!btt->isKindOf(goalKind)) continue;
+#endif
+
+
+      static char *illegalTemplateNames[] = 
+      {
+	      "EMPPulseBomb",
+	      "GLAAngryMobRockProjectileObject",
+	      "ClusterMinesBomb",
+	      "BlackNapalmFirestormSmall",
+	      "CabooseFullOfTerrorists",
+	      "GLAAngryMobMolotovCocktailProjectileObject",
+	      "Firestorm",
+	      "Avalanche",
+	      "InfernoTankShell",
+	      "ChinaArtilleryBarrageShell",
+	      "ChinaTankOverlordBattleBunker",
+	      "ChinaTankOverlordPropagandaTower",
+	      "ChinaTankOverlordGattlingCannon",
+	      "CINE",
+	      "GLAInfantryAngryMobNexus",
+	      "AircraftCarrier",
+        "GermanMuseum",
+        "Cin_",
+        "Amb_",
+        "Ambient",
+        "GC_",
+		"SpecialEffectsTrainCrashObject",
+	      NULL
+      };
+
+      Bool skip = FALSE;
+
+      for ( Int test = 0; test < sizeof( illegalTemplateNames ) ; ++test )
+      {
+        if ( illegalTemplateNames[test] == NULL )
+          break;
+
+        if (btt->getName().startsWith(illegalTemplateNames[test])) 
+        {
+          skip = TRUE;
+          break;
+        }
+        if (btt->getName().endsWith(illegalTemplateNames[test])) 
+        {
+          skip = TRUE;
+          break;
+        }
+        if (btt->getName() == illegalTemplateNames[test] ) 
+        {
+          skip = TRUE;
+          break;
+        }
+      }
+
+      if ( skip ) 
+        continue;
+
+//			if (btt->getName() endsWith("EMPPulseBomb")) continue; // 100 overloads system.
+//			if (btt->getName() endsWith("GLAAngryMobRockProjectileObject")) continue; // 100 overloads system.
+//			if (btt->getName() endsWith("ClusterMinesBomb")) continue; // 100 overloads system.
+//			if (btt->getName() endsWith("BlackNapalmFirestormSmall")) continue; // 100 overloads system.
+//			if (btt->getName() endsWith("CabooseFullOfTerrorists")) continue; // 100 overloads system.
+//			if (btt->getName() endsWith("GLAAngryMobMolotovCocktailProjectileObject")) continue; // 100 overloads system.
+//			if (btt->getName().startsWith("Firestorm"))	continue;	// 100 crashes
+//			if (btt->getName().startsWith("Avalanche"))	continue;	// 100 crashes
+//			if (btt->getName().startsWith("InfernoTankShell"))	continue;	// 100 crashes
+//			
+//			if (btt->getName() endsWith("ChinaArtilleryBarrageShell") continue; // 100 takes really, freaking long. Doesn't crash jba.
+//			if (btt->getName() endsWith("ChinaTankOverlordBattleBunker") continue; // 100 seems to hang gth.
+//			if (btt->getName() endsWith("ChinaTankOverlordPropagandaTower") continue; // 100 seems to hang gth.
+//			if (btt->getName() endsWith("ChinaTankOverlordGattlingCannon") continue; // 100 seems to hang gth.
+//			if (btt->getName().startsWith("CINE")) continue;
+//			if (btt->getName() endsWith("GLAInfantryAngryMobNexus") continue;
+//
+//      //missiondisk perps
+//      
+//      if (btt->getName() == "AmericaAircraftCarrier") continue;
+
+
+
+#ifdef SINGLE_UNIT
+			if (btt->getName()!=SINGLE_UNIT) {
+				DEBUG_LOG(("Skipping %s\n", btt->getName().str()));
+				continue;
+			}
+#endif
+			DEBUG_LOG(("\n===Doing thing %s ===\n", btt->getName().str()));
+
+
+#define dont_DO_ATTACK
+#ifdef DO_ATTACK
+			Coord3D attackedPos;
+			attackedPos.x = UNIT_SPACING * 4.5 + UNIT_BORDER;
+			attackedPos.y = UNIT_SPACING * 4.5 + UNIT_BORDER;
+			attackedPos.z = TheTerrainLogic->getGroundHeight( attackedPos.x, attackedPos.y );
+
+#endif
+
+			Int i, j;
+			for (i=0; i<10; i++) {
+				for (j=0; j<10; j++) {
+					Coord3D pos;
+					pos.x = UNIT_SPACING*i+UNIT_BORDER;
+					pos.y = UNIT_SPACING*j+UNIT_BORDER;
+					pos.z = TheTerrainLogic->getGroundHeight( pos.x, pos.y );
+					Team *team = ThePlayerList->getNthPlayer(1)->getDefaultTeam();
+					Object *obj = TheThingFactory->newObject( btt, team );
+					if (obj==NULL) break;
+#define dont_DO_TREE	1
+#ifdef DO_TREE
+					TheGameLogic->destroyObject(obj);
+					externalAddTree(pos, 1.0f, 0.0f, "TreeOakFall1");
+					g_UT_gotUnit = true;
+#else
+					if (obj)
+					{
+						g_UT_gotUnit = true;
+					
+						obj->setOrientation(0);	
+						obj->setPosition( &pos );
+						
+						// Now onCreates were called at the constructor.  This magically created
+						// thing needs to be considered as Built for Game specific stuff.
+						for (BehaviorModule** m = obj->getBehaviorModules(); *m; ++m)
+						{
+							CreateModuleInterface* create = (*m)->getCreate();
+							if (!create)
+								continue;
+							create->onBuildComplete();
+						}
+						// Since the team now has members, activate it.
+						team->setActive();
+						TheAI->pathfinder()->addObjectToPathfindMap(obj);
+#ifdef DO_ATTACK
+						AIUpdateInterface *myAI = obj->getAI();
+						if(myAI)
+						{
+							myAI->aiAttackPosition(&attackedPos, 9999, CMD_FROM_AI);
+						}
+#endif
+					}
+#endif 
+				}
+			}
+		}
+		if (g_UT_gotUnit) {
+			settleFrames = TIME_FRAMES/2;
+			Coord3D thePos;
+			thePos.x = 5000;
+			thePos.y = 50;
+			thePos.z = 0;
+			TheTacticalView->lookAt( &thePos );
+			mode = LOGIC;
+			return;
+		}
+	}
+}
+#endif
+
+DECLARE_PERF_TIMER(GameLogic_update)
+DECLARE_PERF_TIMER(GameLogic_update_normal)
+DECLARE_PERF_TIMER(GameLogic_update_sleepy)
+
+#ifdef DUMP_PERF_STATS
+extern __int64 Total_Get_Texture_Time;
+extern __int64 Total_Get_HAnim_Time;
+extern __int64 Total_Create_Render_Obj_Time;
+extern __int64 Total_Load_3D_Assets;
+#endif
+
+// ------------------------------------------------------------------------------------------------
+/** Update all objects in the world by invoking their update() methods. */
+// ------------------------------------------------------------------------------------------------
+
+/** Milliseconds between two performance counter readings. */
+static Real logicElapsedMS( const Int64 &from, const Int64 &to )
+{
+	static Int64 freq = 0;
+	if( freq == 0 )
+		freq = Clock_Ticks_Per_Second();
+	if( freq == 0 )
+		return 0.0f;
+	return (Real)( (double)(to - from) * 1000.0 / (double)freq );
+}
+
+#ifdef DEBUG_LOGGING
+//
+// Which update module ate the frame.  The `objects` figure in the slow-frame line is the whole
+// sleepy-update sweep, thousands of modules deep, and that alone never says which one.  Two
+// QueryPerformanceCounter reads and a kind lookup per module cost about 0.2ms over a busy frame, so
+// they run on one logic frame in MODULE_PROFILE_EVERY and on every frame after a slow one: a fight
+// that runs slow is slow for many frames in a row, and from its second frame on every one is timed.
+// A lone spike on an untimed frame says so in its line.
+//
+enum { MODULE_PROFILE_EVERY = 8 };
+static Bool								theModulesTimed = FALSE;
+static Bool								theLastLogicFrameSlow = FALSE;
+static Int64							theWorstModuleTicks = 0;
+static NameKeyType					theWorstModuleKey = NAMEKEY_INVALID;
+static const ThingTemplate *theWorstModuleThing = NULL;
+static Int								theModuleUpdateCount = 0;
+
+//
+// The worst single module names a hitch, not a cost: a frame where two thousand modules each take
+// a little is exactly as slow and has no worst.  So the sweep is also totalled by kind of module,
+// which is what says whether the frame went on AI, on weapons, or on something nobody suspects.
+// A linear scan over the kinds seen so far - there are a few dozen, not thousands - is cheaper
+// than a map and does not allocate inside the frame.
+//
+enum { MODULE_PROFILE_MAX = 96 };
+static NameKeyType	theModuleKindKey[ MODULE_PROFILE_MAX ];
+static Int64				theModuleKindTicks[ MODULE_PROFILE_MAX ];
+static Int					theModuleKindCount[ MODULE_PROFILE_MAX ];
+static Int					theModuleKindQueries[ MODULE_PROFILE_MAX ];
+static Int					theModuleKindsUsed = 0;
+
+static void resetModuleProfile( UnsignedInt now )
+{
+	theModulesTimed = theLastLogicFrameSlow || ( now % MODULE_PROFILE_EVERY ) == 0;
+	theWorstModuleTicks = 0;
+	theWorstModuleKey = NAMEKEY_INVALID;
+	theWorstModuleThing = NULL;
+	theModuleUpdateCount = 0;
+	theModuleKindsUsed = 0;
+}
+
+static void addModuleProfile( NameKeyType key, Int64 ticks, Int queries )
+{
+	for( Int at = 0; at < theModuleKindsUsed; at++ )
+	{
+		if( theModuleKindKey[ at ] == key )
+		{
+			theModuleKindTicks[ at ] += ticks;
+			theModuleKindCount[ at ]++;
+			theModuleKindQueries[ at ] += queries;
+			return;
+		}
+	}
+
+	if( theModuleKindsUsed >= MODULE_PROFILE_MAX )
+		return;								// more kinds than the table holds: the top three are in it already
+
+	theModuleKindKey[ theModuleKindsUsed ] = key;
+	theModuleKindTicks[ theModuleKindsUsed ] = ticks;
+	theModuleKindCount[ theModuleKindsUsed ] = 1;
+	theModuleKindQueries[ theModuleKindsUsed ] = queries;
+	theModuleKindsUsed++;
+}
+
+//
+// Who asks the partition manager for a range query.  THREADING-ROADMAP counted 117 of them a logic
+// frame and could name 17 - the units looking for something to shoot.  A sampling profile cannot
+// name the other hundred, because they all end up inside the same getClosestObjects.  Attributing
+// each one to the module that was updating when it happened does name them, and the count is a
+// static int read either side of a call that already carries two QueryPerformanceCounter reads.
+//
+static const char *getModuleQueryReport( void )
+{
+	static char report[ 256 ];
+	Bool taken[ MODULE_PROFILE_MAX ];
+
+	Int used = snprintf( report, ARRAY_SIZE(report), theModulesTimed ? "queries by module:" : "queries by module: not counted this frame" );
+	if( used < 0 || used >= (Int)ARRAY_SIZE(report) )
+		return report;
+
+	for( Int at = 0; at < theModuleKindsUsed; at++ )
+		taken[ at ] = FALSE;
+
+	for( Int rank = 0; rank < 5; rank++ )
+	{
+		Int best = -1;
+		for( Int at = 0; at < theModuleKindsUsed; at++ )
+			if( !taken[ at ] && theModuleKindQueries[ at ] > 0
+					&& ( best < 0 || theModuleKindQueries[ at ] > theModuleKindQueries[ best ] ) )
+				best = at;
+
+		if( best < 0 )
+			break;
+
+		const Int room = (Int)ARRAY_SIZE(report) - used;
+		const Int wrote = snprintf( report + used, room, " %s %dq/%dx",
+										 TheNameKeyGenerator->keyToName( theModuleKindKey[ best ] ).str(),
+										 theModuleKindQueries[ best ], theModuleKindCount[ best ] );
+		if( wrote < 0 || wrote >= room )
+			break;
+		used += wrote;
+
+		taken[ best ] = TRUE;
+	}
+
+	return report;
+}
+
+static const char *getModuleProfileReport( void )
+{
+	static char report[ 512 ];
+	Int64 freq = 0;
+	freq = Clock_Ticks_Per_Second();
+
+	if( !theModulesTimed )
+	{
+		snprintf( report, ARRAY_SIZE(report), "%d updates, modules not timed this frame", theModuleUpdateCount );
+		return report;
+	}
+
+	if( theWorstModuleKey == NAMEKEY_INVALID )
+	{
+		snprintf( report, ARRAY_SIZE(report), "%d updates", theModuleUpdateCount );
+		return report;
+	}
+
+	// The names in this line are a module class and a thing template, both of them out of INI, so
+	// four of them could be longer than the line.  Nothing bounded this before.
+	const Real worstMS = freq ? (Real)( (double)theWorstModuleTicks * 1000.0 / (double)freq ) : 0.0f;
+	Int used = snprintf( report, ARRAY_SIZE(report), "%d updates, worst %s on %s %.1fms", theModuleUpdateCount,
+										 TheNameKeyGenerator->keyToName( theWorstModuleKey ).str(),
+										 theWorstModuleThing ? theWorstModuleThing->getName().str() : "<none>",
+										 worstMS );
+	if( used < 0 || used >= (Int)ARRAY_SIZE(report) )
+		return report;
+
+	// and the three kinds of module the sweep spent the most time in, whatever the worst one was
+	for( Int rank = 0; rank < 3; rank++ )
+	{
+		Int best = -1;
+		for( Int at = 0; at < theModuleKindsUsed; at++ )
+			if( theModuleKindTicks[ at ] >= 0 && ( best < 0 || theModuleKindTicks[ at ] > theModuleKindTicks[ best ] ) )
+				best = at;
+
+		if( best < 0 )
+			break;
+
+		const Real ms = freq ? (Real)( (double)theModuleKindTicks[ best ] * 1000.0 / (double)freq ) : 0.0f;
+		const Int room = (Int)ARRAY_SIZE(report) - used;
+		const Int wrote = snprintf( report + used, room, " | %s %dx/%.1f",
+										 TheNameKeyGenerator->keyToName( theModuleKindKey[ best ] ).str(),
+										 theModuleKindCount[ best ], ms );
+		if( wrote < 0 || wrote >= room )
+			break;
+		used += wrote;
+
+		theModuleKindTicks[ best ] = -1;			// taken; the next pass finds the next one down
+	}
+
+	return report;
+}
+#endif
+
+/* Both peace time gates - the one in Object::getAbleToAttackSpecificObject that stops a weapon
+	 being aimed, and the one in ActiveBody::attemptDamage that stops damage arriving by any other
+	 route - ask this.  The truce is between the players who are in the lobby: civilians, the map's
+	 own props and anything else that is not somebody's side stay shootable, because clearing a hut
+	 out of a build spot is not an attack on anyone. */
+Bool GameLogic::peaceTimeForbids( const Object *attacker, const Object *victim ) const
+{
+	if( !isPeaceTime() || attacker == NULL || victim == NULL )
+		return FALSE;
+
+	const Player *mine = attacker->getControllingPlayer();
+	const Player *theirs = victim->getControllingPlayer();
+	if( mine == NULL || theirs == NULL || mine == theirs )
+		return FALSE;
+
+	if( !mine->isPlayableSide() || !theirs->isPlayableSide() )
+		return FALSE;
+
+	return attacker->getRelationship( victim ) == ENEMIES;
+}
+
+/* The vote kick.  Whoever may vote is a human side still in the match, other than the one on the
+	 block: not an observer, not a beaten player, not the computer.  All of it is asked of the player
+	 list, which is logic state, so every machine counts the same people on the same frame.  A vote
+	 needs two such voters at least, or in a one-on-one the one asking would decide alone, and the
+	 kick there is a free win. */
+static const Int KICK_VOTE_SECONDS = 30;
+static const Int MIN_KICK_VOTERS = 2;
+
+static Bool mayVoteToKick( Player *player, Int targetIndex )
+{
+	return player->getPlayerType() == PLAYER_HUMAN && player->isPlayableSide() && player->isPlayerActive()
+		&& player->getPlayerIndex() != targetIndex;
+}
+
+Int GameLogic::countKickVoters( void ) const
+{
+	Int voters = 0;
+	for( Int i = 0; i < ThePlayerList->getPlayerCount(); ++i )
+		if( mayVoteToKick( ThePlayerList->getNthPlayer( i ), m_kickVoteTarget ) )
+			++voters;
+	return voters;
+}
+
+Int GameLogic::countKickVotes( void ) const
+{
+	Int votes = 0;
+	for( Int i = 0; i < ThePlayerList->getPlayerCount(); ++i )
+		if( ( m_kickVoteYesMask & ( 1u << i ) ) && mayVoteToKick( ThePlayerList->getNthPlayer( i ), m_kickVoteTarget ) )
+			++votes;
+	return votes;
+}
+
+void GameLogic::endKickVote( const char *label )
+{
+	if( TheInGameUI && label )
+		TheInGameUI->message( label, ThePlayerList->getNthPlayer( m_kickVoteTarget )->getPlayerDisplayName().str() );
+	m_kickVoteTarget = -1;
+	m_kickVoteEndFrame = 0;
+	m_kickVoteYesMask = 0;
+}
+
+/* Kicked is beaten: his side is killed the way a player who quits to watch is, so he stays in the
+	 match as a watcher and leaves the way anybody does.  Called whenever the count may have moved,
+	 since a voter who leaves can complete a vote as surely as one who says yes. */
+static Bool kickVoteAgreed( Int votes, Int voters )
+{
+	return voters >= MIN_KICK_VOTERS && votes >= voters;
+}
+
+void GameLogic::processKickVote( Player *voter, Int targetIndex, Bool yes )
+{
+	if( !mayVoteToKick( voter, targetIndex ) )
+		return;
+
+	if( m_kickVoteTarget < 0 )
+	{
+		// a no opens nothing; a yes opens a vote about a human side still playing
+		Player *target = ThePlayerList->getNthPlayer( targetIndex );
+		if( !yes || target == NULL || target->getPlayerType() != PLAYER_HUMAN || !target->isPlayableSide() || !target->isPlayerActive() )
+			return;
+
+		m_kickVoteTarget = targetIndex;
+		if( countKickVoters() < MIN_KICK_VOTERS )
+		{
+			m_kickVoteTarget = -1;
+			if( TheInGameUI && voter == ThePlayerList->getLocalPlayer() )
+				TheInGameUI->message( "GUI:KickVoteTooFew" );
+			return;
+		}
+		m_kickVoteEndFrame = m_frame + KICK_VOTE_SECONDS * LOGICFRAMES_PER_SECOND;
+		m_kickVoteYesMask = 1u << voter->getPlayerIndex();
+		if( TheInGameUI )
+			TheInGameUI->message( "GUI:KickVoteStarted", voter->getPlayerDisplayName().str(), target->getPlayerDisplayName().str() );
+		return;
+	}
+
+	// one vote at a time, and only about the one it is about
+	if( targetIndex != m_kickVoteTarget )
+		return;
+
+	if( !yes )
+	{
+		endKickVote( "GUI:KickVoteFailed" );
+		return;
+	}
+
+	m_kickVoteYesMask |= 1u << voter->getPlayerIndex();
+	if( kickVoteAgreed( countKickVotes(), countKickVoters() ) )
+	{
+		ThePlayerList->getNthPlayer( m_kickVoteTarget )->killPlayer();
+		endKickVote( "GUI:KickVoteKicked" );
+	}
+}
+
+void GameLogic::expireKickVote( void )
+{
+	if( m_kickVoteTarget < 0 )
+		return;
+
+	// he left, or lost, before the vote was done with him
+	if( !ThePlayerList->getNthPlayer( m_kickVoteTarget )->isPlayerActive() )
+		endKickVote( NULL );
+	else if( m_frame >= m_kickVoteEndFrame )
+		endKickVote( "GUI:KickVoteFailed" );
+	else if( kickVoteAgreed( countKickVotes(), countKickVoters() ) )
+	{
+		ThePlayerList->getNthPlayer( m_kickVoteTarget )->killPlayer();
+		endKickVote( "GUI:KickVoteKicked" );
+	}
+}
+
+/* Peace time, the half of the rule that is not a refusal.  Object::getAbleToAttackSpecificObject
+	 and ActiveBody::attemptDamage between them stop anybody shooting anybody until the clock runs
+	 out; without this, the truce would just be free reconnaissance and a place to park an army one
+	 second from somebody's front door.  So a command center's ground burns: once a second every
+	 enemy unit inside the radius takes a slice of damage and, if it stays, dies.
+
+	 Once a second rather than every frame because it is one partition query per command center and
+	 there are as many of those as there are players, and because a second is still fast enough to
+	 kill a tank that drives in.  Structures are skipped - a building did not walk anywhere, and
+	 killing one for standing where it was built would turn the truce into a demolition tool. */
+static void peaceTimeTick( void )
+{
+	const UnsignedInt now = TheGameLogic->getFrame();
+	const UnsignedInt endFrame = TheGameLogic->getPeaceTimeEndFrame();
+
+	if( endFrame == 0 || now > endFrame )
+		return;
+
+	if( TheInGameUI )
+	{
+		const UnsignedInt left = endFrame - now;
+		if( now == 1 )
+			TheInGameUI->message( "GUI:PeaceTimeStarted", (Int)(endFrame / (60 * LOGICFRAMES_PER_SECOND)) );
+		else if( now == endFrame )
+			TheInGameUI->message( "GUI:PeaceTimeOver" );
+		else if( left == 60 * LOGICFRAMES_PER_SECOND || left == 30 * LOGICFRAMES_PER_SECOND
+						 || left == 10 * LOGICFRAMES_PER_SECOND )
+			TheInGameUI->message( "GUI:PeaceTimeRemaining", (Int)(left / LOGICFRAMES_PER_SECOND) );
+	}
+
+	if( now % LOGICFRAMES_PER_SECOND != 0 )
+		return;
+
+	const Real radius = TheGlobalData->m_peaceTimeBaseRadius;
+	const Real damage = TheGlobalData->m_peaceTimeBaseDamage;
+	if( radius <= 0.0f || damage <= 0.0f )
+		return;
+
+	for( Object *base = TheGameLogic->getFirstObject(); base != NULL; base = base->getNextObject() )
+	{
+		if( !base->isKindOf( KINDOF_COMMANDCENTER ) || base->isEffectivelyDead() )
+			continue;
+
+		PartitionFilterRelationship relationship( base, PartitionFilterRelationship::ALLOW_ENEMIES );
+		PartitionFilterAlive alive;
+		PartitionFilter *filters[] = { &relationship, &alive, NULL };
+
+		SimpleObjectIterator *iter = ThePartitionManager->iterateObjectsInRange( base, radius,
+																						FROM_CENTER_2D, filters );
+		MemoryPoolObjectHolder hold( iter );
+		for( Object *them = iter->first(); them != NULL; them = iter->next() )
+		{
+			if( them->isKindOf( KINDOF_STRUCTURE ) || them->isKindOf( KINDOF_MINE ) )
+				continue;
+
+			DamageInfo damageInfo;
+			damageInfo.in.m_amount = damage;
+			damageInfo.in.m_sourceID = base->getID();
+			damageInfo.in.m_damageType = DAMAGE_PENALTY;	// the one type peace time lets through
+			damageInfo.in.m_deathType = DEATH_BURNED;
+			them->attemptDamage( &damageInfo );
+		}
+	}
+}
+
+/* A civilian building is nobody's property and everybody's cover.  Infantry take one, get burned
+	 out of it, and the next squad inherits a wreck: no dozer will ever touch it, because a neutral
+	 building is on no player's build list and a captured one is not on its captor's either.  The
+	 same goes for the tech buildings a match is fought over - an oil derrick changes hands four
+	 times and spends the rest of the game at a tenth of its health.
+
+	 So they mend themselves.  Ten seconds without a hit and the walls go back up, a fixed fraction
+	 of full health a second, whether the building is standing empty, holding somebody's riflemen or
+	 flying somebody's flag.  Slowly, and not while the fight is still going on: at two seconds and
+	 three percent a second a hospital cleared with a flamethrower was whole again before the squad
+	 that cleared it had walked over to it, so taking a building off somebody bought you nothing.
+
+	 Once a second, on the building's turn.  Tech buildings and garrisonable structures are the
+	 test; KINDOF_CAPTURABLE is not, because it sits on every faction structure as well - Black Lotus
+	 takes those - and would hand every command center on the map a free repair crew. */
+static void neutralBuildingRepair( Object *obj )
+{
+	const UnsignedInt quietFrames = 10 * LOGICFRAMES_PER_SECOND;
+	const Real repairFractionPerSecond = 0.0125f;
+
+	if( !obj->isKindOf( KINDOF_STRUCTURE ) || obj->isEffectivelyDead() )
+		return;
+	if( obj->testStatus( OBJECT_STATUS_UNDER_CONSTRUCTION ) )
+		return;
+
+	ContainModuleInterface *contain = obj->getContain();
+	const Bool mendsItself = obj->isKindOf( KINDOF_TECH_BUILDING )
+												|| obj->isKindOf( KINDOF_TECH_BASE_DEFENSE )
+												|| ( contain != NULL && contain->isGarrisonable() );
+	if( !mendsItself )
+		return;
+
+	BodyModuleInterface *body = obj->getBodyModule();
+	if( body->getHealth() >= body->getMaxHealth() )
+		return;
+	if( body->getLastDamageTimestamp() + quietFrames > TheGameLogic->getFrame() )
+		return;
+
+	obj->attemptHealing( body->getMaxHealth() * repairFractionPerSecond, obj );
+}
+
+/** A unit that can still take something off a wreck besides the money in it. */
+static Bool wantsSalvageUpgrade( const Object *obj )
+{
+	if( obj->isKindOf( KINDOF_WEAPON_SALVAGER ) && !obj->testWeaponSetFlag( WEAPONSET_CRATEUPGRADE_TWO ) )
+		return TRUE;
+	if( obj->isKindOf( KINDOF_ARMOR_SALVAGER ) && !obj->testArmorSetFlag( ARMORSET_CRATE_UPGRADE_TWO ) )
+		return TRUE;
+
+	return FALSE;
+}
+
+/** A unit that blows itself up with its own weapon spends its whole life on one target, and a crate
+	 is not that target. */
+static Bool diesUsingItsOwnWeapon( const Object *obj )
+{
+	for( Int slot = PRIMARY_WEAPON; slot < WEAPONSLOT_COUNT; ++slot )
+	{
+		const Weapon *weapon = obj->getWeaponInWeaponSlot( (WeaponSlotType)slot );
+		if( weapon != NULL && ( weapon->getTemplate()->getAffectsMask() & WEAPON_KILLS_SELF ) != 0 )
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
+/* The states that take a detour for a crate and then carry on with the order they had. Each of
+	 these machines asks checkForCrateToPickup once a cycle and steps into a pick-up state of its own,
+	 which is how a unit that kills something walks over the wreck without losing its place. A unit in
+	 one of them is told about the crate rather than ordered to it, so nothing it was doing is lost -
+	 and that is the only thing the computer's own units are ever in, because the computer keeps every
+	 team on an order and none of them is ever idle. */
+static Bool detoursForACrate( const AIUpdateInterface *ai )
+{
+	switch( ai->getCurrentStateID() )
+	{
+		case AI_GUARD:
+		case AI_GUARD_RETALIATE:
+		case AI_GUARD_TUNNEL_NETWORK:
+		case AI_HUNT:
+		case AI_ATTACK_SQUAD:
+		case AI_ATTACK_MOVE_TO:
+		case AI_ATTACKFOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS:
+		case AI_ATTACKFOLLOW_WAYPOINT_PATH_AS_TEAM:
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
+/** Is anything hostile close enough to this unit to be its problem right now? */
+static Bool hasEnemyInSight( Object *obj )
+{
+	PartitionFilterAlive alive;
+	PartitionFilterRelationship enemies( obj, PartitionFilterRelationship::ALLOW_ENEMIES );
+	PartitionFilter *filters[] = { &alive, &enemies, NULL };
+
+	return ThePartitionManager->getClosestObject( obj, obj->getVisionRange(), FROM_CENTER_2D, filters ) != NULL;
+}
+
+/* Somebody goes and gets the salvage.  A crate dropped by a wreck is money and a free upgrade lying
+	 on the ground, and the game asked you to notice it, work out which of your units was allowed to
+	 take it, and drive that one over it by hand, in the middle of the fight that made it.  Nobody
+	 does that, so most salvage on most maps timed out where it fell.
+
+	 Whoever is standing nearest goes and takes it, once a second.  A unit that can still be upgraded
+	 off it wins over one that cannot, however far back it is standing, because the upgrade is worth
+	 more than the walk; failing that the nearest unit takes the cash.
+
+	 Only a computer player's units are sent.  A human's units stay where the human put them and
+	 pick salvage up when the human drives them over it.
+
+	 How it is sent depends on what it was doing.  An idle unit is ordered to the crate and then walks
+	 back to the spot it left - idle is not the same as free, which is what the first version of this
+	 got wrong.  A line of infantry dug in across a road is idle, every one of them, and a fight in
+	 front of it makes wrecks: the line walked off to collect them and never came back, and the
+	 position was lost to the crates it had just earned.  So it goes and returns, nobody with an enemy
+	 in sight leaves at all, and the call radius is short enough that the walk costs seconds.
+
+	 A unit that is busy is told about the crate instead, and its own state machine takes the detour
+	 between one cycle and the next and then carries on with the order it had.  That is the path the
+	 computer's units take, and the only one they can: the computer keeps every team on an order, so
+	 not one of its units is ever idle and the whole pass used to walk straight past them.  Measured
+	 on a brutal match: one crate, three of its rebels standing inside a hundred and fifty of it for
+	 thirty-one seconds, none of them idle for a single frame, and the crate timed out where it lay.
+
+	 A dozer and a harvester are left alone: both have a job of their own that earns more than the
+	 crate does.  An aircraft is left alone too, because a crate cannot be claimed from the air, and
+	 so is anything that dies when it fires - a terrorist is worth more than every crate on the map. */
+static void salvageCrateCall( Object *crate )
+{
+	const Real SALVAGE_CALL_RADIUS = 150.0f;
+
+	if( !crate->isSalvageCrate() || crate->isDestroyed() )
+		return;
+
+	PartitionFilterAlive alive;
+	PartitionFilterSameMapStatus sameMap( crate );
+	PartitionFilter *filters[] = { &alive, &sameMap, NULL };
+
+	SimpleObjectIterator *iter = ThePartitionManager->iterateObjectsInRange( crate, SALVAGE_CALL_RADIUS,
+																					FROM_CENTER_2D, filters, ITER_SORTED_NEAR_TO_FAR );
+	MemoryPoolObjectHolder hold( iter );
+
+	Object *collector = NULL;
+	Bool collectorUpgrades = FALSE;
+	Bool collectorIsIdle = FALSE;
+	for( Object *them = iter->first(); them != NULL; them = iter->next() )
+	{
+		if( them->isKindOf( KINDOF_STRUCTURE ) || them->isKindOf( KINDOF_AIRCRAFT ) )
+			continue;
+		if( them->isKindOf( KINDOF_DOZER ) || them->isKindOf( KINDOF_HARVESTER ) )
+			continue;
+		if( them->isContained() || them->isEffectivelyDead() || them->isNeutralControlled() )
+			continue;
+		AIUpdateInterface *ai = them->getAI();
+		if( ai == NULL )
+			continue;
+		const Bool idle = ai->isIdle();
+		if( !idle && !detoursForACrate( ai ) )
+			continue;
+		if( diesUsingItsOwnWeapon( them ) )
+			continue;
+
+		const Player *owner = them->getControllingPlayer();
+		if( owner == NULL || crate->getShroudedStatus( owner->getPlayerIndex() ) >= OBJECTSHROUD_FOGGED )
+			continue;
+		// a human's units go where the human sends them; only the computer's are sent for salvage,
+		// and only on an official or random map: in a mission, a Challenge or on a player's own map
+		// the computer plays EA's game, which never went for a crate on its own
+		if( !owner->isForkMapComputer() )
+			continue;
+
+		const Bool upgrades = wantsSalvageUpgrade( them );
+		if( collector == NULL || ( upgrades && !collectorUpgrades ) )
+		{
+			collector = them;
+			collectorUpgrades = upgrades;
+			collectorIsIdle = idle;
+		}
+
+		// the iterator runs near to far, so the first one that can be upgraded is the best answer
+		if( collectorUpgrades )
+			break;
+	}
+
+	if( collector == NULL )
+		return;
+
+	if( !collectorIsIdle )
+	{
+		// its own machine picks the moment and puts it back on the order it had
+		collector->getAI()->notifyCrate( crate->getID() );
+		return;
+	}
+
+	if( hasEnemyInSight( collector ) )
+		return;
+
+	const Coord3D post = *collector->getPosition();
+	collector->getAI()->aiMoveToPosition( crate->getPosition(), CMD_FROM_AI );
+	collector->getAI()->friend_setSalvageReturnPosition( &post );
+}
+
+/* The once-a-second work, one object at a time.  An object's turn is the frame of the second its ID
+	 falls on, never all of them on the frame that divides by sixty: with this pass on one frame, a
+	 frame of the second was ten times as likely to run past 13 ms as any other.  The count of turns a
+	 frame comes out of the object list and nothing else, so every machine and every replay takes the
+	 same turns on the same frames. */
+static void oncePerSecondTurn( Object *obj )
+{
+	neutralBuildingRepair( obj );
+	salvageCrateCall( obj );
+}
+
+/* Tech building respawn, asked for in GitHub #23.  In the retail game an oil derrick blown up in
+	 the first fight is gone for the rest of the match, and so is everything the map had put there
+	 to fight over.  With the lobby's option on, TechBuildingBehavior::onDie writes the building
+	 down, and once the delay has run out a neutral one of the same kind stands on the same spot,
+	 full health and waiting for an engineer.
+
+	 A derrick, a refinery, a hospital and an artillery platform die into a ruin that KeepObjectDie
+	 keeps; the ruin goes when the new building comes.  The two pads die with DestroyDie and leave
+	 nothing.  Either way the spot has to be empty first.  Anything a player built there, a tank
+	 parked on the ruin or a squad standing in the yard holds the respawn back, and it tries again
+	 every second until they are gone, so a building never comes up around somebody's units. */
+void GameLogic::scheduleTechRespawn( const Object *ruin )
+{
+	if( m_techRespawnDelay == 0 )
+		return;
+
+	PendingTechBuilding pending;
+	pending.m_template = ruin->getTemplate();
+	pending.m_position = *ruin->getPosition();
+	pending.m_angle = ruin->getOrientation();
+	pending.m_ruinID = ruin->getID();
+	pending.m_dueFrame = m_frame + m_techRespawnDelay;
+	m_pendingTechBuildings.push_back( pending );
+	DEBUG_LOG(("TECH RESPAWN frame %d %s down at (%.0f, %.0f), due frame %d\n", m_frame,
+		pending.m_template->getName().str(), pending.m_position.x, pending.m_position.y, pending.m_dueFrame));
+}
+
+/** Would a building of this kind here stand on something?  Shrubbery, rubble, mines and whatever is
+	 in the air are what a dozer would build over as well (BuildAssistant::isRemovableForConstruction).
+	 What holds it back is anything that can move away and any building a player owns. */
+static Bool techBuildingSpotIsTaken( const ThingTemplate *building, const Coord3D *position, Real angle, ObjectID ruinID )
+{
+	const GeometryInfo &footprint = building->getTemplateGeometryInfo();
+	SimpleObjectIterator *iter = ThePartitionManager->iterateObjectsInRange( position, footprint.getBoundingCircleRadius(),
+																																					FROM_BOUNDINGSPHERE_2D );
+	MemoryPoolObjectHolder hold( iter );
+	for( Object *them = iter->first(); them != NULL; them = iter->next() )
+	{
+		if( them->getID() == ruinID || them->isEffectivelyDead() || them->isAirborneTarget() )
+			continue;
+		if( them->isKindOf( KINDOF_INERT ) || them->isKindOf( KINDOF_MINE )
+				|| them->isKindOf( KINDOF_SHRUBBERY ) || them->isKindOf( KINDOF_CLEARED_BY_BUILD ) )
+			continue;
+		// the map's own civilian buildings and walls stood there with the first one, sometimes touching it
+		if( them->isKindOf( KINDOF_IMMOBILE ) && !them->getControllingPlayer()->isPlayableSide() )
+			continue;
+
+		if( ThePartitionManager->geomCollidesWithGeom( them->getPosition(), them->getGeometryInfo(), them->getOrientation(),
+																									 position, footprint, angle ) )
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
+void GameLogic::techRespawnTick( void )
+{
+	if( m_pendingTechBuildings.empty() || m_frame % LOGICFRAMES_PER_SECOND != 0 )
+		return;
+
+	for( size_t i = 0; i < m_pendingTechBuildings.size(); )
+	{
+		const PendingTechBuilding pending = m_pendingTechBuildings[ i ];
+		if( pending.m_dueFrame > m_frame )
+		{
+			++i;
+			continue;
+		}
+
+		// a load hands out IDs again from the highest one alive, so the ID of a ruin that is gone can
+		// name a newer unit; only a dead one of the same kind is the ruin
+		Object *ruin = findObjectByID( pending.m_ruinID );
+		if( ruin != NULL && ( ruin->getTemplate() != pending.m_template || !ruin->isEffectivelyDead() ) )
+			ruin = NULL;
+
+		if( techBuildingSpotIsTaken( pending.m_template, &pending.m_position, pending.m_angle,
+																 ruin != NULL ? ruin->getID() : INVALID_ID ) )
+		{
+			++i;
+			continue;
+		}
+
+		m_pendingTechBuildings.erase( m_pendingTechBuildings.begin() + i );
+
+		if( ruin != NULL )
+		{
+			// pathfind cells are a flag, not a count: the ruin gives its back before the building marks
+			// its own, or the ruin's destructor would clear the building's (ReplaceObjectUpgrade does the same)
+			TheAI->pathfinder()->removeObjectFromPathfindMap( ruin );
+			destroyObject( ruin );
+		}
+
+		Object *building = TheThingFactory->newObject( pending.m_template, ThePlayerList->getNeutralPlayer()->getDefaultTeam() );
+		building->setOrientation( pending.m_angle );
+		building->setPosition( &pending.m_position );
+		building->setLayer( TheTerrainLogic->getLayerForDestination( &pending.m_position ) );
+		for( BehaviorModule **m = building->getBehaviorModules(); *m; ++m )
+		{
+			CreateModuleInterface *create = (*m)->getCreate();
+			if( create )
+				create->onBuildComplete();
+		}
+		TheAI->pathfinder()->addObjectToPathfindMap( building );
+		DEBUG_LOG(("TECH RESPAWN frame %d %s back at (%.0f, %.0f), %d frames late\n", m_frame,
+			pending.m_template->getName().str(), pending.m_position.x, pending.m_position.y, m_frame - pending.m_dueFrame));
+	}
+}
+
+void GameLogic::update( void )
+{
+	USE_PERF_TIMER(GameLogic_update)
+
+
+	LatchRestore<Bool> inUpdateLatch(s_isInUpdate, TRUE);
+#ifdef DO_UNIT_TIMINGS
+	unitTimings();
+#endif
+
+	setFPMode();
+
+	/* The water grid's mesh motion, which isUnderwater reads, steps here, once per logic frame (T1c,
+		 defect 17).  EA stepped it on the client pass, gated on the logic frame having changed; with one
+		 pass per logic frame that was one step a frame, taken just ahead of the frame, which is where
+		 this stands - before a new game starts, before the scripts, before anything in the frame reads
+		 or writes the grid.  The logic catch-up runs frames with no client pass in front of them, and
+		 there the grid fell a step behind for each: grid heights depended on the machine's frame rate.
+		 The gate stays: a frozen or held frame, which does not advance, does not step twice.  The grid is
+		 TerrainLogic's now (M7); the render object only draws it. */
+	TheTerrainLogic->getWaterGrid()->update( m_frame );
+
+	/// @todo remove this hack
+	if ( m_startNewGame && !TheDisplay->isMoviePlaying())
+	{
+	#ifdef DUMP_PERF_STATS
+		Total_Get_Texture_Time=0;
+		Total_Get_HAnim_Time=0;
+		Total_Create_Render_Obj_Time=0;
+		Total_Load_3D_Assets=0;
+	#endif
+
+#ifdef _PROFILE
+    Profile::StartRange("map_load");
+#endif
+		/* The map cache reads only a map's size, world info and objects, so a map damaged in its
+			 sides, triggers or blend tiles is listed, picked and sent, and first fails here. Every
+			 machine in the match has the same bytes, the map CRC sees to that, so each one fails on the
+			 same chunk and each goes back to the menus the same way, instead of ending the program. */
+		try
+		{
+			startNewGame( FALSE );
+		}
+		catch (ErrorCode ec)
+		{
+			if (ec != ERROR_CORRUPT_FILE_FORMAT)
+				throw;
+			m_startNewGame = FALSE;
+			refuseCorruptMap();
+			return;
+		}
+#ifdef _PROFILE
+    Profile::StopRange("map_load");
+#endif
+		m_startNewGame = FALSE;
+
+	#ifdef DUMP_PERF_STATS
+		char Buf[1024];
+		__int64 freq64;
+		GetPrecisionTimerTicksPerSec(&freq64);
+
+		sprintf(Buf,"Texture=%f, Anim=%f, CreateRobj=%f, Load3DAssets=%f\n",
+			((double)Total_Get_Texture_Time/(double)(freq64)*1000.0),
+			((double)Total_Get_HAnim_Time/(double)(freq64)*1000.0),
+			((double)Total_Create_Render_Obj_Time/(double)(freq64)*1000.0),
+			((double)Total_Load_3D_Assets/(double)(freq64)*1000.0));
+
+	DEBUG_LOG(("%s", Buf));
+	#endif
+	}
+
+	/* A start held back by a movie has set the game mode and started the recorder, but the match
+		 does not exist yet: TheGameInfo is still NULL and the CRC below reads it.  A skirmish asked for
+		 over -control while the EA logo was still playing faulted there on its first frame. */
+	if (isIntroMoviePlaying())
+		return;
+
+	// the current time for the GameClient, which LogicThread::runTick hands it (LOGIC-THREAD.md M7)
+	DEBUG_ASSERTCRASH(TheGameLogic == this, ("hmm, TheGameLogic is not right"));
+	UnsignedInt now = TheGameLogic->getFrame();
+	m_frameForClient = now;
+
+	/* A logic frame that runs long is a hitch the player feels, and a release build has no
+		 profiler to ask about it.  Time the frame's own phases and, when the frame runs over
+		 budget, write down where the time went - a handful of performance counter reads a frame
+		 costs nothing next to the 33ms the frame is allowed. */
+	Int64 tFrameStart = 0, tScripts = 0, tObjects = 0, tAI = 0, tPartition = 0, tFrameEnd = 0;
+	/* "rest" - everything after the partition update - turned out to be the largest phase on the
+		 worst frames (101 of 115 ms on one), and it is five unrelated pieces of end-of-frame cleanup.
+		 Split so the log names which one. */
+	Int64 tDestroy = 0, tCommandList = 0, tStores = 0, tVictory = 0;
+	tFrameStart = Clock_Ticks();
+	PartitionManager::resetQueryCounts();	// counted per logic frame, reported by the slow-frame log
+	AI::resetEnemyScanCount();
+	Pathfinder::resetProfile();
+#ifdef DEBUG_LOGGING
+	resetModuleProfile( now );
+#endif
+
+	// update (execute) scripts
+	{
+		TheScriptEngine->UPDATE();
+	}
+
+	tScripts = Clock_Ticks();
+
+	/* A camera move that freezes time ends on this machine's wall clock, and the scripts above run
+		 once per frozen pass: in a multiplayer or skirmish session a machine whose camera took longer
+		 counted its script timers down further.  There the camera freezes nothing, as the camera
+		 condition in ScriptConditions already reports every move finished. */
+	Bool freezeTime = !TheGameEngine->isMultiplayerSession()
+										&& LogicThread::isTimeFrozenForTick() && !LogicThread::isCameraMovementFinishedForTick();
+	freezeTime = freezeTime || TheScriptEngine->isTimeFrozenDebug() || TheScriptEngine->isTimeFrozenScript();
+
+	if (freezeTime)
+	{
+		if (TheCommandList->containsMessageOfType(GameMessage::MSG_CLEAR_GAME_DATA))
+		{
+			TheScriptEngine->forceUnfreezeTime();
+		}
+		else
+		{
+			/// @todo - make sure this never happens during a network game.  jba.
+			return;
+		}
+	}
+
+	/* The fork's own ticks come after the freeze return.  A frozen pass does not advance the frame, so
+		 ahead of it they ran once per frozen pass, and how many passes a cinematic takes is camera state
+		 that differs per machine: the repair tick healed again on every one of them. */
+
+	// the lobby's peace time, if the host set one
+	peaceTimeTick();
+
+	// a vote kick that ran out of time
+	expireKickVote();
+
+	// ... and the tech buildings the lobby wants back
+	techRespawnTick();
+
+	/* The scripted measurement harness.  Keyed to the logic frame rather than to the render pass, so the same
+		 scenario file plays out on the same frames however fast the machine draws - which is the whole
+		 point of measuring two builds against it. */
+	ScenarioDrill_tick();
+
+	/* And whatever arrived down the control socket since the last logic frame.  Reading a socket
+		 happens on a render pass and making an object has to happen in here, so the two are split. */
+	ControlServer_runCommands();
+
+	// Note - TerrainLogic update needs to happen after ScriptEngine update, but before object updates.  jba.
+	// This way changes in bridges are noted in the script engine before being cleared in TerrainLogic->update
+	{
+		TheTerrainLogic->UPDATE();
+	}
+
+	// force CRC calculation, so we can keep a cache of the last N CRCs.  We do this right where the recorder
+	// would be getting the CRC anyway, so replays can get the CRCs from the exact instant in time as the original.
+	Bool isMPGameOrReplay = (TheRecorder && TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
+	Bool isSoloGameOrReplay = (TheRecorder && !TheRecorder->isMultiplayer() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE);
+	Bool generateForMP = (isMPGameOrReplay && (m_frame % TheGameInfo->getCRCInterval()) == 0);
+#if defined(_DEBUG) || defined(_INTERNAL)
+	Bool generateForSolo = isSoloGameOrReplay && ((m_frame && (m_frame%100 == 0)) ||
+		(getFrame() > TheCRCFirstFrameToLog && getFrame() < TheCRCLastFrameToLog && ((m_frame % REPLAY_CRC_INTERVAL) == 0)));
+#else
+	Bool generateForSolo = isSoloGameOrReplay && ((m_frame % REPLAY_CRC_INTERVAL) == 0);
+#endif // defined(_DEBUG) || defined(_INTERNAL)
+
+	if (generateForSolo || generateForMP)
+	{
+		m_CRC = getCRC( CRC_RECALC );
+		if (isMPGameOrReplay)
+		{
+			GameMessage *msg = TheMessageStream->appendMessage( GameMessage::MSG_LOGIC_CRC );
+			msg->appendIntegerArgument( m_CRC );
+			msg->appendBooleanArgument( (TheRecorder && TheRecorder->getMode() == RECORDERMODETYPE_PLAYBACK) ); // playback CRC
+			/* The frame this CRC is of.  The message executes a run-ahead later, and the run-ahead can
+				 shrink: the network never stamps an order below its last execution frame, so after the
+				 opening second's run-ahead of 60 drops, every CRC from frame 61 to about 112 lands on one
+				 execution frame, each machine's pile ending somewhere else.  Keeping the last per player
+				 then held one machine's frame 107 against another's frame 112 (report 1845).  Last, so
+				 the playback check's arguments 0 and 1 stay where old replays have them. */
+			msg->appendIntegerArgument( m_frame );
+			//DEBUG_LOG(("Appended CRC of %8.8X on frame %d\n", m_CRC, m_frame));
+		}
+		else
+		{
+			GameMessage *msg = TheMessageStream->appendMessage( GameMessage::MSG_LOGIC_CRC );
+			msg->appendIntegerArgument( m_CRC );
+			msg->appendBooleanArgument( (TheRecorder && TheRecorder->getMode() == RECORDERMODETYPE_PLAYBACK) ); // playback CRC
+			//DEBUG_LOG(("Appended Playback CRC of %8.8X on frame %d\n", m_CRC, m_frame));
+		}
+	}
+
+	// collect stats
+	if(TheStatsCollector)
+	{
+		TheStatsCollector->update();
+	}
+
+	// Update the Recorder
+	{
+		TheRecorder->UPDATE();
+	}
+
+	// process client commands
+	{
+		processCommandList( TheCommandList );
+	}
+
+#ifdef ALLOW_NONSLEEPY_UPDATES
+	{
+		for (std::list<UpdateModulePtr>::const_iterator it = m_normalUpdates.begin(); it != m_normalUpdates.end(); ++it)
+		{
+			UpdateModulePtr u = *it;
+			DisabledMaskType dis = u->friend_getObject()->getDisabledFlags();
+			// TheSuperHackers @bugfix The disabled-types-to-process mask is now exclusive. A module
+			// used to keep updating as long as the object carried any one of the types it whitelists,
+			// even while a second, unlisted disable was also in force. Every set bit must be listed.
+			if (!dis.any() || u->getDisabledTypesToProcess().testForAll(dis))
+			{
+				USE_PERF_TIMER(GameLogic_update_normal)
+
+				m_curUpdateModule = u;
+
+				#ifdef DEBUG_LOGGING
+					UpdateSleepTime sleep = u->update();
+					DEBUG_ASSERTCRASH(sleep == UPDATE_SLEEP_NONE, ("you must return SLEEPNONE from all nonsleepy modules"));
+				#else
+					u->update();
+				#endif
+
+				m_curUpdateModule = NULL;
+			}
+		}
+	}
+#endif
+
+	{
+		while (!m_sleepyUpdates.empty())
+		{
+			UpdateModulePtr u = peekSleepyUpdate();
+
+			if (!u)
+			{
+				DEBUG_CRASH(("Null update. should not happen."));
+				continue;
+			}
+
+			// we're done, everyone else is sleeping. 
+			// break from the loop BEFORE we pop this item off.
+			if (u->friend_getNextCallFrame() > now)
+			{
+				break;
+			}
+
+			// unless this module sorts first again, one of the two below it is the next to run, and its
+			// first read is its own fields; the update in between is long enough to have the line in
+			if (m_sleepyUpdates.size() > 1)
+				GL_PREFETCH(m_sleepyUpdates[1].module);
+			if (m_sleepyUpdates.size() > 2)
+				GL_PREFETCH(m_sleepyUpdates[2].module);
+
+			UpdateSleepTime sleepLen = UPDATE_SLEEP_NONE;	// default, if it is disabled.
+
+			DisabledMaskType dis = u->friend_getObject()->getDisabledFlags();
+			// TheSuperHackers @bugfix The disabled-types-to-process mask is now exclusive. A module
+			// used to keep updating as long as the object carried any one of the types it whitelists,
+			// even while a second, unlisted disable was also in force. Every set bit must be listed.
+			if (!dis.any() || u->getDisabledTypesToProcess().testForAll(dis))
+			{
+				USE_PERF_TIMER(GameLogic_update_sleepy)
+
+				//DEBUG_LOG(("calling update %08lx (%d %d)... ",update,update->friend_getNextCallFrame(),update->friend_getNextCallPhase()));
+				m_curUpdateModule = u;
+
+#ifdef DEBUG_LOGGING
+				theModuleUpdateCount++;
+				NameKeyType profModuleKey = NAMEKEY_INVALID;
+				const ThingTemplate *profModuleThing = NULL;
+				ObjectID profModuleObjID = INVALID_ID;
+				Int profModuleQueriesBefore = 0;
+				Int64 profModuleStart = 0;
+				if( theModulesTimed )
+				{
+					// read the identity before the update - a module may kill its own object
+					profModuleKey = u->getModuleNameKey();
+					profModuleThing = u->friend_getObject() ? u->friend_getObject()->getTemplate() : NULL;
+					profModuleObjID = u->friend_getObject() ? u->friend_getObject()->getID() : INVALID_ID;
+					profModuleQueriesBefore = PartitionManager::getQueryCountThisFrame();
+					profModuleStart = Clock_Ticks();
+				}
+#endif
+
+				sleepLen = u->update();
+
+#ifdef DEBUG_LOGGING
+				if( theModulesTimed )
+				{
+					Int64 profModuleEnd;
+					profModuleEnd = Clock_Ticks();
+					const Int64 profModuleTicks = profModuleEnd - profModuleStart;
+					addModuleProfile( profModuleKey, profModuleTicks,
+														PartitionManager::getQueryCountThisFrame() - profModuleQueriesBefore );
+					if( profModuleTicks > theWorstModuleTicks )
+					{
+						theWorstModuleTicks = profModuleTicks;
+						theWorstModuleKey = profModuleKey;
+						theWorstModuleThing = profModuleThing;
+					}
+					//
+					// A single module that eats a third of the frame on its own is a bug, not load, and the
+					// end-of-frame summary only ever names one of them.  Say so the moment it happens, with
+					// the object id, so the surrounding log lines are that object's own.
+					//
+					const Real profModuleMS = logicElapsedMS( profModuleStart, profModuleEnd );
+					if( profModuleMS > 10.0f )
+					{
+						DEBUG_LOG(("SLOW MODULE frame %d: %s on %s (obj %d) %.1fms\n", now,
+										 TheNameKeyGenerator->keyToName( profModuleKey ).str(),
+										 profModuleThing ? profModuleThing->getName().str() : "<none>",
+										 (Int)profModuleObjID, profModuleMS));
+					}
+				}
+#endif
+				DEBUG_ASSERTCRASH(sleepLen > 0, ("you may not return 0 from update"));
+				if (sleepLen < 1) 
+					sleepLen = UPDATE_SLEEP_NONE;
+
+				m_curUpdateModule = NULL;
+
+			}
+
+			// else defer it till next frame and re-push it
+			u->friend_setNextCallFrame(now + sleepLen);
+			// u's own slot, which is not slot 0 when its update pushed or woke a module that sorts ahead
+			// of it; the rebalance stays at 0 as it always was.
+			m_sleepyUpdates[u->friend_getIndexInLogic()].priority = u->friend_getPriority();
+			rebalanceSleepyUpdate(0);
+		}
+	}
+
+	validateSleepyUpdate();
+
+	tObjects = Clock_Ticks();
+
+	// update the Artificial Intelligence system
+	{
+		TheAI->UPDATE();
+	}
+
+	tAI = Clock_Ticks();
+
+	// production updates
+	{
+		TheBuildAssistant->UPDATE();
+	}
+
+	// update partition info
+	{
+		ThePartitionManager->UPDATE();
+	}
+
+	// the radar's fogged contacts, against the shroud the partition update just settled
+	RadarCoverageBehavior::sweep();
+
+	tPartition = Clock_Ticks();
+
+	//
+	// End of frame clean-up
+	//
+
+	// destroy all pending objects
+	processDestroyList();
+
+	tDestroy = Clock_Ticks();
+
+	// reset the command list, destroying all messages
+	TheCommandList->reset();
+
+	tCommandList = Clock_Ticks();
+
+	TheWeaponStore->UPDATE();	
+	TheLocomotorStore->UPDATE();	
+
+	tStores = Clock_Ticks();
+
+	TheVictoryConditions->UPDATE();
+
+	// the score screen's graphs: written here, read only by the score screen
+	if( isInGame() && !isInShellGame() )
+		TheMatchHistory.update( m_frame );
+
+	tVictory = Clock_Ticks();
+
+#ifdef DO_COPY_PROTECTION
+	if (!isInShellGame() && isInGame())
+	{
+		if ((m_frame == 1024) && !CopyProtect::validate())
+		{
+			DEBUG_LOG(("Copy protection failed - bailing"));
+			GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_SELF_DESTRUCT);
+			msg->appendBooleanArgument(FALSE);
+		}
+	}
+#endif
+
+	{
+		//Handle disabled statii (and re-enable objects once frame matches)
+		const UnsignedInt turn = m_frame % LOGICFRAMES_PER_SECOND;
+		for( Object *obj = m_objList; obj; obj = obj->getNextObject() )
+		{
+			if( obj->isDisabled() )
+			{
+				obj->checkDisabledStatus();
+			}
+			if( (UnsignedInt)obj->getID() % LOGICFRAMES_PER_SECOND == turn )
+				oncePerSecondTurn( obj );
+		}
+	}
+
+	// how long did that take?  only a frame that ran over budget is worth a line in the log
+	tFrameEnd = Clock_Ticks();
+	{
+		// the logic gets 1/30th of a second, 33ms, per frame; -slowframe lowers the bar for a hunt
+		const Real SLOW_FRAME_MS = TheGlobalData ? TheGlobalData->m_slowFrameMS : 20.0f;
+		const Real total = logicElapsedMS( tFrameStart, tFrameEnd );
+#ifdef DEBUG_LOGGING
+		theLastLogicFrameSlow = total > SLOW_FRAME_MS;
+#endif
+		if( total > SLOW_FRAME_MS && now > 60 && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE )
+		{
+			const Real scripts = logicElapsedMS( tFrameStart, tScripts );
+			const Real objects = logicElapsedMS( tScripts, tObjects );
+			const Real ai = logicElapsedMS( tObjects, tAI );
+			const Real partition = logicElapsedMS( tAI, tPartition );
+			const Real rest = total - scripts - objects - ai - partition;
+			const Real destroy = logicElapsedMS( tPartition, tDestroy );
+			const Real cmdlist = logicElapsedMS( tDestroy, tCommandList );
+			const Real stores = logicElapsedMS( tCommandList, tStores );
+			const Real victory = logicElapsedMS( tStores, tVictory );
+			const Real disabled = logicElapsedMS( tVictory, tFrameEnd );
+			DEBUG_LOG(("SLOW LOGIC FRAME %d: %.1fms | scripts %.1f | objects %.1f | ai %.1f (pathfind %.1f, players %.1f) | partition %.1f (%d queries, %d gathers, %d target scans, %d objects) | rest %.1f (destroy %.1f, cmdlist %.1f, stores %.1f, victory %.1f, disabled %.1f)\n  sc: %s\n  ob: %s\n  qy: %s\n  pf: %s\n  ai: %s\n",
+								 now, total, scripts, objects, ai, AI::getLastPathfindMS(), AI::getLastPlayerUpdateMS(), partition,
+								 PartitionManager::getQueryCountThisFrame(), PartitionManager::getGatherCountThisFrame(),
+								 AI::getEnemyScanCountThisFrame(),
+								 PartitionManager::getQueryObjectCountThisFrame(), rest,
+								 destroy, cmdlist, stores, victory, disabled,
+								 TheScriptEngine->getProfileReport(),
+								 getModuleProfileReport(),
+								 getModuleQueryReport(),
+								 Pathfinder::getProfileReport(),
+								 AIPlayer::getProfileReport()));
+		}
+	}
+
+	// increment world time
+	if (!m_startNewGame)
+	{
+		m_frame++;
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Return the first object in the world list */
+// ------------------------------------------------------------------------------------------------
+Object *GameLogic::getFirstObject( void )
+{
+	LOGIC_WINDOW_READ( WINDOW_OBJECT_LIST );
+	return m_objList;
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Return a new unique object id. */
+// ------------------------------------------------------------------------------------------------
+ObjectID GameLogic::allocateObjectID( void )
+{
+	/// @todo Find unused value in current object set
+	ObjectID ret = m_nextObjID;
+	m_nextObjID = (ObjectID)((UnsignedInt)m_nextObjID + 1);
+	return ret;
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Add object ID to the lookup table */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::addObjectToLookupTable( Object *obj )
+{
+
+	// sanity
+	if( obj == NULL )
+		return;
+
+	// add to lookup
+//	m_objHash[ obj->getID() ] = obj;
+	ObjectID newID = obj->getID();
+	while( newID >= m_objVector.size() ) // Fail case is hella rare, so faster to double up on size() call
+		m_objVector.resize(m_objVector.size() * 2, NULL);
+
+	m_objVector[ newID ] = obj;
+
+}  // end addObjectToLookupTable
+
+// ------------------------------------------------------------------------------------------------
+/** A tick beside the render (LogicThread's startOverlap) makes its objects in room grown here, at the
+	sync point, so addObjectToLookupTable does not reallocate m_objVector under a reader on the main
+	thread.  Nothing observes the size past findObjectByID's bound, where a missing slot and a NULL one
+	answer alike.  ponytail: a tick making more than 4096 objects still grows it in place. */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::growObjectLookupForTick( void )
+{
+	while( (UnsignedInt)m_nextObjID + 4096 >= m_objVector.size() )
+		m_objVector.resize( m_objVector.size() * 2, NULL );
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Remove object from the ID lookup table */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::removeObjectFromLookupTable( Object *obj )
+{
+
+	// sanity
+	if( obj == NULL )
+		return;
+
+	// remove from lookup table
+//	m_objHash.erase( obj->getID() );
+	m_objVector[ obj->getID() ] = NULL;
+
+}  // end removeObjectFromLookupTable
+
+// ------------------------------------------------------------------------------------------------
+/** Given an object, register it with the GameLogic and give it a unique ID. */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::registerObject( Object *obj )
+{
+
+	// add the object to the global list
+	obj->prependToList(&m_objList);
+
+	// add object to lookup table
+	addObjectToLookupTable( obj );
+
+	UnsignedInt now = TheGameLogic->getFrame();
+	if (now == 0)
+		now = 1;
+	for (BehaviorModule** b = obj->getBehaviorModules(); *b; ++b)
+	{
+#ifdef DIRECT_UPDATEMODULE_ACCESS
+		// evil, but necessary at this point. (srj)
+		UpdateModulePtr u = (UpdateModulePtr)((*b)->getUpdate());
+#else
+		UpdateModulePtr u = (*b)->getUpdate();
+#endif
+		if (!u)
+			continue;
+
+		UnsignedInt when = u->friend_getNextCallFrame();
+#ifdef ALLOW_NONSLEEPY_UPDATES
+		if (when == 0)
+		{
+			// zero is the magic value for "never sleeps"
+			m_normalUpdates.push_back(u);
+		}
+		else
+#else
+		// note that 'when' can be zero here for any update module
+		// that didn't bother to call setWakeFrame() in its ctor.
+		// this is legal.
+		if (when == 0)
+			u->friend_setNextCallFrame(now);
+#endif
+		{
+			DEBUG_ASSERTCRASH(u->friend_getNextCallFrame() >= now, ("you may not specify a zero initial sleep time for sleepy modules (%d %d)",u->friend_getNextCallFrame(),now));
+			pushSleepyUpdate(u);
+		}
+	}
+
+}
+
+// ------------------------------------------------------------------------------------------------
+/** create an object based on the thing template, the reason that this is
+	* here and not in the ThingFactory is so that we can mirror what the
+	* creation process is on the client side because clients have specific
+	* device dependent drawables (such as a W3DDrawable derived from Drawable).
+	* here we will allocate an object of the correct type based on thing
+	* template properties
+	*
+	* if we want to have the thing manager actually contain the pools of
+	* object and drawable storage it seems OK to have it be friends with the
+	* GameLogic/Client for those purposes, or we could put the allocation pools
+	* in the GameLogic and GameClient themselves */
+// ------------------------------------------------------------------------------------------------
+Object *GameLogic::friend_createObject( const ThingTemplate *thing, const ObjectStatusMaskType &statusBits, Team *team )
+{
+	Object *obj;
+
+	obj = newInstance(Object)( thing, statusBits, team );
+
+	return obj;
+} 
+
+// ------------------------------------------------------------------------------------------------
+/** Mark the object as destroyed, and place on list for deletion at the end of the next update.
+ * This is the only interface to destroy objects - objects cannot be directly deleted. */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::destroyObject( Object *obj )
+{
+	DEBUG_ASSERTCRASH(obj != NULL, ("destroying null object"));
+
+	// if already flagged for destruction, ignore
+	if (!obj || obj->isDestroyed())
+		return;
+
+	// run the object onDestroy event if provied
+	for (BehaviorModule** m = obj->getBehaviorModules(); *m; ++m)
+	{
+		DestroyModuleInterface* destroy = (*m)->getDestroy();
+		if (destroy)
+			destroy->onDestroy();
+	}
+
+	// mark object as destroyed
+	obj->setStatus( MAKE_OBJECT_STATUS_MASK( OBJECT_STATUS_DESTROYED ) );
+
+	// We desperately need to stop here, or else the destructor of the statemachine will try to do
+	// stopping logic, which uses virtual functions and deleted modules, which will crash us.
+	AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	if( ai )
+	{
+		ai->setLocomotorGoalNone();
+		ai->destroyPath();
+	}
+
+	// add to end of destruction list, in case something is being destroyed and trying to destroy subobjects
+	m_objectsToDestroy.push_back(obj);
+
+	// run any on destroy logic internal to the object
+	obj->onDestroy();
+
+	// remove wall pieces from the pathfinder
+	if( obj->isKindOf( KINDOF_WALK_ON_TOP_OF_WALL ) )
+		TheAI->pathfinder()->removeWallPiece( obj );
+
+	//Clean up special power shortcut bars
+	if( obj->hasAnySpecialPower() )
+	{
+		if( ThePlayerList->getLocalPlayer() == obj->getControllingPlayer() )
+		{
+			TheControlBar->markUIDirty();
+		}
+	}
+
+
+}  // end destroyObject
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+Bool inCRCGen = FALSE;
+UnsignedInt GameLogic::getCRC( Int mode, AsciiString deepCRCFileName )
+{
+	if (mode != CRC_RECALC)
+		return m_CRC;
+
+	setFPMode();
+
+	LatchRestore<Bool> latch(inCRCGen, !isInGameLogicUpdate());
+
+	XferCRC *xferCRC;
+	AsciiString marker;
+	if (deepCRCFileName.isNotEmpty())
+	{
+		xferCRC = NEW XferDeepCRC;
+		xferCRC->open(deepCRCFileName.str());
+	}
+	else
+	{
+		AsciiString crcName;
+#ifdef DEBUG_CRC
+		if (isInGameLogicUpdate() && g_keepCRCSaves && m_frame < 5)
+		{
+			xferCRC = NEW XferDeepCRC;
+			crcName.format("logicFrame%d.crc", (m_frame%5));
+		}
+		else
+#endif DEBUG_CRC
+		{
+			xferCRC = NEW XferCRC;
+			crcName = "lightCRC";
+		}
+		xferCRC->open(crcName);
+	}
+
+	// calculate CRCs
+	Object *obj;
+	DEBUG_ASSERTCRASH(this == TheGameLogic, ("Not in GameLogic"));
+	if (isInGameLogicUpdate())
+	{
+		CRCGEN_LOG(("CRC at start of frame %d is 0x%8.8X\n", m_frame, xferCRC->getCRC()));
+	}
+
+	/* Keep the evidence for a mismatch nobody knows about yet: the running CRC after each object,
+		 for the last few CRC frames.  It costs one vector fill on the frames the game already CRCs
+		 itself on, and it is the difference between "the world diverged" and "this object diverged".
+		 See CRCSnapshotRing.h. */
+	Bool recordSnapshot = isInGameLogicUpdate() && TheRecorder && TheRecorder->isMultiplayer();
+	if (recordSnapshot)
+		m_crcSnapshots.beginSnapshot( m_frame );
+
+	marker = "MARKER:Objects";
+	xferCRC->xferAsciiString(&marker);
+	for( obj = m_objList; obj; obj=obj->getNextObject() )
+	{
+		xferCRC->xferSnapshot( obj );
+		if (recordSnapshot)
+		{
+			const Coord3D *pos = obj->getPosition();
+			BodyModuleInterface *body = obj->getBodyModule();
+			m_crcSnapshots.addObject( (UnsignedInt)obj->getID(), xferCRC->getCRC(),
+																pos->x, pos->y, pos->z, body->getHealth() );
+		}
+	}
+	// the rest only observe the running CRC: each section's end goes in the ring as well (CRCSection)
+	if (recordSnapshot)
+		m_crcSnapshots.setSectionCRC( CRC_SECTION_OBJECTS, xferCRC->getCRC() );
+	UnsignedInt seed = GetGameLogicRandomSeedCRC();
+	if (isInGameLogicUpdate())
+	{
+		CRCGEN_LOG(("CRC after objects for frame %d is 0x%8.8X\n", m_frame, xferCRC->getCRC()));
+	}
+
+	if (isInGameLogicUpdate())
+	{
+		CRCGEN_LOG(("RandomSeed: %d\n", seed));
+	}
+	if (xferCRC->getXferMode() == XFER_CRC)
+	{
+		xferCRC->xferUnsignedInt( &seed );
+	}
+	marker = "MARKER:ThePartitionManager";
+	xferCRC->xferAsciiString(&marker);
+	xferCRC->xferSnapshot( ThePartitionManager );
+	if (recordSnapshot)
+		m_crcSnapshots.setSectionCRC( CRC_SECTION_PARTITION, xferCRC->getCRC() );
+	if (isInGameLogicUpdate())
+	{
+		CRCGEN_LOG(("CRC after partition manager for frame %d is 0x%8.8X\n", m_frame, xferCRC->getCRC()));
+	}
+
+#ifdef DEBUG_CRC
+	if ((g_crcModuleDataFromClient && !isInGameLogicUpdate()) ||
+		(g_crcModuleDataFromLogic && isInGameLogicUpdate()))
+	{
+		marker = "MARKER:TheModuleFactory";
+		xferCRC->xferAsciiString(&marker);
+		xferCRC->xferSnapshot( TheModuleFactory );
+		if (isInGameLogicUpdate())
+		{
+			CRCGEN_LOG(("CRC after module factory for frame %d is 0x%8.8X\n", m_frame, xferCRC->getCRC()));
+		}
+	}
+#endif DEBUG_CRC
+
+	marker = "MARKER:ThePlayerList";
+	xferCRC->xferAsciiString(&marker);
+	xferCRC->xferSnapshot( ThePlayerList );
+	if (recordSnapshot)
+	{
+		m_crcSnapshots.setSectionCRC( CRC_SECTION_PLAYERS, xferCRC->getCRC() );
+		for (Int i = 0; i < ThePlayerList->getPlayerCount(); ++i)
+		{
+			const Player *player = ThePlayerList->getNthPlayer( i );
+			m_crcSnapshots.addPlayer( player->getMoney()->countMoney(), player->getSkillPoints(),
+																player->getSciencePurchasePoints() );
+		}
+	}
+	if (isInGameLogicUpdate())
+	{
+		CRCGEN_LOG(("CRC after PlayerList for frame %d is 0x%8.8X\n", m_frame, xferCRC->getCRC()));
+	}
+
+	marker = "MARKER:TheAI";
+	xferCRC->xferAsciiString(&marker);
+	xferCRC->xferSnapshot( TheAI );
+	if (recordSnapshot)
+		m_crcSnapshots.setSectionCRC( CRC_SECTION_AI, xferCRC->getCRC() );
+	if (isInGameLogicUpdate())
+	{
+		CRCGEN_LOG(("CRC after AI for frame %d is 0x%8.8X\n", m_frame, xferCRC->getCRC()));
+	}
+
+	marker = "MARKER:TheScriptEngine";
+	xferCRC->xferAsciiString(&marker);
+	xferCRC->xferSnapshot( TheScriptEngine );
+	if (recordSnapshot)
+		m_crcSnapshots.setSectionCRC( CRC_SECTION_SCRIPTS, xferCRC->getCRC() );
+	if (isInGameLogicUpdate())
+	{
+		CRCGEN_LOG(("CRC after ScriptEngine for frame %d is 0x%8.8X\n", m_frame, xferCRC->getCRC()));
+	}
+
+	if (xferCRC->getXferMode() == XFER_SAVE)
+	{
+		marker = "MARKER:GameSave";
+		xferCRC->xferAsciiString(&marker);
+		TheGameState->friend_xferSaveDataForCRC(xferCRC, SNAPSHOT_DEEPCRC_LOGICONLY);
+	}
+
+	xferCRC->close();
+
+	UnsignedInt theCRC = xferCRC->getCRC();
+
+	delete xferCRC;
+	xferCRC = NULL;
+
+	if (recordSnapshot)
+		m_crcSnapshots.endSnapshot( theCRC, seed );
+
+	if (isInGameLogicUpdate())
+	{
+		CRCGEN_LOG(("CRC for frame %d is 0x%8.8X\n", m_frame, theCRC));
+	}
+	return theCRC;
+}
+
+// ------------------------------------------------------------------------------------------------
+/** A new GameLogic object has been constructed, therefore create
+ * a corresponding drawable and bind them together. */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::sendObjectCreated( Object *obj )
+{
+	/* The first drawable of a template loads that template's models, and with the assets on demand
+		 that load lands on whichever logic frame the unit happens to appear on: the first Ranger out
+		 of a barracks cost 18ms of a 33ms frame.  The preload in startNewGame is what keeps this
+		 quiet; a line here is one that got past it, which is the only way anybody would notice. */
+	Int64 firstDrawStart, firstDrawEnd, firstDrawFreq = 0;
+	firstDrawStart = Clock_Ticks();
+	Drawable *draw = TheThingFactory->newDrawable(obj->getTemplate());
+	firstDrawEnd = Clock_Ticks();
+	firstDrawFreq = Clock_Ticks_Per_Second();
+	{
+		const Real ASSET_LOAD_WORTH_LOGGING_MS = 3.0f;
+		const Real drawMS = firstDrawFreq
+			? (Real)((double)(firstDrawEnd - firstDrawStart) * 1000.0 / (double)firstDrawFreq) : 0.0f;
+		if( drawMS > ASSET_LOAD_WORTH_LOGGING_MS )
+			DEBUG_LOG(("SLOW DRAWABLE frame %d: %s took %.1f ms to build\n", m_frame,
+								 obj->getTemplate()->getName().str(), drawMS));
+	}
+
+/// @todo COLIN ... shouldn't we have a check here for existing drawable!!!!!
+
+	// bind drawable to object and object to drawable
+	bindObjectAndDrawable(obj, draw);
+
+}
+
+// ------------------------------------------------------------------------------------------------
+void GameLogic::bindObjectAndDrawable(Object* obj, Drawable* draw)
+{
+	draw->friend_bindToObject( obj );
+	obj->friend_bindToDrawable( draw );
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Send notification of object destruction. */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::sendObjectDestroyed( Object *obj )
+{
+	// Because this implementation is a bridge between the Logic and Interface,
+	// we must take extra care to handle such cases as when the system it
+	// shutting down.
+	if(TheGameClient == NULL)
+		return;
+
+	// destroy the drawable
+	Drawable *draw = obj->getDrawable();
+	if(draw)
+	{
+		TheGameClient->destroyDrawable( draw );
+	}
+
+	// erase the binding of the drawable to this object
+	obj->friend_bindToDrawable( NULL );
+
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Return if the game is paused or not */
+// ------------------------------------------------------------------------------------------------
+Bool GameLogic::isGamePaused( void )
+{
+	return LogicThread::isInsideWindow() ? m_pausedForDraw : m_gamePaused;
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void GameLogic::setGamePaused( Bool paused, Bool pauseMusic )
+{
+	// We need to ignore an unpause called when we are unpaused or else:
+	// Mouse is hidden for some reason (script or something)
+	// GamePaused
+	// Remember that we were hidden
+	// Show mouse
+	// GameUnpaused
+	// Set mouse the way it was
+
+	// Time passes, mouse is unhidden
+
+	// GameUnpaused
+	// Set mouse the way it "was" <--- Was counting on right answer being set in Pause.
+	if( paused == m_gamePaused )
+		return;
+
+	m_gamePaused = paused; 
+
+	AudioAffect audToAffect = (AudioAffect)(pauseMusic ? AudioAffect_All : (AudioAffect_All & ~AudioAffect_Music));
+	
+	if(paused)
+	{
+		// remember the state of the mouse/input so we can return to the same state once we "unpause"
+		m_inputEnabledMemory = TheInGameUI->getInputEnabled();
+		m_mouseVisibleMemory = TheMouse->getVisibility();
+		
+		// Make sure the mouse is visible and the cursor is an arrow
+		TheMouse->setVisibility(TRUE);
+		TheMouse->setCursor( Mouse::ARROW );
+		
+		// if Input is enabled, disable it
+		if(m_inputEnabledMemory)
+		{
+			TheInGameUI->setInputEnabled(FALSE);
+		}
+		TheAudio->pauseAudio(audToAffect);
+
+#if 0 // Kris added this code some time ago. I'm not sure why -- the pauseAudio should stop the 
+      // ambients by itself. Everything seems to work fine without it and it's messing up my 
+      // custom ambient code. Hopefully he can explain it to me, but until he gets back, I'm
+      // disabling it. -Ian
+    
+		//Stop all ambient sounds!
+		Drawable *drawable = TheGameClient->getDrawableList();
+		while( drawable )
+		{
+			drawable->stopAmbientSound();
+			drawable = drawable->getNextDrawable();
+		}
+#endif
+	}
+	else
+	{
+		// set the mouse/input states to what they were before we paused.
+		TheMouse->setVisibility(m_mouseVisibleMemory);
+		if(m_inputEnabledMemory)
+			TheInGameUI->setInputEnabled(TRUE);
+		TheAudio->resumeAudio(audToAffect);
+
+#if 0
+		//Start all ambient sounds!
+		Drawable *drawable = TheGameClient->getDrawableList();
+		while( drawable )
+		{
+			drawable->startAmbientSound();
+			TheAudio->stopAllAmbientsBy( drawable );
+			drawable = drawable->getNextDrawable();
+		}
+#endif
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void GameLogic::processProgress(Int playerId, Int percentage)
+{
+	if(m_loadScreen)
+		m_loadScreen->processProgress(playerId, percentage);
+	lastHeardFrom(playerId);
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Whenever we get a progress complete packet for a Net Game,
+	* Set a flag that that player is ready */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::processProgressComplete(Int playerId)
+{
+	if(playerId < 0 || playerId >= MAX_SLOTS)
+	{
+		DEBUG_ASSERTCRASH(FALSE,("GameLogic::processProgressComplete, Invalid playerid was passed in %d\n", playerId));
+		return;
+	}
+	if(m_progressComplete[playerId] == TRUE)
+	{
+		DEBUG_LOG(("GameLogic::processProgressComplete, playerId %d is marked TRUE already yet we're trying to mark him as true again\n", playerId));
+		return;
+	}
+	DEBUG_LOG(("Progress Complete for Player %d\n", playerId));
+	m_progressComplete[playerId] = TRUE;
+	lastHeardFrom(playerId);
+}
+
+// ------------------------------------------------------------------------------------------------
+/// @TODO: Add check to account for timeouts
+// ------------------------------------------------------------------------------------------------
+Bool GameLogic::isProgressComplete( void )
+{
+	//If we're not in a network game, always return true
+	if(!isInMultiplayerGame() || !TheNetwork || m_forceGameStartByTimeOut)
+		return TRUE;
+
+	// Only loop on the Number of players we got in here
+	for(Int i =0; i < MAX_SLOTS; ++i)
+	{
+		if(!m_progressComplete[i])
+			return FALSE;
+	}
+	return TRUE;
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void GameLogic::lastHeardFrom( Int playerId )
+{
+	if( playerId < 0 || playerId >= MAX_SLOTS)
+		return;
+	m_progressCompleteTimeout[playerId] = Clock_Milliseconds();
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void GameLogic::testTimeOut( void )
+{
+	// if everyone is loaded, lets just load the game like normal.
+	if(isProgressComplete())
+		return;
+
+	Int curTime = Clock_Milliseconds();
+	// Loop and test everyone in our game.
+	for(Int i =0; i < MAX_SLOTS; ++i)
+	{
+		// If they've completed their progress, ignore them
+		if(m_progressComplete[i])
+			continue;
+		if(	m_progressCompleteTimeout[i] + PROGRESS_COMPLETE_TIMEOUT > curTime )
+			return;
+	}
+	// if we made it this far, that means everyone has timed out.
+	m_forceGameStartByTimeOut = TRUE;
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void GameLogic::timeOutGameStart( void )
+{
+	DEBUG_LOG(("We got the Force TimeOut Start Message\n"));
+	m_forceGameStartByTimeOut = TRUE;
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void GameLogic::initTimeOutValues( void )
+{
+	if (!TheNetwork)
+		return;
+	// every slot: these are indexed by slot, and counting players left a human in a slot past the
+	// head count at 0, timed out before his first progress message, so whoever loaded first could
+	// start the match without him
+	for(Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		m_progressCompleteTimeout[i] = Clock_Milliseconds();
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+/** returns the total number of objects in the world */
+// ------------------------------------------------------------------------------------------------
+UnsignedInt GameLogic::getObjectCount( void )
+{
+	UnsignedInt totalObjects = 0;
+	Object *obj;
+	for( obj = getFirstObject(); obj; obj = obj->getNextObject() )
+	{
+		++totalObjects;
+	}
+	return totalObjects;
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+GhostObjectManager *GameLogic::createGhostObjectManager(void)
+{ 
+	return NEW GhostObjectManager;
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+TerrainLogic *GameLogic::createTerrainLogic( void )
+{
+	return NEW TerrainLogic;
+}
+
+// ------------------------------------------------------------------------------------------------
+void GameLogic::setBuildableStatusOverride(const ThingTemplate* tt, BuildableStatus bs)
+{
+	if (tt)
+	{
+		m_thingTemplateBuildableOverrides[tt->getName()] = bs;
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+Bool GameLogic::findBuildableStatusOverride(const ThingTemplate* tt, BuildableStatus& bs) const
+{
+	if (tt)
+	{
+		BuildableMap::const_iterator it = m_thingTemplateBuildableOverrides.find(tt->getName());
+		if (it != m_thingTemplateBuildableOverrides.end())
+		{
+			bs = it->second;
+			return true;
+		}
+	}
+	return false;
+}
+
+// ------------------------------------------------------------------------------------------------
+void GameLogic::setControlBarOverride(const AsciiString& commandSetName, Int slot, ConstCommandButtonPtr commandButton)
+{
+	char buf[256];
+	buf[0] = '0' + slot;
+	strcpy(&buf[1], commandSetName.str());
+	m_controlBarOverrides[buf] = commandButton;
+}
+
+// ------------------------------------------------------------------------------------------------
+Bool GameLogic::findControlBarOverride(const AsciiString& commandSetName, Int slot, ConstCommandButtonPtr& commandButton) const
+{
+	char buf[256];
+	buf[0] = '0' + slot;
+	strcpy(&buf[1], commandSetName.str());
+
+	ControlBarOverrideMap::const_iterator it = m_controlBarOverrides.find(buf);
+	if (it != m_controlBarOverrides.end())
+	{
+		commandButton = it->second;	// could be null.
+		return true;
+	}
+
+	// leave commandButton unmodified.
+	return false;
+}
+
+#ifdef DUMP_PERF_STATS
+// ------------------------------------------------------------------------------------------------
+void GameLogic::getAIMetricsStatistics( UnsignedInt *numAI, UnsignedInt *numMoving, UnsignedInt *numAttacking, UnsignedInt *numWaitingForPath, UnsignedInt *overallFailedPathfinds )
+{
+	Object *obj;
+	*numAI = 0;
+	*numMoving = 0;
+	*numAttacking = 0;
+	*numWaitingForPath = 0;
+	for( obj = getFirstObject(); obj; obj = obj->getNextObject() )
+	{
+		AIUpdateInterface *ai = obj->getAI();
+		if( ai )
+		{
+			(*numAI)++;
+
+			if( ai->isMoving() )
+			{
+				(*numMoving)++;
+			}
+			if( ai->isWaitingForPath() )
+			{
+				(*numWaitingForPath)++;
+			}
+			if( ai->isAttacking() )
+			{
+				(*numAttacking)++;
+			}
+		}
+	}
+	*overallFailedPathfinds = m_overallFailedPathfinds;
+}
+#endif
+
+// ------------------------------------------------------------------------------------------------
+/** Light CRC */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::crc( Xfer *xfer )
+{
+
+}  // end crc
+
+// ------------------------------------------------------------------------------------------------
+/** Given a string name, find the object TOC entry (if any) associated with it */
+// ------------------------------------------------------------------------------------------------
+GameLogic::ObjectTOCEntry *GameLogic::findTOCEntryByName( AsciiString name )
+{
+
+	for( ObjectTOCListIterator it = m_objectTOC.begin(); it != m_objectTOC.end(); ++it )
+		if( (*it).name == name )
+			return &(*it);
+
+	return NULL;
+
+}  // end findTOCEntryByname
+
+// ------------------------------------------------------------------------------------------------
+/** Given a object TOC identifier, find the object TOC if any */
+// ------------------------------------------------------------------------------------------------
+GameLogic::ObjectTOCEntry *GameLogic::findTOCEntryById( UnsignedShort id )
+{
+
+	for( ObjectTOCListIterator it = m_objectTOC.begin(); it != m_objectTOC.end(); ++it )
+		if( (*it).id == id )
+			return &(*it);
+
+	return NULL;
+
+}  // end findTOCEntryById
+
+// ------------------------------------------------------------------------------------------------
+/** Add an object TOC entry */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::addTOCEntry( AsciiString name, UnsignedShort id )
+{
+
+	ObjectTOCEntry tocEntry;
+	tocEntry.name = name;
+	tocEntry.id = id;
+	m_objectTOC.push_back( tocEntry );
+
+}  // end addTOCEntry
+
+// ------------------------------------------------------------------------------------------------
+/** Xfer object table of contents */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::xferObjectTOC( Xfer *xfer )
+{
+
+	// version
+	const XferVersion currentVersion = 1;
+	XferVersion version = currentVersion;
+	xfer->xferVersion( &version, currentVersion );
+
+	// clear our current table of contents
+	m_objectTOC.clear();
+
+	// xfer the table
+	UnsignedInt tocCount = 0;
+	if( xfer->getXferMode() == XFER_SAVE )
+	{
+		AsciiString templateName;
+
+		// generate a new TOC based on the objects that are in the map
+		for( Object *obj = getFirstObject(); obj; obj = obj->getNextObject() )
+		{
+
+			// get the name we're working with
+			templateName = obj->getTemplate()->getName();
+
+			// if is this object name already in the TOC, skip it
+			if( findTOCEntryByName( templateName ) != NULL )
+				continue;
+			
+			// add this entry to the TOC
+			addTOCEntry( obj->getTemplate()->getName(), ++tocCount );
+
+		}  // end for obj
+
+		// xfer entries in the TOC
+		xfer->xferUnsignedInt( &tocCount );
+
+		// xfer each TOC entry
+		ObjectTOCListIterator it;
+		ObjectTOCEntry *tocEntry;
+		for( it = m_objectTOC.begin(); it != m_objectTOC.end(); ++it )
+		{
+
+			// get this toc entry
+			tocEntry = &(*it);
+
+			// xfer the name
+			xfer->xferAsciiString( &tocEntry->name );
+
+			// xfer the paired id
+			xfer->xferUnsignedShort( &tocEntry->id );
+
+		}  // end for
+
+	}  // end if
+	else
+	{
+		AsciiString templateName;
+		UnsignedShort id;
+
+		// how many entries are we going to read
+		xfer->xferUnsignedInt( &tocCount );
+
+		// read all the entries
+		for( UnsignedInt i = 0; i < tocCount; ++i )
+		{
+
+			// read the name
+			xfer->xferAsciiString( &templateName );
+
+			// read the id
+			xfer->xferUnsignedShort( &id );
+			
+			// add this to the TOC
+			addTOCEntry( templateName, id );
+					
+		}  // end for i
+
+	}  // end else
+
+}  // end xferObjectTOC
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
+void GameLogic::prepareLogicForObjectLoad( void )
+{
+
+	//
+	// this is a band-aid :(
+	// when loading from a map file, objects were created for the bridges, towers, walls etc.
+	// since we're going to load that data from the save game file we will destroy any of
+	// those bridge objects and tower objects so that we can create them from the save data
+	//
+	Object *obj, *next;
+	for( obj = getFirstObject(); obj; obj = next )
+	{
+
+		// get next
+		next = obj->getNextObject();
+
+		// is this a bridge object?
+		if( obj->isKindOf( KINDOF_BRIDGE ) )
+		{
+			Bridge *bridge = TheTerrainLogic->findBridgeAt( obj->getPosition() );
+
+			// sanity
+			DEBUG_ASSERTCRASH( bridge, ("GameLogic::prepareLogicForObjectLoad - Unable to find bridge\n" ));
+
+			// get the old object that is in the bridge info
+			const BridgeInfo *bridgeInfo = bridge->peekBridgeInfo();
+			Object *oldObject = findObjectByID( bridgeInfo->bridgeObjectID );
+			DEBUG_ASSERTCRASH( oldObject, ("GameLogic::prepareLogicForObjectLoad - Unable to find old bridge object\n") );
+			DEBUG_ASSERTCRASH( oldObject == obj, ("GameLogic::prepareLogicForObjectLoad - obj != oldObject\n") );
+
+			//
+			// destroy the 4 towers that are attached to this old object (they will be loaded from
+			// the save game file
+			//
+			Object *oldTower;
+			for( Int i = 0; i < BRIDGE_MAX_TOWERS; ++i )
+			{
+
+				oldTower = findObjectByID( bridgeInfo->towerObjectID[ i ] );
+				if (oldTower) {
+					destroyObject( oldTower );
+				}
+
+			}  // end for, i
+
+			// destroy the old bridge object
+			destroyObject( oldObject );
+
+		}  // end if, bridge
+		else if( obj->isKindOf( KINDOF_WALK_ON_TOP_OF_WALL ) )
+		{
+
+			// destroy walk on top of wall things too
+			destroyObject( obj );
+
+		}  // end else if
+
+	}  // end for, obj
+
+	// process the destruction of these objects immediately before we proceed with the load process
+	processDestroyList();
+
+	// there should be no objects anywhere
+	DEBUG_ASSERTCRASH( getFirstObject() == NULL,
+										 ("GameLogic::prepareLogicForObjectLoad - There are still objects loaded in the engine, but it should be empty (Top is '%s')\n",
+										 getFirstObject()->getTemplate()->getName().str()) );
+
+}  // end prepareLogicForObjectLoad
+
+// ------------------------------------------------------------------------------------------------
+/** Load/Save game logic to xfer 
+	*	Version Info:
+	* 1: Initial version
+	* 2: Added m_isScoringEnabled flag (BGC) 
+	* 3: Added polygon triggers (CBD)
+	* 4: Added block markers around object data, no version checking is done and therefore
+	*		 this version breaks compatibility with previous versions. (CBD)
+	* 5: Added xfering the BuildAssistant's sell list.
+	* 9: Added m_rankPointsToAddAtGameStart, or else on a load game, your RestartGame button will forget your exp
+  * 10: xfer m_superweaponRestriction
+	* 11: objects are written back to front, so that loading - which prepends each one - rebuilds
+	*     the list in the order it was saved in.  Version 10 and earlier are reversed on load.
+	* 12: xfer m_peaceTimeEndFrame
+	* 13: xfer m_unitCap
+	* 14: xfer m_proRules
+	* 15: xfer m_incomeSharing
+	* 16: xfer m_techRespawnDelay and m_pendingTechBuildings
+	* 17: xfer m_supplyPileLimit
+	* 18: xfer the logic random stream and the pathfinder's request queue and flow maps
+	*/
+// ------------------------------------------------------------------------------------------------
+void GameLogic::xfer( Xfer *xfer )
+{
+
+	// version
+	const XferVersion currentVersion = 18;
+	XferVersion version = currentVersion;
+	xfer->xferVersion( &version, currentVersion );
+
+	// logic frame number
+	xfer->xferUnsignedInt( &m_frame );
+
+	//
+	// note that we do not do the id counter here, we did it in the game state block because
+	// it's important to do that part very early in the load process
+	//
+	// !!!DON'T DO THIS!!! ----> xfer->xferObjectID( &m_nextObjectID ); <---- !!!DON'T DO THIS!!! 
+
+	//
+	// xfer a table of contents that contain thing template and indentifier pairs.  this
+	// table of contents is good for this save file only as unique numbers are only
+	// generated and stored for the actual things that are on this map
+	//
+	xferObjectTOC( xfer );
+
+	// when loading, we need to clean up bridges and get them ready for a load
+	if( xfer->getXferMode() == XFER_LOAD )
+		prepareLogicForObjectLoad();
+
+	// object count
+	UnsignedInt objectCount = getObjectCount();
+	xfer->xferUnsignedInt( &objectCount );
+
+	// object data
+	Object *obj;
+	ObjectTOCEntry *tocEntry;
+	if( xfer->getXferMode() == XFER_SAVE )
+	{
+
+		// Save the list backwards.  Loading creates each object in turn and every new object is
+		// prepended to the list, so a list saved front to back comes back reversed - and the order
+		// of that list is the order everything iterates objects in, which is the order the
+		// simulation resolves things in.  Written back to front, the prepending puts it right.
+		Object *lastObj = NULL;
+		for( obj = getFirstObject(); obj; obj = obj->getNextObject() )
+			lastObj = obj;
+
+		for( obj = lastObj; obj; obj = obj->getPrevObject() )
+		{
+
+			// get the object TOC entry for this template
+			tocEntry = findTOCEntryByName( obj->getTemplate()->getName() );
+			if( tocEntry == NULL )
+			{
+
+				DEBUG_CRASH(( "GameLogic::xfer - Object TOC entry not found for '%s'\n", obj->getTemplate()->getName().str() ));
+				throw SC_INVALID_DATA;
+
+			}  // end if
+
+			// transfer TOC id entry
+			xfer->xferUnsignedShort( &tocEntry->id );
+
+			// begin a block of data
+			xfer->beginBlock();
+
+			// write object data
+			xfer->xferSnapshot( obj );
+
+			// end a block of data
+			xfer->endBlock();
+
+		}  // end for
+
+	}  // end if, save
+	else
+	{
+		Team *defaultTeam = ThePlayerList->getNeutralPlayer()->getDefaultTeam();
+		const ThingTemplate *thingTemplate;
+
+		// read all objects
+		Int objectDataSize;
+		UnsignedShort tocID;
+		ObjectTOCEntry *tocEntry;
+		for( UnsignedInt i = 0; i < objectCount; ++i )
+		{
+
+			// read toc entry identifier
+			xfer->xferUnsignedShort( &tocID );
+
+			// find Object TOC entry with this identifier
+			tocEntry = findTOCEntryById( tocID );
+			if( tocEntry == NULL )
+			{
+
+				DEBUG_CRASH(( "GameLogic::xfer - No TOC entry match for id '%d'\n", tocID ));
+				throw SC_INVALID_DATA;
+
+			}  // end if
+
+			// a block of data has begun
+			objectDataSize = xfer->beginBlock();
+
+			// find matching thing template
+			thingTemplate = TheThingFactory->findTemplate( tocEntry->name );
+			if( thingTemplate == NULL )
+			{
+
+				DEBUG_CRASH(( "GameLogic::xfer - Unrecognized thing template name '%s', skipping.  ENGINEERS - Are you *sure* it's OK to be ignoring this object from the save file???  Think hard about it!\n",
+											tocEntry->name.str() ));
+				xfer->skip( objectDataSize );
+				continue;
+							
+			}  // end if
+
+			// create new object
+			obj = TheThingFactory->newObject( thingTemplate, defaultTeam );
+
+			// xfer the rest of the object data
+			xfer->xferSnapshot( obj );
+
+			// end of block of data (not necessary in a load, but looks symettrically nice)
+			xfer->endBlock();
+
+			// special case for wall pieces, need to add them to the pathfinder
+			if( obj->isKindOf( KINDOF_WALK_ON_TOP_OF_WALL ) )
+				TheAI->pathfinder()->addWallPiece( obj );
+
+		}  // end for, i
+
+		// A save written before version 11 stored the list front to back, and the prepending above
+		// therefore built it backwards.  Turn it round, so an old save loads in the order it was
+		// played in rather than in the mirror of it.
+		if( version <= 10 )
+		{
+			Object *prev = NULL;
+			Object *current = m_objList;
+			while( current != NULL )
+			{
+				Object *next = current->getNextObject();
+				current->friend_setNextObject( prev );
+				current->friend_setPrevObject( next );
+				prev = current;
+				current = next;
+			}
+			m_objList = prev;
+		}
+
+	}  // end else
+
+	// campaign info
+	xfer->xferSnapshot( TheCampaignManager );
+
+	// cave system info
+	xfer->xferSnapshot( TheCaveSystem );
+
+	// is scoring enabled
+	if( version >= 2 ) 
+		xfer->xferBool(&m_isScoringEnabled);
+
+	// polygon triggers
+	if( version >= 3 )
+	{
+		PolygonTrigger *poly;
+
+		// count the number of polygon triggers we have
+		UnsignedInt triggerCount = 0;
+		for( poly = PolygonTrigger::getFirstPolygonTrigger(); poly; poly = poly->getNext() )
+			triggerCount++;
+
+		// sanity count
+		UnsignedInt sanityTriggerCount = triggerCount;
+
+		// xfer count
+		xfer->xferUnsignedInt( &triggerCount );
+
+		//
+		// since the save game loaded should have exactly the same number of polygon triggers
+		// in it that we did from loading the map this is just a sanity check here
+		//
+		if( sanityTriggerCount != triggerCount )
+		{
+
+			DEBUG_CRASH(( "GameLogic::xfer - Polygon trigger count mismatch.  Save file has a count of '%d', but map had '%d' triggers\n",
+										sanityTriggerCount, triggerCount ));
+			throw SC_INVALID_DATA;
+
+		}  // end if
+
+		// xfer each of the polygon triggers
+		if( xfer->getXferMode() == XFER_SAVE )
+		{
+			Int triggerID;
+
+			for( poly = PolygonTrigger::getFirstPolygonTrigger(); poly; poly = poly->getNext() )
+			{
+
+				// write polygon ID
+				triggerID = poly->getID();	
+				xfer->xferInt( &triggerID );
+
+				// xfer polygon data
+				xfer->xferSnapshot( poly );
+
+			}  // end for, poly
+
+		}  // end if, save
+		else
+		{
+			Int triggerID;
+
+			// loop through all triggers
+			for( UnsignedInt i = 0; i < triggerCount; ++i )
+			{
+
+				// read ID
+				xfer->xferInt( &triggerID );
+
+				// find this polygon trigger
+				poly = PolygonTrigger::getPolygonTriggerByID( triggerID );
+
+				// sanity
+				if( poly == NULL )
+				{
+
+					DEBUG_CRASH(( "GameLogic::xfer - Unable to find polygon trigger with id '%d'\n",
+												triggerID ));
+					throw SC_INVALID_DATA;
+
+				}  // end if
+
+				// xfer polygon data
+				xfer->xferSnapshot( poly );
+
+			}  // end for, i
+
+			//
+			// force a recalculation of the pathfinding cause some of these polygon triggers
+			// are water which can move during run-time, and therefore affecting the area
+			// that objects can move on. Also, map objects need recalculation. jba.
+			//
+			TheAI->pathfinder()->newMap();
+
+		}  // end else, load
+
+	}	 // end if, version >= 3
+
+	// note that version=4 is the same as version=3
+	if (version >= 5)
+	{
+		xfer->xferInt(&m_rankLevelLimit);
+	}
+
+	if (version>=6) {
+		// We need the list of buildings in process of being sold.
+		TheBuildAssistant->xferTheSellList(xfer);
+	}
+
+	if (version >= 7) 
+	{
+		if( xfer->getXferMode() == XFER_SAVE )
+		{
+			for (BuildableMap::const_iterator it = m_thingTemplateBuildableOverrides.begin(); it != m_thingTemplateBuildableOverrides.end(); ++it )
+			{
+				AsciiString name = it->first;
+				BuildableStatus bs = it->second;
+				xfer->xferAsciiString(&name);
+				xfer->xferUser(&bs, sizeof(bs));
+			}
+			AsciiString empty;
+			xfer->xferAsciiString(&empty);
+		}
+		else if (xfer->getXferMode() == XFER_LOAD)
+		{
+			if (m_thingTemplateBuildableOverrides.empty() == false)
+			{
+				DEBUG_CRASH(( "GameLogic::xfer - m_thingTemplateBuildableOverrides should be empty, but is not\n"));
+				throw SC_INVALID_DATA;
+			}
+			
+			for (;;) 
+			{
+				AsciiString name;
+				xfer->xferAsciiString(&name);
+				if (name.isEmpty())
+					break;
+				BuildableStatus bs;
+				xfer->xferUser(&bs, sizeof(bs));
+				m_thingTemplateBuildableOverrides[name] = bs;
+			}
+		}
+	}
+
+	if (version >= 8)
+	{
+		xfer->xferBool(&m_showBehindBuildingMarkers);
+		xfer->xferBool(&m_drawIconUI);
+		xfer->xferBool(&m_showDynamicLOD);
+		xfer->xferInt(&m_scriptHulkMaxLifetimeOverride);
+
+		if( xfer->getXferMode() == XFER_SAVE )
+		{
+			for (ControlBarOverrideMap::const_iterator it = m_controlBarOverrides.begin(); it != m_controlBarOverrides.end(); ++it )
+			{
+				AsciiString name = it->first;
+				AsciiString value = it->second ? it->second->getName() : AsciiString::TheEmptyString;
+				xfer->xferAsciiString(&name);
+				xfer->xferAsciiString(&value);
+			}
+			AsciiString empty;
+			xfer->xferAsciiString(&empty);
+		}
+		else if (xfer->getXferMode() == XFER_LOAD)
+		{
+			if (m_controlBarOverrides.empty() == false)
+			{
+				DEBUG_CRASH(( "GameLogic::xfer - m_controlBarOverrides should be empty, but is not\n"));
+				throw SC_INVALID_DATA;
+			}
+			
+			for (;;) 
+			{
+				AsciiString name;
+				xfer->xferAsciiString(&name);
+				if (name.isEmpty())
+					break;
+				AsciiString value;
+				xfer->xferAsciiString(&value);
+				ConstCommandButtonPtr button = NULL;
+				if (value.isNotEmpty())
+				{
+					button = TheCommandStore->findCommandButton(value);
+					DEBUG_ASSERTCRASH(button != NULL, ("Could not find button %s\n",value.str()));
+				}
+				m_controlBarOverrides[name] = button;
+			}
+		}
+	}
+
+	if (version >= 9)
+	{
+		xfer->xferInt(&m_rankPointsToAddAtGameStart);
+	}
+
+  if ( version >= 10 )
+  {
+    xfer->xferUnsignedShort( &m_superweaponRestriction );
+  }
+  else if ( xfer->getXferMode() == XFER_LOAD )
+  {
+    m_superweaponRestriction = 0;
+  }
+
+  if ( version >= 12 )
+  {
+    xfer->xferUnsignedInt( &m_peaceTimeEndFrame );
+  }
+  else if ( xfer->getXferMode() == XFER_LOAD )
+  {
+    m_peaceTimeEndFrame = 0;
+  }
+
+  if ( version >= 13 )
+  {
+    xfer->xferUnsignedInt( &m_unitCap );
+  }
+  else if ( xfer->getXferMode() == XFER_LOAD )
+  {
+    m_unitCap = 0;
+  }
+
+  if ( version >= 14 )
+  {
+    xfer->xferBool( &m_proRules );
+  }
+  else if ( xfer->getXferMode() == XFER_LOAD )
+  {
+    m_proRules = FALSE;
+  }
+
+  if ( version >= 15 )
+  {
+    xfer->xferInt( &m_incomeSharing );
+  }
+  else if ( xfer->getXferMode() == XFER_LOAD )
+  {
+    m_incomeSharing = INCOME_SHARING_OFF;
+  }
+
+  if ( version >= 16 )
+  {
+    xfer->xferUnsignedInt( &m_techRespawnDelay );
+
+    UnsignedInt pendingCount = (UnsignedInt)m_pendingTechBuildings.size();
+    xfer->xferUnsignedInt( &pendingCount );
+    if ( xfer->getXferMode() == XFER_LOAD )
+      m_pendingTechBuildings.resize( pendingCount );
+
+    for ( UnsignedInt i = 0; i < pendingCount; ++i )
+    {
+      PendingTechBuilding &pending = m_pendingTechBuildings[ i ];
+      AsciiString templateName = xfer->getXferMode() == XFER_LOAD ? AsciiString::TheEmptyString : pending.m_template->getName();
+      xfer->xferAsciiString( &templateName );
+      if ( xfer->getXferMode() == XFER_LOAD )
+      {
+        pending.m_template = TheThingFactory->findTemplate( templateName );
+        if ( pending.m_template == NULL )
+          throw SC_INVALID_DATA;
+      }
+      xfer->xferCoord3D( &pending.m_position );
+      xfer->xferReal( &pending.m_angle );
+      xfer->xferObjectID( &pending.m_ruinID );
+      xfer->xferUnsignedInt( &pending.m_dueFrame );
+    }
+  }
+  else if ( xfer->getXferMode() == XFER_LOAD )
+  {
+    m_techRespawnDelay = 0;
+    m_pendingTechBuildings.clear();
+  }
+
+  if ( version >= 17 )
+  {
+    xfer->xferInt( &m_supplyPileLimit );
+  }
+  else if ( xfer->getXferMode() == XFER_LOAD )
+  {
+    m_supplyPileLimit = 0;
+  }
+
+  // Without the stream two loads of one save go on differently: the engine reset before the load
+  // seeded it from the clock.  A save older than 18 keeps that.
+  if ( version >= 18 )
+  {
+    GameLogicRandomState state = GetGameLogicRandomState();
+    for ( Int i = 0; i < 6; ++i )
+      xfer->xferUnsignedInt( &state.seed[ i ] );
+    xfer->xferUnsignedInt( &state.baseSeed );
+    if ( xfer->getXferMode() == XFER_LOAD )
+    {
+      m_loadedRandomState = state;
+      m_loadedRandomPending = TRUE;
+    }
+
+    TheAI->pathfinder()->xferFlowState( xfer );
+
+    // The sleepy update heap as it stands.  Modules due on the same frame and phase run in the order
+    // the heap gives them up, which depends on how it was built; a heap rebuilt from the object list
+    // on load runs them in another order than the game that was saved.
+    UnsignedInt sleepyCount = (UnsignedInt)m_sleepyUpdates.size();
+    xfer->xferUnsignedInt( &sleepyCount );
+    if ( xfer->getXferMode() == XFER_SAVE )
+    {
+      std::map< UpdateModulePtr, std::pair< ObjectID, Int > > where;
+      for ( Object *owner = getFirstObject(); owner; owner = owner->getNextObject() )
+      {
+        Int moduleIndex = 0;
+        for ( BehaviorModule **b = owner->getBehaviorModules(); *b; ++b, ++moduleIndex )
+          if ( (*b)->getUpdate() )
+            where[ (UpdateModulePtr)( (*b)->getUpdate() ) ] = std::make_pair( owner->getID(), moduleIndex );
+      }
+      for ( UnsignedInt i = 0; i < sleepyCount; ++i )
+      {
+        std::pair< ObjectID, Int > entry = where[ m_sleepyUpdates[ i ].module ];
+        xfer->xferObjectID( &entry.first );
+        xfer->xferInt( &entry.second );
+      }
+    }
+    else
+    {
+      m_loadedSleepyOrder.resize( sleepyCount );
+      for ( UnsignedInt i = 0; i < sleepyCount; ++i )
+      {
+        xfer->xferObjectID( &m_loadedSleepyOrder[ i ].first );
+        xfer->xferInt( &m_loadedSleepyOrder[ i ].second );
+      }
+      m_loadedSleepyPending = TRUE;
+    }
+  }
+}  // end xfer
+
+// ------------------------------------------------------------------------------------------------
+void GameLogic::restoreLoadedRandomState( void )
+{
+  if ( !m_loadedRandomPending )
+    return;
+  SetGameLogicRandomState( m_loadedRandomState );
+  m_loadedRandomPending = FALSE;
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Load post process entry point */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::loadPostProcess( void )
+{
+
+	//
+	// the act of loading objects can (theoretically) as a side effect create other objects, 
+	// our m_nextObjID that we maintain to give objects unique ID is also continually
+	// climbing higher and higher due to us allocating objects during load (even though
+	// those objects have their ids overwritten with data from the file.  To prevent the
+	// m_nextObjID from getting un-necessarily high we will set it to the next available
+	// id from the objects that are now in the world and actually in use, or to the counter
+	// the save held if that is higher: an ID picks the frames an object takes its turns on,
+	// so a loaded game has to hand a new object the ID the game it was saved from would
+	//
+	m_nextObjID = m_nextObjIDFromSave;
+	Object *obj;
+	for( obj = getFirstObject(); obj; obj = obj->getNextObject() )
+		if( obj->getID() >= m_nextObjID )
+			m_nextObjID = (ObjectID)((UnsignedInt)obj->getID() + 1);
+
+	// blow away the sleepy update and normal update module lists
+	for (std::vector<SleepyEntry>::iterator it = m_sleepyUpdates.begin(); it != m_sleepyUpdates.end(); ++it)
+	{
+		it->module->friend_setIndexInLogic(-1);
+	}
+	m_sleepyUpdates.clear();
+#ifdef ALLOW_NONSLEEPY_UPDATES
+	m_normalUpdates.clear();
+#else
+	UnsignedInt now = TheGameLogic->getFrame();
+	if (now == 0)
+		now = 1;
+#endif
+
+	// a save from version 18 on gives the heap entry by entry, which is a heap already
+	const Bool sleepyFromSave = m_loadedSleepyPending;
+	if( sleepyFromSave )
+	{
+		for( std::vector< std::pair< ObjectID, Int > >::const_iterator it = m_loadedSleepyOrder.begin(); it != m_loadedSleepyOrder.end(); ++it )
+		{
+			Object *owner = findObjectByID( it->first );
+			if( owner == NULL )
+				throw SC_INVALID_DATA;
+			UpdateModulePtr u = (UpdateModulePtr)( owner->getBehaviorModules()[ it->second ]->getUpdate() );
+			SleepyEntry e = { u->friend_getPriority(), u };
+			m_sleepyUpdates.push_back( e );
+			u->friend_setIndexInLogic( m_sleepyUpdates.size() - 1 );
+		}
+		m_loadedSleepyOrder.clear();
+		m_loadedSleepyPending = FALSE;
+	}
+
+	// go through all objects, examine each update module and put it on the appropriate update list
+	for( obj = getFirstObject(); obj; obj = obj->getNextObject() )
+	{
+
+		// get the update list of modules for this object
+		for( BehaviorModule** b = obj->getBehaviorModules(); *b; ++b )
+		{
+#ifdef DIRECT_UPDATEMODULE_ACCESS
+			// evil, but necessary at this point. (srj)
+			UpdateModulePtr u = (UpdateModulePtr)((*b)->getUpdate());
+#else
+			UpdateModulePtr u = (*b)->getUpdate();
+#endif
+			if (!u)
+				continue;
+
+			// already on the heap the save gave
+			if (sleepyFromSave && u->friend_getIndexInLogic() != -1)
+				continue;
+
+			DEBUG_ASSERTCRASH(u->friend_getIndexInLogic() == -1, ("Hmm, expected index to be -1 here"));
+
+			// check each update module
+			UnsignedInt when = u->friend_getNextCallFrame();
+#ifdef ALLOW_NONSLEEPY_UPDATES
+			if( when == 0 )
+			{
+				// zero if the magic value for "never sleeps"
+				m_normalUpdates.push_back(u);
+			}
+			else
+#else
+			// note that 'when' will only be zero for legacy save files.
+			if (when == 0)
+				u->friend_setNextCallFrame(now);
+#endif
+			{
+				if (sleepyFromSave)
+				{
+					pushSleepyUpdate(u);
+					continue;
+				}
+				SleepyEntry e = { u->friend_getPriority(), u };
+				m_sleepyUpdates.push_back(e);
+				u->friend_setIndexInLogic(m_sleepyUpdates.size() - 1);
+			}
+
+		}  // end for, u
+
+	}  // end for, obj
+
+	// re-sort the priority queue all at once now that all modules are on it
+	if (!sleepyFromSave)
+		remakeSleepyUpdate();
+
+}  // end loadPostProcess
+
+

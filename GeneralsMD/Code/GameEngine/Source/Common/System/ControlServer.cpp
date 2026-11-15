@@ -1,0 +1,1242 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2026 by İlyas Akın for the macOS/Linux port; see NOTICE.md and the git history.
+
+// FILE: ControlServer.cpp ///////////////////////////////////////////////////////////////////////
+//
+// -control [port]: a WebSocket on 127.0.0.1 that drives the game from outside it.  See
+// ControlServer.h for the command grammar and for why world commands are queued rather than run
+// where they arrive.
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+
+#include "Common/ControlServer.h"
+#include "Common/Energy.h"
+#include "Common/GameEngine.h"
+#include "Common/GameState.h"
+#include "Common/GlobalData.h"
+#include "Common/LogicThread.h"
+#include "Common/MessageStream.h"
+#include "Common/Money.h"
+#include "Common/Player.h"
+#include "Common/PlayerList.h"
+#include "Common/NameKeyGenerator.h"
+#include "GameClient/Display.h"
+#include "GameClient/GadgetListBox.h"
+#include "GameClient/GameWindowManager.h"
+#include "GameClient/GUICallbacks.h"		// ToggleQuitMenu, for quitmenu
+#include "GameClient/InGameUI.h"
+#include "GameClient/KeyDefs.h"
+#include "GameClient/Shell.h"
+#include "GameClient/WindowLayout.h"
+#include "GameClient/MetaEvent.h"
+#include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/BodyModule.h"
+#include "GameLogic/Module/SpecialPowerModule.h"
+#include "GameLogic/Object.h"
+#include "GameLogic/PartitionManager.h"
+#include "GameLogic/ScenarioDrill.h"
+#include "GameLogic/TerrainLogic.h"
+#include "GameNetwork/GameInfo.h"		// MAX_SLOTS, for the skirmish command's player count
+#include "GameNetwork/Online/OnlineQueues.h"
+
+#include <vector>
+
+// windows.h, which PreRTS.h already pulled in, brings Winsock 1.1 with it.  That is every call
+// this file makes, so it takes the one already on the table rather than starting the winsock2
+// header fight described in the hard constraints.
+//
+// Off Windows the same calls are BSD sockets, which Winsock copied.  The three names that are
+// only spelled differently get file-local POSIX definitions here, so the call sites below read as
+// they always did; the places where the two genuinely behave differently (startup, non-blocking,
+// SIGPIPE, EINTR, SO_REUSEADDR) are #if'd where they happen, each with its reason.
+#if !defined(_WIN32)
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+typedef int SOCKET;
+static const SOCKET INVALID_SOCKET = -1;
+static inline int closesocket( SOCKET s ) { return close( s ); }
+#endif
+
+// A send() to a client that has gone away raises SIGPIPE on POSIX, and its default is to end the
+// process: the ordinary way a -control session ends would kill the game.  Windows returns an
+// error instead.  macOS and the BSDs switch it off per socket (SO_NOSIGPIPE, set on accept below);
+// Linux has no such option and takes MSG_NOSIGNAL on each send instead.
+#if defined(MSG_NOSIGNAL) && !defined(SO_NOSIGPIPE)
+#define CONTROL_SEND_FLAGS MSG_NOSIGNAL
+#else
+#define CONTROL_SEND_FLAGS 0
+#endif
+
+// ------------------------------------------------------------------------------------------------
+// sizes and constants
+// ------------------------------------------------------------------------------------------------
+
+static const Int CONTROL_LOOPBACK_ONLY = INADDR_LOOPBACK;
+static const Int CONTROL_BACKLOG = 1;
+static const Int CONTROL_READ_CHUNK = 4096;
+static const Int CONTROL_MAX_REQUEST = 16384;
+static const Int CONTROL_MAX_COMMANDS_PER_FRAME = 64;
+
+/// RFC 6455's magic string, appended to the client key before hashing
+static const char *CONTROL_WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+static const Int SHA1_DIGEST_BYTES = 20;
+static const Int SHA1_BLOCK_BYTES = 64;
+
+// WebSocket opcodes, from RFC 6455 section 5.2
+static const unsigned char WS_OPCODE_TEXT = 0x1;
+static const unsigned char WS_OPCODE_CLOSE = 0x8;
+static const unsigned char WS_OPCODE_PING = 0x9;
+static const unsigned char WS_OPCODE_PONG = 0xA;
+
+/// status samples the shroud on this many points a side, spread over the map, for "revealed"
+static const Int STATUS_SHROUD_SAMPLES_PER_SIDE = 8;
+
+// ------------------------------------------------------------------------------------------------
+// SHA-1, because the handshake needs one and nothing in GameEngine has one
+// ------------------------------------------------------------------------------------------------
+
+struct Sha1State
+{
+	UnsignedInt digest[ 5 ];
+	UnsignedInt byteCount;
+	unsigned char block[ SHA1_BLOCK_BYTES ];
+	Int blockLength;
+};
+
+static UnsignedInt sha1RotateLeft( UnsignedInt value, Int bits )
+{
+	return (value << bits) | (value >> (32 - bits));
+}
+
+static void sha1Init( Sha1State *state )
+{
+	state->digest[ 0 ] = 0x67452301;
+	state->digest[ 1 ] = 0xEFCDAB89;
+	state->digest[ 2 ] = 0x98BADCFE;
+	state->digest[ 3 ] = 0x10325476;
+	state->digest[ 4 ] = 0xC3D2E1F0;
+	state->byteCount = 0;
+	state->blockLength = 0;
+}
+
+static void sha1Transform( Sha1State *state )
+{
+	UnsignedInt w[ 80 ];
+	Int i;
+
+	for( i = 0; i < 16; ++i )
+	{
+		w[ i ] = ((UnsignedInt)state->block[ i * 4 ] << 24)
+					 | ((UnsignedInt)state->block[ i * 4 + 1 ] << 16)
+					 | ((UnsignedInt)state->block[ i * 4 + 2 ] << 8)
+					 | ((UnsignedInt)state->block[ i * 4 + 3 ]);
+	}
+	for( i = 16; i < 80; ++i )
+		w[ i ] = sha1RotateLeft( w[ i - 3 ] ^ w[ i - 8 ] ^ w[ i - 14 ] ^ w[ i - 16 ], 1 );
+
+	UnsignedInt a = state->digest[ 0 ];
+	UnsignedInt b = state->digest[ 1 ];
+	UnsignedInt c = state->digest[ 2 ];
+	UnsignedInt d = state->digest[ 3 ];
+	UnsignedInt e = state->digest[ 4 ];
+
+	for( i = 0; i < 80; ++i )
+	{
+		UnsignedInt f, k;
+		if (i < 20)			{ f = (b & c) | ((~b) & d);				k = 0x5A827999; }
+		else if (i < 40)	{ f = b ^ c ^ d;									k = 0x6ED9EBA1; }
+		else if (i < 60)	{ f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDC; }
+		else							{ f = b ^ c ^ d;									k = 0xCA62C1D6; }
+
+		const UnsignedInt temp = sha1RotateLeft( a, 5 ) + f + e + k + w[ i ];
+		e = d;
+		d = c;
+		c = sha1RotateLeft( b, 30 );
+		b = a;
+		a = temp;
+	}
+
+	state->digest[ 0 ] += a;
+	state->digest[ 1 ] += b;
+	state->digest[ 2 ] += c;
+	state->digest[ 3 ] += d;
+	state->digest[ 4 ] += e;
+}
+
+static void sha1Update( Sha1State *state, const unsigned char *data, Int length )
+{
+	for( Int i = 0; i < length; ++i )
+	{
+		state->block[ state->blockLength++ ] = data[ i ];
+		++state->byteCount;
+		if (state->blockLength == SHA1_BLOCK_BYTES)
+		{
+			sha1Transform( state );
+			state->blockLength = 0;
+		}
+	}
+}
+
+static void sha1Finish( Sha1State *state, unsigned char *digestOut )
+{
+	const UnsignedInt bitCount = state->byteCount * 8;
+
+	const unsigned char one = 0x80;
+	sha1Update( state, &one, 1 );
+
+	const unsigned char zero = 0x00;
+	while (state->blockLength != 56)
+		sha1Update( state, &zero, 1 );
+
+	unsigned char lengthBytes[ 8 ];
+	for( Int i = 0; i < 4; ++i )
+		lengthBytes[ i ] = 0;
+	lengthBytes[ 4 ] = (unsigned char)((bitCount >> 24) & 0xFF);
+	lengthBytes[ 5 ] = (unsigned char)((bitCount >> 16) & 0xFF);
+	lengthBytes[ 6 ] = (unsigned char)((bitCount >> 8) & 0xFF);
+	lengthBytes[ 7 ] = (unsigned char)(bitCount & 0xFF);
+	sha1Update( state, lengthBytes, 8 );
+
+	for( Int i = 0; i < SHA1_DIGEST_BYTES; ++i )
+		digestOut[ i ] = (unsigned char)((state->digest[ i / 4 ] >> (24 - 8 * (i % 4))) & 0xFF);
+}
+
+// ------------------------------------------------------------------------------------------------
+// base64
+// ------------------------------------------------------------------------------------------------
+
+static const char *BASE64_ALPHABET =
+	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static Int base64Encode( const unsigned char *data, Int length, char *out, Int outSize )
+{
+	const Int needed = ((length + 2) / 3) * 4 + 1;
+	if (outSize < needed)
+		return 0;
+
+	Int written = 0;
+	Int at = 0;
+	while (at < length)
+	{
+		const UnsignedInt byte0 = data[ at ];
+		const UnsignedInt byte1 = (at + 1 < length) ? data[ at + 1 ] : 0;
+		const UnsignedInt byte2 = (at + 2 < length) ? data[ at + 2 ] : 0;
+		const UnsignedInt triple = (byte0 << 16) | (byte1 << 8) | byte2;
+
+		out[ written++ ] = BASE64_ALPHABET[ (triple >> 18) & 0x3F ];
+		out[ written++ ] = BASE64_ALPHABET[ (triple >> 12) & 0x3F ];
+		out[ written++ ] = (at + 1 < length) ? BASE64_ALPHABET[ (triple >> 6) & 0x3F ] : '=';
+		out[ written++ ] = (at + 2 < length) ? BASE64_ALPHABET[ triple & 0x3F ] : '=';
+		at += 3;
+	}
+
+	out[ written ] = 0;
+	return written;
+}
+
+Bool ControlServer_computeAcceptKey( const char *clientKey, char *out, Int outSize )
+{
+	if (clientKey == NULL || out == NULL)
+		return FALSE;
+
+	Sha1State state;
+	sha1Init( &state );
+	sha1Update( &state, (const unsigned char *)clientKey, (Int)strlen( clientKey ) );
+	sha1Update( &state, (const unsigned char *)CONTROL_WEBSOCKET_GUID,
+							(Int)strlen( CONTROL_WEBSOCKET_GUID ) );
+
+	unsigned char digest[ SHA1_DIGEST_BYTES ];
+	sha1Finish( &state, digest );
+
+	return base64Encode( digest, SHA1_DIGEST_BYTES, out, outSize ) > 0;
+}
+
+// ------------------------------------------------------------------------------------------------
+// socket state
+// ------------------------------------------------------------------------------------------------
+
+static SOCKET theListenSocket = INVALID_SOCKET;
+static SOCKET theClientSocket = INVALID_SOCKET;
+#if defined(_WIN32)
+static Bool theWinsockStarted = FALSE;
+#endif
+static Bool theHandshakeDone = FALSE;
+static std::vector<char> theIncoming;
+static std::vector<AsciiString> thePendingCommands;
+static Bool theQuitRequested = FALSE;
+
+static void closeClient( void )
+{
+	if (theClientSocket != INVALID_SOCKET)
+	{
+		closesocket( theClientSocket );
+		theClientSocket = INVALID_SOCKET;
+	}
+	theHandshakeDone = FALSE;
+	theIncoming.clear();
+}
+
+static Bool setNonBlocking( SOCKET s )
+{
+#if !defined(_WIN32)
+	const int flags = fcntl( s, F_GETFL, 0 );
+	return flags != -1 && fcntl( s, F_SETFL, flags | O_NONBLOCK ) == 0;
+#else
+	unsigned long nonBlocking = 1;
+	return ioctlsocket( s, FIONBIO, &nonBlocking ) == 0;
+#endif
+}
+
+static Bool openListenSocket( Int port )
+{
+#if defined(_WIN32)
+	WSADATA wsaData;
+	if (!theWinsockStarted)
+	{
+		if (WSAStartup( MAKEWORD( 1, 1 ), &wsaData ) != 0)
+		{
+			DEBUG_LOG(("CONTROL: winsock would not start\n"));
+			return FALSE;
+		}
+		theWinsockStarted = TRUE;
+	}
+#endif
+
+	theListenSocket = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP );
+	if (theListenSocket == INVALID_SOCKET)
+	{
+		DEBUG_LOG(("CONTROL: no socket\n"));
+		return FALSE;
+	}
+
+	sockaddr_in address;
+	memset( &address, 0, sizeof( address ) );
+	address.sin_family = AF_INET;
+	address.sin_port = htons( (unsigned short)port );
+	address.sin_addr.s_addr = htonl( CONTROL_LOOPBACK_ONLY );
+
+#if !defined(_WIN32)
+	/* POSIX only, and on purpose.  Here SO_REUSEADDR only lets bind() reuse a port still in
+		 TIME_WAIT from the last session; a second live listener is still refused, so "loopback only,
+		 therefore no authentication" holds.  Without it a restart within a minute or two gets
+		 EADDRINUSE, and the poll below then turns -control off for the whole run.  On Windows the
+		 same option lets another process bind over a live listener, so it is not set there. */
+	const int reuse = 1;
+	setsockopt( theListenSocket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof( reuse ) );
+#endif
+
+	if (bind( theListenSocket, (sockaddr *)&address, sizeof( address ) ) != 0
+			|| listen( theListenSocket, CONTROL_BACKLOG ) != 0
+			|| !setNonBlocking( theListenSocket ))
+	{
+		DEBUG_LOG(("CONTROL: cannot listen on 127.0.0.1:%d\n", port));
+		closesocket( theListenSocket );
+		theListenSocket = INVALID_SOCKET;
+		return FALSE;
+	}
+
+	DEBUG_LOG(("CONTROL: listening on ws://127.0.0.1:%d\n", port));
+	return TRUE;
+}
+
+// ------------------------------------------------------------------------------------------------
+// websocket framing
+// ------------------------------------------------------------------------------------------------
+
+static void sendFrame( unsigned char opcode, const char *payload, Int length )
+{
+	if (theClientSocket == INVALID_SOCKET)
+		return;
+
+	std::vector<char> frame;
+	frame.push_back( (char)(0x80 | opcode) );
+
+	// a server frame is never masked, so the length is the whole second byte
+	if (length < 126)
+	{
+		frame.push_back( (char)length );
+	}
+	else if (length < 65536)
+	{
+		frame.push_back( (char)126 );
+		frame.push_back( (char)((length >> 8) & 0xFF) );
+		frame.push_back( (char)(length & 0xFF) );
+	}
+	else
+	{
+		frame.push_back( (char)127 );
+		for( Int i = 0; i < 4; ++i )
+			frame.push_back( (char)0 );
+		frame.push_back( (char)((length >> 24) & 0xFF) );
+		frame.push_back( (char)((length >> 16) & 0xFF) );
+		frame.push_back( (char)((length >> 8) & 0xFF) );
+		frame.push_back( (char)(length & 0xFF) );
+	}
+
+	for( Int i = 0; i < length; ++i )
+		frame.push_back( payload[ i ] );
+
+	send( theClientSocket, &frame[ 0 ], (Int)frame.size(), CONTROL_SEND_FLAGS );
+}
+
+static void sendText( const char *text )
+{
+	sendFrame( WS_OPCODE_TEXT, text, (Int)strlen( text ) );
+}
+
+/** Pull one complete frame off the front of theIncoming.  Returns FALSE when there is not a whole
+	  one there yet, which is the normal case on a non-blocking read. */
+static Bool takeFrame( unsigned char *opcodeOut, AsciiString *payloadOut )
+{
+	const Int have = (Int)theIncoming.size();
+	if (have < 2)
+		return FALSE;
+
+	const unsigned char byte0 = (unsigned char)theIncoming[ 0 ];
+	const unsigned char byte1 = (unsigned char)theIncoming[ 1 ];
+	const Bool masked = (byte1 & 0x80) != 0;
+	Int payloadLength = byte1 & 0x7F;
+	Int at = 2;
+
+	if (payloadLength == 126)
+	{
+		if (have < at + 2)
+			return FALSE;
+		payloadLength = ((unsigned char)theIncoming[ at ] << 8) | (unsigned char)theIncoming[ at + 1 ];
+		at += 2;
+	}
+	else if (payloadLength == 127)
+	{
+		// the four high bytes of a 64-bit length are refused rather than truncated: nothing this
+		// socket accepts is four gigabytes long, so a frame claiming to be is a broken client
+		if (have < at + 8)
+			return FALSE;
+		for( Int i = 0; i < 4; ++i )
+		{
+			if (theIncoming[ at + i ] != 0)
+			{
+				closeClient();
+				return FALSE;
+			}
+		}
+		payloadLength = ((unsigned char)theIncoming[ at + 4 ] << 24)
+									| ((unsigned char)theIncoming[ at + 5 ] << 16)
+									| ((unsigned char)theIncoming[ at + 6 ] << 8)
+									| ((unsigned char)theIncoming[ at + 7 ]);
+		at += 8;
+	}
+
+	unsigned char mask[ 4 ] = { 0, 0, 0, 0 };
+	if (masked)
+	{
+		if (have < at + 4)
+			return FALSE;
+		for( Int i = 0; i < 4; ++i )
+			mask[ i ] = (unsigned char)theIncoming[ at + i ];
+		at += 4;
+	}
+
+	if (payloadLength < 0 || have < at + payloadLength)
+		return FALSE;
+
+	AsciiString payload;
+	if (payloadLength > 0)
+	{
+		std::vector<char> text;
+		text.resize( payloadLength + 1 );
+		for( Int i = 0; i < payloadLength; ++i )
+			text[ i ] = (char)((unsigned char)theIncoming[ at + i ] ^ (masked ? mask[ i % 4 ] : 0));
+		text[ payloadLength ] = 0;
+		payload.set( &text[ 0 ] );
+	}
+
+	theIncoming.erase( theIncoming.begin(), theIncoming.begin() + at + payloadLength );
+
+	*opcodeOut = byte0 & 0x0F;
+	*payloadOut = payload;
+	return TRUE;
+}
+
+// ------------------------------------------------------------------------------------------------
+// the http upgrade
+// ------------------------------------------------------------------------------------------------
+
+/** Read one header's value out of the request; FALSE when the header is absent.  `name` is lower case
+	  with its colon.  Case-insensitive on the name, because RFC 7230 says header names are, and browsers
+	  and Python libraries disagree about the casing; matched only at the start of a line, so the path in
+	  the request line, which a web page chooses, cannot pass for a header. */
+static Bool findHeader( const char *request, const char *name, char *valueOut, Int valueOutSize )
+{
+	const Int nameLength = (Int)strlen( name );
+
+	for( const char *at = request; *at; ++at )
+	{
+		if (at != request && at[ -1 ] != '\n')
+			continue;
+
+		Int i = 0;
+		while (i < nameLength && at[ i ] && tolower( (unsigned char)at[ i ] ) == name[ i ])
+			++i;
+		if (i < nameLength)
+			continue;
+
+		const char *value = at + nameLength;
+		while (*value == ' ' || *value == '\t')
+			++value;
+
+		Int written = 0;
+		while (*value && *value != '\r' && *value != '\n' && written < valueOutSize - 1)
+			valueOut[ written++ ] = *value++;
+		while (written > 0 && (valueOut[ written - 1 ] == ' ' || valueOut[ written - 1 ] == '\t'))
+			--written;
+		valueOut[ written ] = 0;
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+/* A browser names the page that opened the socket in Origin, and any web page can open ws://127.0.0.1.
+	 So a request with an Origin is let in only from this machine's own pages.  "null" is refused: a
+	 sandboxed iframe on any web site sends it.  The project's tools (control_client.py, Node's
+	 WebSocket) send no Origin at all. */
+Bool ControlServer_originAllowed( const char *request )
+{
+	char origin[ 256 ];
+	if (!findHeader( request, "origin:", origin, sizeof( origin ) ))
+		return TRUE;
+
+	static const char *const LOCAL[] = { "http://localhost", "https://localhost", "http://127.0.0.1", "https://127.0.0.1", "http://[::1]", "https://[::1]" };
+	for( Int k = 0; k < (Int)ARRAY_SIZE( LOCAL ); ++k )
+	{
+		const size_t length = strlen( LOCAL[ k ] );
+		if (strncmp( origin, LOCAL[ k ], length ) != 0)
+			continue;
+		const char *port = origin + length;
+		if (*port == 0)
+			return TRUE;
+		if (*port++ != ':' || *port == 0)
+			continue;
+		while (*port >= '0' && *port <= '9')
+			++port;
+		if (*port == 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static Bool tryHandshake( void )
+{
+	// the request ends at the blank line; until then there is nothing to answer
+	theIncoming.push_back( 0 );
+	const char *request = &theIncoming[ 0 ];
+	const char *end = strstr( request, "\r\n\r\n" );
+	theIncoming.pop_back();
+
+	if (end == NULL)
+		return FALSE;
+
+	if (!ControlServer_originAllowed( request ))
+	{
+		DEBUG_LOG(("CONTROL: a web page's request (Origin not this machine), closing\n"));
+		closeClient();
+		return FALSE;
+	}
+
+	char clientKey[ 256 ];
+	char acceptKey[ 64 ];
+	if (!findHeader( request, "sec-websocket-key:", clientKey, sizeof( clientKey ) ) || clientKey[ 0 ] == 0
+			|| !ControlServer_computeAcceptKey( clientKey, acceptKey, sizeof( acceptKey ) ))
+	{
+		DEBUG_LOG(("CONTROL: not a websocket request, closing\n"));
+		closeClient();
+		return FALSE;
+	}
+
+	char reply[ 512 ];
+	sprintf( reply,
+					 "HTTP/1.1 101 Switching Protocols\r\n"
+					 "Upgrade: websocket\r\n"
+					 "Connection: Upgrade\r\n"
+					 "Sec-WebSocket-Accept: %s\r\n\r\n",
+					 acceptKey );
+	send( theClientSocket, reply, (Int)strlen( reply ), CONTROL_SEND_FLAGS );
+
+	const Int consumed = (Int)(end - request) + 4;
+	theIncoming.erase( theIncoming.begin(), theIncoming.begin() + consumed );
+	theHandshakeDone = TRUE;
+	DEBUG_LOG(("CONTROL: client connected\n"));
+	return TRUE;
+}
+
+// ------------------------------------------------------------------------------------------------
+// commands
+// ------------------------------------------------------------------------------------------------
+
+static void replyOk( const char *extra )
+{
+	char reply[ 1024 ];
+	if (extra && *extra)
+		sprintf( reply, "{\"ok\":true,%s}", extra );
+	else
+		sprintf( reply, "{\"ok\":true}" );
+	sendText( reply );
+}
+
+static void replyError( const char *why )
+{
+	char reply[ 512 ];
+	sprintf( reply, "{\"ok\":false,\"error\":\"%s\"}", why );
+	sendText( reply );
+}
+
+/** Share of the map, in percent, the player can see right now, from a grid of samples.  Fogged
+	ground, seen once and not watched any more, does not count; a skirmish starts with the whole map
+	fogged rather than black. */
+static Int revealedPercent( const Player *player )
+{
+	Region3D extent;
+	TheTerrainLogic->getExtent( &extent );
+
+	Int seen = 0;
+	for( Int row = 0; row < STATUS_SHROUD_SAMPLES_PER_SIDE; ++row )
+	{
+		for( Int column = 0; column < STATUS_SHROUD_SAMPLES_PER_SIDE; ++column )
+		{
+			Coord3D sample;
+			sample.x = extent.lo.x + extent.width() * (column + 0.5f) / STATUS_SHROUD_SAMPLES_PER_SIDE;
+			sample.y = extent.lo.y + extent.height() * (row + 0.5f) / STATUS_SHROUD_SAMPLES_PER_SIDE;
+			sample.z = 0.0f;
+			if (ThePartitionManager->getShroudStatusForPlayer( player->getPlayerIndex(), &sample ) == CELLSHROUD_CLEAR)
+				++seen;
+		}
+	}
+	return seen * 100 / (STATUS_SHROUD_SAMPLES_PER_SIDE * STATUS_SHROUD_SAMPLES_PER_SIDE);
+}
+
+/** frame number, whether a match is running, and what each player owns, with enough of each
+	player's state that every console cheat can be seen to have landed: tools/cheat_check.py. */
+/* A network match a lobby started, LAN or online.  This machine plays one seat of it, so a world command
+	 would split the match, and the census, tally and spectator views would read through the fog: any
+	 player can pass -control.  A -netgame match is the harnesses' own, and so is a match on an online
+	 server started for a test (OnlineIsTestServer), where online_check.py forces its desync. */
+static Bool isGuardedMatch( void )
+{
+	return TheGameLogic && TheGameLogic->isInMultiplayerGame() && !TheGlobalData->m_netGameStarted && !OnlineIsTestServer();
+}
+
+static void replyStatus( void )
+{
+	const Bool inGame = TheGameLogic && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame();
+	const Bool ownSeatOnly = isGuardedMatch();
+
+	std::vector<char> reply;
+	char piece[ 512 ];
+
+	// which front-end screen is up, so a script driving the menus can tell where its clicks landed
+	WindowLayout *screen = TheShell ? TheShell->top() : NULL;
+	WindowLayout *options = TheShell ? TheShell->getOptionsLayout( FALSE ) : NULL;
+	sprintf( piece, "{\"ok\":true,\"frame\":%d,\"inGame\":%s,\"screen\":\"%s\",\"options\":%s,\"players\":[",
+					 TheGameLogic ? (Int)TheGameLogic->getFrame() : 0,
+					 inGame ? "true" : "false",
+					 screen ? screen->getFilename().str() : "",
+					 options && !options->isHidden() ? "true" : "false" );
+	for( const char *at = piece; *at; ++at )
+		reply.push_back( *at );
+
+	if (inGame && ThePlayerList)
+	{
+		Bool first = TRUE;
+		for( Int i = 0; i < ThePlayerList->getPlayerCount(); ++i )
+		{
+			Player *player = ThePlayerList->getNthPlayer( i );
+			if (player == NULL || (ownSeatOnly && player != ThePlayerList->getLocalPlayer()))
+				continue;
+
+			Int units = 0;
+			Int heroic = 0;
+			Int hurt = 0;
+			Int powersReady = 0;
+			for( Object *obj = TheGameLogic->getFirstObject(); obj; obj = obj->getNextObject() )
+			{
+				if (obj->getControllingPlayer() != player || obj->isEffectivelyDead())
+					continue;
+
+				++units;
+				if (obj->getVeterancyLevel() == LEVEL_HEROIC)
+					++heroic;
+				const BodyModuleInterface *body = obj->getBodyModule();
+				if (body && body->getHealth() < body->getMaxHealth())
+					++hurt;
+				for( BehaviorModule **module = obj->getBehaviorModules(); *module; ++module )
+				{
+					SpecialPowerModuleInterface *power = (*module)->getSpecialPower();
+					if (power && power->isReady())
+						++powersReady;
+				}
+			}
+
+			UnsignedInt cheats = 0;
+			for( Int kind = 0; kind < CHEAT_KIND_COUNT; ++kind )
+			{
+				if (player->hasCheat( (CheatKind)kind ))
+					cheats |= 1 << kind;
+			}
+
+			sprintf( piece, "%s{\"index\":%d,\"slot\":%d,\"money\":%u,\"units\":%d,\"points\":%d,\"rank\":%d,"
+							 "\"cheats\":%u,\"powered\":%s,\"heroic\":%d,\"hurt\":%d,\"powersReady\":%d,\"revealed\":%d}",
+							 first ? "" : ",", i, ThePlayerList->getSlotIndex( i ),
+							 player->getMoney()->countMoney(), units, player->getSciencePurchasePoints(),
+							 player->getRankLevel(), cheats,
+							 player->getEnergy()->hasSufficientPower() ? "true" : "false",
+							 heroic, hurt, powersReady, revealedPercent( player ) );
+			for( const char *at = piece; *at; ++at )
+				reply.push_back( *at );
+			first = FALSE;
+		}
+	}
+
+	reply.push_back( ']' );
+	reply.push_back( '}' );
+	reply.push_back( 0 );
+	sendText( &reply[ 0 ] );
+}
+
+/** Everything that changes the world is queued; see the header for why. */
+static void handleCommand( const AsciiString &command )
+{
+	if (command.isEmpty())
+		return;
+
+	if (command == "ping")
+	{
+		replyOk( "\"pong\":true" );
+		return;
+	}
+
+	if (command == "status")
+	{
+		replyStatus();
+		return;
+	}
+
+	if (command == "screenshot")
+	{
+		if (TheDisplay == NULL)
+		{
+			replyError( "no display" );
+			return;
+		}
+		TheDisplay->takeScreenShot();
+		replyOk( "\"screenshot\":\"requested\"" );
+		return;
+	}
+
+	if (command == "quit")
+	{
+		// a driven run never reaches the unattended report: net_check reads the census from here
+		LogicThread::report();
+		theQuitRequested = TRUE;
+		replyOk( "\"quitting\":true" );
+		return;
+	}
+
+	/* press, select and uitext reach a shell window by its layout name (MainMenu.wnd:ButtonOnline), so a
+		 script walks the menus without knowing where anything is on the screen.  press sends what a mouse
+		 up on a push button sends its owner, select picks a list box row, uitext reads what a window shows. */
+	if (strncmp( command.str(), "press ", 6 ) == 0 || strncmp( command.str(), "select ", 7 ) == 0 || strncmp( command.str(), "uitext ", 7 ) == 0)
+	{
+		const Bool isPress = command.str()[ 0 ] == 'p';
+		const Bool isSelect = command.str()[ 0 ] == 's';
+		AsciiString name( command.str() + (isPress ? 6 : 7) );
+		Int row = 0;
+		if (isSelect)
+		{
+			const char *space = strrchr( name.str(), ' ' );
+			if (space == NULL)
+			{
+				replyError( "select wants a window name and a row" );
+				return;
+			}
+			row = atoi( space + 1 );
+			AsciiString nameOnly;
+			nameOnly.format( "%.*s", (Int)(space - name.str()), name.str() );
+			name = nameOnly;
+		}
+		name.trim();
+
+		const NameKeyType key = TheNameKeyGenerator->nameToKey( name );
+		GameWindow *window = TheWindowManager->winGetWindowFromId( NULL, key );
+		if (window == NULL)
+		{
+			replyError( "no such window" );
+			return;
+		}
+
+		if (isPress)
+		{
+			TheWindowManager->winSendSystemMsg( window->winGetOwner(), GBM_SELECTED, (WindowMsgData)window, key );
+			replyOk( "\"pressed\":true" );
+		}
+		else if (isSelect)
+		{
+			GadgetListBoxSetSelected( window, row );
+			replyOk( "\"selected\":true" );
+		}
+		else
+		{
+			AsciiString text;
+			text.translate( window->winGetText() );
+			AsciiString field;
+			field.format( "\"text\":\"%s\"", text.str() );
+			replyOk( field.str() );
+		}
+		return;
+	}
+
+	/* save <name>: the save menu's Save, into <name>.sav in the save directory, so a script can make
+		 the file -loadsave opens.  Letters, digits, - and _ only, since it becomes a path. */
+	if (strncmp( command.str(), "save ", 5 ) == 0)
+	{
+		AsciiString name( command.str() + 5 );
+		name.trim();
+		if (name.isEmpty() || strspn( name.str(), "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" ) != (size_t)name.getLength())
+		{
+			replyError( "save wants a name of letters, digits, - and _" );
+			return;
+		}
+		if (TheGameLogic == NULL || !TheGameLogic->isInGame() || TheGameLogic->isInShellGame())
+		{
+			replyError( "save needs a match in progress" );
+			return;
+		}
+		AsciiString filename;
+		filename.format( "%s.sav", name.str() );
+		UnicodeString description;
+		description.translate( name );
+		if (TheGameState->saveGame( filename, description, SAVE_FILE_TYPE_NORMAL ) != SC_OK)
+		{
+			replyError( "the game could not write the save" );
+			return;
+		}
+		replyOk( "\"saved\":true" );
+		return;
+	}
+
+	/* quitmenu surrender|exit: open the in-match quit menu, press its Surrender or Exit and answer Yes in
+		 the confirmation box, each through the window's own callback, so QuitMenu.cpp's surrenderQuitMenu or
+		 exitQuitMenu runs as it does for a player's clicks.  Surrender keeps the player in the match, defeated,
+		 which "leave" never did; online_check.py's case 2 needs exactly that. */
+	if (strncmp( command.str(), "quitmenu ", 9 ) == 0)
+	{
+		AsciiString which( command.str() + 9 );
+		which.trim();
+		const char *button = which == "surrender" ? "ButtonRestart" : (which == "exit" ? "ButtonExit" : NULL);
+		if (button == NULL)
+		{
+			replyError( "quitmenu wants surrender or exit" );
+			return;
+		}
+		if (TheGameLogic == NULL || !TheGameLogic->isInGame() || TheGameLogic->isInShellGame() || TheInGameUI == NULL)
+		{
+			replyError( "quitmenu needs a match in progress" );
+			return;
+		}
+		if (!TheInGameUI->isQuitMenuVisible())
+			ToggleQuitMenu();
+		GameWindow *pressed = NULL;
+		const char *const layouts[] = { "QuitNoSave.wnd", "QuitMenu.wnd" };
+		for (Int i = 0; i < 2 && (pressed == NULL || pressed->winIsHidden()); ++i)
+		{
+			AsciiString name;
+			name.format( "%s:%s", layouts[ i ], button );
+			pressed = TheWindowManager->winGetWindowFromId( NULL, NAMEKEY( name ) );
+		}
+		if (pressed == NULL || pressed->winIsHidden() || !pressed->winGetEnabled())
+		{
+			replyError( "the quit menu's button is not there or not live" );
+			return;
+		}
+		TheWindowManager->winSendSystemMsg( pressed->winGetOwner(), GBM_SELECTED, (WindowMsgData)pressed, pressed->winGetWindowId() );
+		GameWindow *yes = TheWindowManager->winGetWindowFromId( NULL, NAMEKEY( "QuitMessageBox.wnd:ButtonYes" ) );
+		if (yes == NULL)
+			yes = TheWindowManager->winGetWindowFromId( NULL, NAMEKEY( "MessageBox.wnd:ButtonYes" ) );
+		if (yes == NULL)
+		{
+			replyError( "no confirmation box came up" );
+			return;
+		}
+		TheWindowManager->winSendSystemMsg( yes->winGetOwner(), GBM_SELECTED, (WindowMsgData)yes, yes->winGetWindowId() );
+		DEBUG_LOG(( "CONTROL: quit menu %s, confirmed\n", which.str() ));
+		replyOk( "\"confirmed\":true" );
+		return;
+	}
+
+	/* The quit menu's Exit, which in a network game is the other half of "quit": the process goes
+		 on, the player surrenders and the match is left through the network, so everybody else sees
+		 a player leave on an agreed frame rather than a connection drop. exitQuitMenu in QuitMenu.cpp
+		 posts the same two messages. */
+	if (command == "leave")
+	{
+		if (TheGameLogic == NULL || !TheGameLogic->isInGame() || TheGameLogic->isInShellGame())
+		{
+			replyError( "leave needs a match in progress" );
+			return;
+		}
+		if (TheGameLogic->isInMultiplayerGame() && !TheGameLogic->isInSkirmishGame())
+		{
+			GameMessage *surrender = TheMessageStream->appendMessage( GameMessage::MSG_SELF_DESTRUCT );
+			surrender->appendBooleanArgument( TRUE );
+		}
+		TheMessageStream->appendMessage( GameMessage::MSG_CLEAR_GAME_DATA );
+		replyOk( "\"leaving\":true" );
+		return;
+	}
+
+	/* key <KEY_name> [ALT] [CTRL] [SHIFT] [HOLD | RELEASE]
+		 One press and release, carried the way Keyboard.cpp carries a real one, so the command map, the
+		 translators and whatever network message sits behind them all see a key.  The keyboard itself
+		 is DirectInput and reads only the foreground window, which a script cannot count on holding.
+		 The mouse stays where it is: post the window a WM_MOUSEMOVE first when the key reads it.
+		 HOLD sends only the press and RELEASE only the release, for what stays up while a key is held. */
+	if (strncmp( command.str(), "key ", 4 ) == 0)
+	{
+		char words[ 256 ];
+		strncpy( words, command.str() + 4, sizeof( words ) - 1 );
+		words[ sizeof( words ) - 1 ] = 0;
+
+		Int key = KEY_NONE;
+		const char *keyName = strtok( words, " " );
+		for( const LookupListRec *name = KeyNames; keyName && name->name; ++name )
+		{
+			if (strcmp( name->name, keyName ) == 0)
+				key = name->value;
+		}
+		if (key == KEY_NONE)
+		{
+			replyError( "key wants a KEY_ name from CommandMap.ini, e.g. key KEY_Z ALT" );
+			return;
+		}
+
+		Int modifiers = KEY_STATE_NONE;
+		Bool down = TRUE;
+		Bool up = TRUE;
+		for( const char *word = strtok( NULL, " " ); word; word = strtok( NULL, " " ) )
+		{
+			if (strcmp( word, "ALT" ) == 0)
+				modifiers |= KEY_STATE_LALT;
+			else if (strcmp( word, "CTRL" ) == 0)
+				modifiers |= KEY_STATE_LCONTROL;
+			else if (strcmp( word, "SHIFT" ) == 0)
+				modifiers |= KEY_STATE_LSHIFT;
+			else if (strcmp( word, "HOLD" ) == 0)
+				up = FALSE;
+			else if (strcmp( word, "RELEASE" ) == 0)
+				down = FALSE;
+			else
+			{
+				replyError( "a modifier is ALT, CTRL or SHIFT, and HOLD or RELEASE sends half the press" );
+				return;
+			}
+		}
+
+		if (down)
+		{
+			GameMessage *press = TheMessageStream->appendMessage( GameMessage::MSG_RAW_KEY_DOWN );
+			press->appendIntegerArgument( key );
+			press->appendIntegerArgument( KEY_STATE_DOWN | modifiers );
+		}
+		if (up)
+		{
+			GameMessage *release = TheMessageStream->appendMessage( GameMessage::MSG_RAW_KEY_UP );
+			release->appendIntegerArgument( key );
+			release->appendIntegerArgument( KEY_STATE_UP | modifiers );
+		}
+		replyOk( "\"pressed\":true" );
+		return;
+	}
+
+	/* click <x> <y>
+		 A left press and release at that screen pixel, carried the way Mouse.cpp carries a real one,
+		 for what lies over the world and reads the click's own position, the cheat panel among them.
+		 The cursor itself does not move. */
+	if (strncmp( command.str(), "click ", 6 ) == 0)
+	{
+		ICoord2D pixel;
+		if (sscanf( command.str() + 6, "%d %d", &pixel.x, &pixel.y ) != 2)
+		{
+			replyError( "click wants two screen pixels, x then y" );
+			return;
+		}
+		const GameMessage::Type halves[] = { GameMessage::MSG_RAW_MOUSE_LEFT_BUTTON_DOWN, GameMessage::MSG_RAW_MOUSE_LEFT_BUTTON_UP };
+		for (Int half = 0; half < 2; ++half)
+		{
+			GameMessage *msg = TheMessageStream->appendMessage( halves[ half ] );
+			msg->appendPixelArgument( pixel );
+			msg->appendIntegerArgument( KEY_STATE_NONE );
+			msg->appendIntegerArgument( 0 );
+		}
+		replyOk( "\"clicked\":true" );
+		return;
+	}
+
+	/* spectator <action>
+		 One of the spectator's actions by name: camera:director, follow:3, fog, flip:camera and the
+		 rest that InGameUI::runSpectatorAction knows. */
+	if (strncmp( command.str(), "spectator ", 10 ) == 0)
+	{
+		const Player *local = ThePlayerList ? ThePlayerList->getLocalPlayer() : NULL;
+		if (isGuardedMatch() && (local == NULL || !local->isPlayerObserver()))
+		{
+			replyError( "a player in a network match cannot use the spectator's views" );
+			return;
+		}
+		TheInGameUI->runSpectatorAction( command.str() + 10 );
+		replyOk( "\"done\":true" );
+		return;
+	}
+
+	/* skirmish <players> <seed> <map>
+		 The map is whatever is left on the line, spaces and all, because every shipped map has a
+		 space in its name and quoting rules would be one more thing to get wrong at the far end. */
+	if (strncmp( command.str(), "skirmish ", 9 ) == 0)
+	{
+		if (TheGameLogic && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame())
+		{
+			replyError( "a match is already running; quit it first" );
+			return;
+		}
+
+		Int players = 0;
+		Int seed = 0;
+		char mapName[ 512 ];
+		if (sscanf( command.str(), "skirmish %d %d %511[^\n]", &players, &seed, mapName ) != 3)
+		{
+			replyError( "skirmish wants <players> <seed> <map>" );
+			return;
+		}
+		if (players < 2 || players > MAX_SLOTS)
+		{
+			replyError( "a skirmish holds between two and eight players" );
+			return;
+		}
+
+		/* m_autoSkirmishPlayers is deliberately left alone: it is also what marks a run unattended,
+			 and a match somebody is driving from here has to stay up when it ends rather than write
+			 its numbers out and quit. */
+		TheWritableGlobalData->m_mapName.set( mapName );
+		TheWritableGlobalData->m_fixedSeed = seed;
+
+		extern void GameEngine_startSkirmish( Int numPlayers );
+		GameEngine_startSkirmish( players );
+		replyOk( "\"starting\":true" );
+		return;
+	}
+
+	/* Anything else is a world command, and world commands are the scenario grammar with the frame
+		 number left off - so put one back on and hand it to the same parser the files go through. One
+		 grammar, two front ends, and a line that works in a file works down the socket. */
+	AsciiString asScenarioLine;
+	asScenarioLine.set( "0 " );
+	asScenarioLine.concat( command );
+
+	ScenarioAction action;
+	const ScenarioParseResult result = ScenarioDrill_parseLine( asScenarioLine.str(), &action );
+	if (result != SCENARIO_PARSE_OK)
+	{
+		replyError( ScenarioDrill_parseResultName( result ) );
+		return;
+	}
+
+	if (!TheGameLogic || !TheGameLogic->isInGame() || TheGameLogic->isInShellGame())
+	{
+		replyError( "no match is running" );
+		return;
+	}
+
+	/* A world command changes this machine's simulation and nobody else's, and tally reads through the
+		 fog.  A network match the lobby started would split on it (isGuardedMatch), and a replay would stop
+		 matching its recording; a -netgame match is allowed, on the same terms -scenario is
+		 (GameLogic::startNewGame), and so is a match on an online test server, where a split ends the match
+		 unrated, which is what online_check.py proves. */
+	if (isGuardedMatch() || TheGameLogic->isInReplayGame())
+	{
+		replyError( "world commands only run in a skirmish, a -netgame match or on an online test server" );
+		return;
+	}
+
+	if ((Int)thePendingCommands.size() >= CONTROL_MAX_COMMANDS_PER_FRAME)
+	{
+		replyError( "too many commands queued for one frame" );
+		return;
+	}
+
+	thePendingCommands.push_back( command );
+	replyOk( "\"queued\":true" );
+}
+
+// ------------------------------------------------------------------------------------------------
+// the two ticks
+// ------------------------------------------------------------------------------------------------
+
+void ControlServer_poll( void )
+{
+	if (TheGlobalData == NULL || TheGlobalData->m_controlPort <= 0)
+		return;
+
+	if (theListenSocket == INVALID_SOCKET)
+	{
+		if (!openListenSocket( TheGlobalData->m_controlPort ))
+		{
+			// stop trying: a port that will not bind now will not bind on the next frame either
+			TheWritableGlobalData->m_controlPort = 0;
+			return;
+		}
+	}
+
+	if (theClientSocket == INVALID_SOCKET)
+	{
+		const SOCKET accepted = accept( theListenSocket, NULL, NULL );
+		if (accepted == INVALID_SOCKET)
+			return;
+		theClientSocket = accepted;
+		setNonBlocking( theClientSocket );
+#if defined(SO_NOSIGPIPE)
+		const int noSigPipe = 1;			// see CONTROL_SEND_FLAGS
+		setsockopt( theClientSocket, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof( noSigPipe ) );
+#endif
+		theHandshakeDone = FALSE;
+		theIncoming.clear();
+	}
+
+	char chunk[ CONTROL_READ_CHUNK ];
+	for( ;; )
+	{
+		const Int received = recv( theClientSocket, chunk, sizeof( chunk ), 0 );
+		if (received > 0)
+		{
+			for( Int i = 0; i < received; ++i )
+				theIncoming.push_back( chunk[ i ] );
+			if ((Int)theIncoming.size() > CONTROL_MAX_REQUEST)
+			{
+				DEBUG_LOG(("CONTROL: client sent more than %d bytes without a frame, closing\n",
+									 CONTROL_MAX_REQUEST));
+				closeClient();
+				return;
+			}
+			continue;
+		}
+
+		if (received == 0)
+		{
+			DEBUG_LOG(("CONTROL: client went away\n"));
+			closeClient();
+			return;
+		}
+
+#if !defined(_WIN32)
+		// A signal interrupting recv() is not the client; Windows has no counterpart to retry for.
+		if (errno == EINTR)
+			continue;
+		if (errno != EAGAIN && errno != EWOULDBLOCK)
+#else
+		if (WSAGetLastError() != WSAEWOULDBLOCK)
+#endif
+		{
+			closeClient();
+			return;
+		}
+		break;
+	}
+
+	if (!theHandshakeDone)
+	{
+		if (theIncoming.empty() || !tryHandshake())
+			return;
+	}
+
+	unsigned char opcode = 0;
+	AsciiString payload;
+	while (theClientSocket != INVALID_SOCKET && takeFrame( &opcode, &payload ))
+	{
+		if (opcode == WS_OPCODE_CLOSE)
+		{
+			closeClient();
+			return;
+		}
+		if (opcode == WS_OPCODE_PING)
+		{
+			sendFrame( WS_OPCODE_PONG, payload.str(), (Int)strlen( payload.str() ) );
+			continue;
+		}
+		if (opcode != WS_OPCODE_TEXT)
+			continue;
+
+		handleCommand( payload );
+	}
+}
+
+void ControlServer_runCommands( void )
+{
+	if (theQuitRequested && TheGameEngine)
+		TheGameEngine->setQuitting( TRUE );
+
+	for( std::vector<AsciiString>::iterator it = thePendingCommands.begin();
+			 it != thePendingCommands.end(); ++it )
+	{
+		AsciiString asScenarioLine;
+		asScenarioLine.set( "0 " );
+		asScenarioLine.concat( *it );
+
+		ScenarioAction action;
+		if (ScenarioDrill_parseLine( asScenarioLine.str(), &action ) != SCENARIO_PARSE_OK)
+			continue;
+
+		ScenarioDrill_execute( action );
+	}
+
+	thePendingCommands.clear();
+}
+
+void ControlServer_shutdown( void )
+{
+	closeClient();
+
+	if (theListenSocket != INVALID_SOCKET)
+	{
+		closesocket( theListenSocket );
+		theListenSocket = INVALID_SOCKET;
+	}
+
+#if defined(_WIN32)
+	if (theWinsockStarted)
+	{
+		WSACleanup();
+		theWinsockStarted = FALSE;
+	}
+#endif
+}

@@ -1,0 +1,52 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2026 by İlyas Akın for the macOS/Linux port; see NOTICE.md and the git history.
+
+////////////////////////////////////////////////////////////////////////////////
+//																																						//
+//  (c) 2001-2003 Electronic Arts Inc.																				//
+//																																						//
+////////////////////////////////////////////////////////////////////////////////
+
+// EA Pacific
+// John McDonald, Jr
+// Do not distribute
+#pragma once
+
+#ifndef _AUDIOAFFECT_H_
+#define _AUDIOAFFECT_H_
+
+// if it is set by the options panel, use the system setting parameter. Otherwise, this will be 
+// appended to whatever the current system volume is.
+enum AudioAffect : int
+{
+	AudioAffect_Music		= 0x01,
+	AudioAffect_Sound		= 0x02,
+	AudioAffect_Sound3D	= 0x04,
+	AudioAffect_Speech	= 0x08,
+	AudioAffect_Ambient	= 0x20,		///< looping world ambience (AudioManager::isAmbientSound); system setting only
+	AudioAffect_All			= (AudioAffect_Music | AudioAffect_Sound | AudioAffect_Sound3D | AudioAffect_Speech | AudioAffect_Ambient),
+
+	AudioAffect_SystemSetting = 0x10,
+
+	/// the Master slider, a factor on every other volume; system setting only, and outside All, so
+	/// losing focus mutes through the others and leaves it where the player put it
+	AudioAffect_Master	= 0x40,
+};
+
+#endif // _AUDIOAFFECT_H_

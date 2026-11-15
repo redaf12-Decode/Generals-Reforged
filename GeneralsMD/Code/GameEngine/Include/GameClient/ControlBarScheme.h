@@ -1,0 +1,415 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2025 Electronic Arts Inc.
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// Modified 2025-2026 by Olcay Seygan for Zero Hour Reforged; see the git history.
+// Modified 2026 by İlyas Akın for the macOS/Linux port; see NOTICE.md and the git history.
+
+////////////////////////////////////////////////////////////////////////////////
+//																																						//
+//  (c) 2001-2003 Electronic Arts Inc.																				//
+//																																						//
+////////////////////////////////////////////////////////////////////////////////
+
+// FILE: ControlBarScheme.h /////////////////////////////////////////////////
+//-----------------------------------------------------------------------------
+//                                                                          
+//                       Electronic Arts Pacific.                          
+//                                                                          
+//                       Confidential Information                           
+//                Copyright (C) 2002 - All Rights Reserved                  
+//                                                                          
+//-----------------------------------------------------------------------------
+//
+//	created:	Apr 2002
+//
+//	Filename: 	ControlBarScheme.h
+//
+//	author:		Chris Huybregts
+//	
+//	purpose:	
+//
+//-----------------------------------------------------------------------------
+///////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#ifndef __CONTROL_BAR_SCHEME_H_
+#define __CONTROL_BAR_SCHEME_H_
+
+//-----------------------------------------------------------------------------
+// USER INCLUDES //////////////////////////////////////////////////////////////
+//-----------------------------------------------------------------------------
+#include "GameClient/Color.h"
+
+//-----------------------------------------------------------------------------
+// FORWARD REFERENCES /////////////////////////////////////////////////////////
+//-----------------------------------------------------------------------------
+class AsciiString;
+class PlayerTemplate;
+class Image;
+enum TimeOfDay : Int;
+
+//-----------------------------------------------------------------------------
+// TYPE DEFINES ///////////////////////////////////////////////////////////////
+//-----------------------------------------------------------------------------
+#define MAX_CONTROL_BAR_SCHEME_IMAGE_LAYERS 6
+#define CONTROL_BAR_SCHEME_FOREGROUND_IMAGE_LAYERS 3
+
+// Class that holds the images the control bar will draw
+//-----------------------------------------------------------------------------
+class ControlBarSchemeImage
+{
+public:
+	ControlBarSchemeImage( void );
+	~ControlBarSchemeImage( void );
+
+	AsciiString m_name;						///< Name of the image
+	ICoord2D m_position;					///< the position we'll draw it at
+	ICoord2D m_size;							///< the size of the image needed when we draw it
+	Image *m_image;								///< the actual pointer to the mapped image
+
+	// m_layer is where the image will get drawn,  everything in layer 0-2 gets drawn during the forground draw
+	// the layers 3-5 gets drawn during the background draw
+	Int m_layer; //layer means how deep the image will be drawn, it's a number between 0-5 with 0 being on top 	
+};
+
+// Class that will hold the information needed for the animations
+//-----------------------------------------------------------------------------
+class ControlBarSchemeAnimation
+{
+public:
+	ControlBarSchemeAnimation( void );
+	~ControlBarSchemeAnimation( void );
+	/// Enum that will contain all the kinds of animations we have... make sure in ControlBarScheme.cpp there's a
+	/// mapping for it for the INI translation
+	enum
+	{
+		CB_ANIM_SLIDE_RIGHT = 0,
+
+		CB_ANIM_MAX
+	};
+
+	AsciiString m_name;										///< Current animation name
+	Int m_animType;												///< Type of animation that this will follow
+	ControlBarSchemeImage *m_animImage;		///< Pointer of the image that this animation will act on
+	UnsignedInt m_animDuration;						///< Contians how long the animation should take based off game frames
+	ICoord2D m_finalPos;									///< The final position when we hit the m_animDuration frame
+
+	UnsignedInt getCurrentFrame(void) { return m_currentFrame; }
+	void setCurrentFrame( UnsignedInt currentFrame ) { m_currentFrame = currentFrame; }
+	ICoord2D getStartPos( void ) { return m_startPos; }
+	void setStartPos(ICoord2D startPos) { m_startPos = startPos;	}
+private:
+	ICoord2D m_startPos;									///< set when we first begin an animation
+	UnsignedInt m_currentFrame;							///< This is the last frame (a value between 0 and m_animDuration)
+};
+
+
+/// The tooltips' art one TooltipImage prefix names (Tools/hud_command_bar.py, TIP_*): <prefix>Tip<piece> the
+/// build card's nine (ControlBarPopupDescription.wnd), <prefix>CursorTip<piece> the pointer's nine
+/// (Mouse::drawTooltip), <prefix>TipIcon<Kind> the card's figures, <prefix>TabPanel the Tab screen's painting
+/// (Diplomacy.cpp).  NULL where the art has none.
+//-----------------------------------------------------------------------------
+struct ControlBarTooltipImages
+{
+	enum { ICON_MONEY, ICON_TIME, ICON_HEALTH, ICON_ARMOR, ICON_DAMAGE, ICON_RATE, ICON_RANGE, ICON_SPEED, ICON_POWER, ICON_COUNT };
+	const Image *card[ 9 ];					///< in ControlBarScheme::FRAME_* order
+	const Image *head[ 3 ];					///< <prefix>TipHead{TL,T,TR}: the card's top row without the figures' well, for a card with no figures
+	const Image *cursor[ 9 ];
+	const Image *icon[ ICON_COUNT ];
+	const Image *tabPanel;
+
+	void find( const AsciiString& prefix );		///< every one NULL for an empty prefix
+};
+
+// Class that each scheme will have.  Contains all information about that scheme
+//-----------------------------------------------------------------------------
+class ControlBarScheme
+{
+public:
+	ControlBarScheme( void );
+	~ControlBarScheme( void );
+
+	void validate( void ) const;
+	void init( void );
+	void update( void );
+	void drawForeground( Coord2D multi, ICoord2D offset );	///< draw function to be called within a w3d draw procedure for the foreground 
+	void drawBackground( Coord2D multi, ICoord2D offset );	///< draw function to be called within a w3d draw procedure for the background
+	void reset( void );
+
+	void addAnimation( ControlBarSchemeAnimation *schemeAnim );
+	void addImage( ControlBarSchemeImage *schemeImage);
+	void updateAnim (ControlBarSchemeAnimation * anim);
+
+
+	AsciiString m_name;												///< it's name
+	ICoord2D m_ScreenCreationRes;							///< Used to determine what screen res this will look the best on
+	AsciiString m_side;												///< contain what faction type this command bar was made for (used when selecting command bar by template
+	Bool m_controlBarPro;											///< read from ControlBarProReforged.ini, the bar every side wears
+	Image *m_buttonQueueImage;								///< We'll probably want each one to have it's own image.
+	Image *m_rightHUDImage;										///< We'll probably want each one to have it's own right HUD image.
+	Color m_buildUpClockColor;								///< we can setup the color for the buildup clock if we want
+	
+	Color m_borderBuildColor;									///< we can setup the color for the button border colors
+	Color m_borderActionColor;								///< we can setup the color for the button border colors
+	Color m_borderUpgradeColor;								///< we can setup the color for the button border colors
+	Color m_borderSystemColor;								///< we can setup the color for the button border colors
+
+	Color m_commandBarBorderColor;
+
+	Image *m_optionsButtonEnable;
+	Image *m_optionsButtonHightlited;
+	Image *m_optionsButtonPushed;
+	Image *m_optionsButtonDisabled;
+
+	Image *m_idleWorkerButtonEnable;
+	Image *m_idleWorkerButtonHightlited;
+	Image *m_idleWorkerButtonPushed;
+	Image *m_idleWorkerButtonDisabled;
+
+	Image *m_buddyButtonEnable;
+	Image *m_buddyButtonHightlited;
+	Image *m_buddyButtonPushed;
+	Image *m_buddyButtonDisabled;
+
+	Image *m_beaconButtonEnable;
+	Image *m_beaconButtonHightlited;
+	Image *m_beaconButtonPushed;
+	Image *m_beaconButtonDisabled;
+
+	Image *m_genBarButtonIn;
+	Image *m_genBarButtonOn;
+
+	Image *m_toggleButtonUpIn;
+	Image *m_toggleButtonUpOn;
+	Image *m_toggleButtonUpPushed;
+	Image *m_toggleButtonDownIn;
+	Image *m_toggleButtonDownOn;
+	Image *m_toggleButtonDownPushed;
+
+	Image *m_generalButtonEnable;
+	Image *m_generalButtonHightlited;
+	Image *m_generalButtonPushed;
+	Image *m_generalButtonDisabled;
+
+	Image *m_uAttackButtonEnable;
+	Image *m_uAttackButtonHightlited;
+	Image *m_uAttackButtonPushed;
+
+	Image *m_minMaxButtonEnable;
+	Image *m_minMaxButtonHightlited;
+	Image *m_minMaxButtonPushed;
+
+	Image *m_genArrow;
+
+
+	ICoord2D m_moneyUL;
+	ICoord2D m_moneyLR;
+	/// MoneyFontSize: the money readout in bold at that many of the .wnd's points (0 keeps the .wnd's
+	/// Arial 8); MoneyThousands: the amount written with a comma every three digits; MoneySignPainted:
+	/// the painting carries the currency sign, so the readout drops its own and stands left-aligned
+	Int m_moneyFontSize;
+	Bool m_moneyThousands;
+	Bool m_moneySignPainted;
+
+	/// RadarUL/LR: where LeftHUD, the radar, stands; a scheme without them leaves it where it is
+	ICoord2D m_radarUL;
+	ICoord2D m_radarLR;
+
+	ICoord2D m_minMaxUL;
+	ICoord2D m_minMaxLR;
+
+	ICoord2D m_generalUL;
+	ICoord2D m_generalLR;
+
+	ICoord2D m_uAttackUL;
+	ICoord2D m_uAttackLR;
+
+	ICoord2D m_optionsUL;
+	ICoord2D m_optionsLR;
+
+	ICoord2D m_workerUL;
+	ICoord2D m_workerLR;
+
+	ICoord2D m_chatUL;
+	ICoord2D m_chatLR;
+
+	ICoord2D m_beaconUL;
+	ICoord2D m_beaconLR;
+
+	ICoord2D m_powerBarUL;
+	ICoord2D m_powerBarLR;
+
+	/// where the bar's input blockers stand when the scheme's painting is not ControlBar.wnd's
+	/// (Block<Name>UL/LR); a zero LR leaves the .wnd's rectangle.  ObserverInfo is the followed player's
+	/// panel's, a child of ObserverPlayerInfoWindow, so it shows, hides and moves with the panel
+	enum { BLOCK_RADAR, BLOCK_PRODUCTION, BLOCK_MONEY, BLOCK_UPGRADES, BLOCK_GEN_POWER, BLOCK_OBSERVER_INFO, BLOCK_COUNT };
+	ICoord2D m_blockUL[ BLOCK_COUNT ];
+	ICoord2D m_blockLR[ BLOCK_COUNT ];
+
+	/// the idle infantry, vehicle and aircraft buttons beside the command grid: Idle<Kind>ButtonImage
+	/// names the sheet piece, and its H, P and I copies are the other three states; Idle<Kind>UL/LR
+	/// where it stands.  A scheme without the rectangle leaves the button out.
+	enum { IDLE_INFANTRY, IDLE_VEHICLE, IDLE_AIRCRAFT, IDLE_COUNT };
+	AsciiString m_idleButtonImage[ IDLE_COUNT ];
+	ICoord2D m_idleUL[ IDLE_COUNT ];
+	ICoord2D m_idleLR[ IDLE_COUNT ];
+
+	/// RadarFrameImage: the nine pieces the radar's frame is drawn from round the map's own shape,
+	/// <name>TL, T, TR, L, C, R, BL, B, BR.  The corners' sizes are the frame's thickness on each side.
+	enum { FRAME_TL, FRAME_T, FRAME_TR, FRAME_L, FRAME_C, FRAME_R, FRAME_BL, FRAME_B, FRAME_BR, FRAME_PIECE_COUNT };
+	AsciiString m_radarFrameName;
+	const Image *m_radarFrame[ FRAME_PIECE_COUNT ];		///< resolved by init; all NULL without the key
+
+	/// PowerTrayImage: the general's powers tray's pieces, <name>Cell, EdgeTop, EdgeLeft, EdgeBottom,
+	/// CornerTopLeft, CornerBottomLeft, Step; see ControlBar::arrangeSpecialPowerShortcutGrid
+	enum { TRAY_CELL, TRAY_EDGE_TOP, TRAY_EDGE_LEFT, TRAY_EDGE_BOTTOM, TRAY_CORNER_TL, TRAY_CORNER_BL, TRAY_STEP, TRAY_PIECE_COUNT };
+	AsciiString m_powerTrayName;
+	const Image *m_powerTray[ TRAY_PIECE_COUNT ];			///< resolved by init; all NULL without the key
+
+	/// TooltipImage: the prefix of the tooltips' art; a scheme without it wears the console's, Helpbox
+	AsciiString m_tooltipName;
+	ControlBarTooltipImages m_tooltip;								///< resolved by init
+
+
+
+
+
+	Image *m_expBarForeground;
+
+	Image *m_commandMarkerImage;
+
+	Image *m_powerPurchaseImage;
+
+	/// PowerPurchaseCloseButton*: the promotion window's close button (GeneralsExpPoints.wnd:ButtonExit)
+	/// in the side's own art; a scheme without them leaves the .wnd's images on the button
+	Image *m_powerPurchaseCloseButtonEnable;
+	Image *m_powerPurchaseCloseButtonHightlited;
+	Image *m_powerPurchaseCloseButtonPushed;
+	Image *m_powerPurchaseCloseButtonDisabled;
+
+	typedef std::list< ControlBarSchemeImage* > ControlBarSchemeImageList;
+	ControlBarSchemeImageList m_layer[MAX_CONTROL_BAR_SCHEME_IMAGE_LAYERS];
+
+	typedef std::list< ControlBarSchemeAnimation* > ControlBarSchemeAnimationList;
+	ControlBarSchemeAnimationList m_animations;
+
+};
+
+
+class ControlBarSchemeManager
+{
+public:
+	ControlBarSchemeManager( void );
+	~ControlBarSchemeManager( void );
+
+	void init( void );						///< Initialize from the INI files
+	void update( void );					///< move the animations if we have any
+	void drawForeground( ICoord2D offset );	///< draw function to be called within a w3d draw procedure for the foreground 
+	void drawBackground( ICoord2D offset );	///< draw function to be called within a w3d draw procedure for the background
+
+	void setControlBarSchemeByPlayer(Player *p);																				///< Based off the playerTemplate, pick the right scheme for the control bar
+	void setControlBarSchemeByPlayerTemplate( const PlayerTemplate *pt, Bool useSmall = FALSE);
+	void setControlBarScheme(AsciiString schemeName);																										///< SchemeName must be a valid INI entry
+
+	/** The side whose bar is on screen right now - the artwork actually being drawn, not whoever the
+		* seat belongs to.  Empty when no scheme is up; "Observer" while watching from no seat at all,
+		* and the side with "Small" on the end for the shell's small bar. */
+	AsciiString getCurrentSide( void ) const
+	{ return m_currentScheme ? m_currentScheme->m_side : AsciiString::TheEmptyString; }
+
+	/** The side another scheme is dressed in, when the one on screen has no artwork of its own.  The
+		* observer bar is a side called "Observer" and every plate on it is American - EA built it out
+		* of that side's art - so the scheme wearing the same right hand plate names the side the bar
+		* is really showing.  Empty when nothing else shares it. */
+	AsciiString getCurrentArtTwinSide( void ) const;
+
+	/// the bar on screen wears its scheme's own painting, ControlBar Pro's
+	Bool isCurrentSchemePainted( void ) const;
+
+	/// the radar frame's nine pieces (ControlBarScheme::FRAME_*) of the scheme on screen, or NULL
+	/// when it names none or lacks the two corners that size it; the radar then keeps its square well
+	const Image *const *getRadarFrame( void ) const;
+	/// the frame round a radar standing at 'radar' on screen: the corners' sizes, at the screen's
+	/// height over 1080, are its thickness on each side
+	static void radarFrameRect( const Image *const *frame, const IRegion2D& radar, IRegion2D *outer );
+	/// the general's powers tray's pieces (ControlBarScheme::TRAY_*) of the scheme on screen, or NULL
+	/// without a cell; the tray then keeps the shipped column
+	const Image *const *getPowerTray( void ) const;
+	/// the scheme on screen writes the money with thousands separators (MoneyThousands)
+	Bool isMoneyGrouped( void ) const;
+	/// the scheme on screen paints the currency sign itself (MoneySignPainted)
+	Bool isMoneySignPainted( void ) const;
+	/// the top of the radar's art on screen when the scheme names its own radar blocker (BlockRadar),
+	/// which is the bounding box of the painting's radar box and its ledge; otherwise 'fallback'
+	Int radarArtTop( Int fallback ) const;
+	/// the tooltips' art of the scheme on screen, or the console's when it has no card of its own
+	const ControlBarTooltipImages& getTooltipImages( void ) const;
+	/// the console's tooltips (Helpbox), which the shell wears
+	const ControlBarTooltipImages& getConsoleTooltipImages( void ) const { return m_consoleTooltip; }
+	/// the Tab screen's painting of the scheme on screen, NULL when it names none (Classic keeps EA's screen)
+	const Image *getTabPanelImage( void ) const { return m_currentScheme ? m_currentScheme->m_tooltip.tabPanel : NULL; }
+	/// one of the Tab screen's buttons beside that painting, <TooltipImage>Tab<piece> ("SendH", "Mute"), NULL
+	/// under a scheme without the painting
+	const Image *getTabImage( const char *piece ) const;
+	/// the scheme's painting, cut at the panel seams and each piece drawn where its panel stands
+	void drawPainting( ICoord2D offset, Bool foreground );
+
+
+	// parse Functions for the INI file
+	const FieldParse *getFieldParse() const { return m_controlBarSchemeFieldParseTable; }								///< returns the parsing fields
+	static const FieldParse m_controlBarSchemeFieldParseTable[];																				///< the parse table
+	static void parseImagePart( INI* ini, void *instance, void *store, const void *userData );					///< Parse the image part of the INI file
+	static void parseAnimatingPart( INI* ini, void *instance, void *store, const void *userData );			///< Parse the animation part of the INI file
+	static void parseAnimatingPartImage( INI* ini, void *instance, void *store, const void *userData );	///< parse the image part of the animation part :) 
+	
+	ControlBarScheme *findControlBarScheme( AsciiString name ); ///< attempt to find the control bar scheme by it's name
+	ControlBarScheme *newControlBarScheme( AsciiString name );	///< create a new control bar scheme and return it.
+
+	void preloadAssets( TimeOfDay timeOfDay );									///< preload the assets
+
+private:
+	ControlBarScheme *findSchemeForSide( const AsciiString& side, Bool controlBarProOnly = FALSE ) const;	///< the widest of that side's schemes the screen can wear
+	ControlBarScheme *findSchemeForFaction( const AsciiString& side ) const;	///< the side's own ControlBar Pro scheme, else its country's, else America's
+
+	ControlBarScheme *m_currentScheme;													///< the current scheme that everythign uses
+	Bool m_loadingControlBarPro;														///< newControlBarScheme marks what it makes as ControlBar Pro's
+	ControlBarTooltipImages m_consoleTooltip;									///< Helpbox, resolved by init
+	Coord2D m_multiplyer;																	
+	
+	typedef std::list< ControlBarScheme* > ControlBarSchemeList;			///< list of control bar schemes
+	ControlBarSchemeList m_schemeList;
+
+};
+
+//-----------------------------------------------------------------------------
+// INLINING ///////////////////////////////////////////////////////////////////
+//-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+// EXTERNALS //////////////////////////////////////////////////////////////////
+//-----------------------------------------------------------------------------
+/// the side's emblem the observer's column and the rack show: SSObserver and the template's name less a
+/// leading "Faction" and a trailing "General" (SSObserverAmericaLaser), else SSObserver<USA|China|GLA|Turkiye>
+/// for the country its base side or side names, else its EnabledImage
+const Image *ControlBarSideEmblem( const PlayerTemplate *pt );
+/// nine pieces (ControlBarScheme::FRAME_* order) filling box: the corners at their size times scale (the
+/// art's texels are 1080 pixels), the edges and the centre stretched between them.  FALSE, and nothing
+/// drawn, when the art lacks the two corners that size it
+Bool ControlBarDrawNinePieceBox( const Image *const *pieces, const IRegion2D& box, Real scale );
+
+#endif // __CONTROL_BAR_SCHEME_H_

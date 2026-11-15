@@ -1,0 +1,70 @@
+# Two orders that are not moves wait their turn in a shift queue. A Black Lotus walks to a point,
+# takes an American supply center when she gets there, and walks on. An Overlord walks to a point,
+# buys its Gatling cannon there, paid for then, drives on and takes up a guard, and a move queued
+# behind the guard is turned away.
+#
+# The capture holds the list while it runs: the ability walks her up to the building with orders of
+# its own, which the queue must not read as her being done. The two arrive lines say whether each
+# got to the end of its list, the tallies whose supply center it is by then, and the "order queue:"
+# lines when each step went out.
+#
+#   generals.exe -headless -quickstart -noshellmap -observer -multiInstance -noFPSLimit
+#     -map "Maps\Alpine Assault\Alpine Assault.map" -autoskirmish 2 -takeover
+#     -side 0 FactionChina -side 1 FactionAmerica -seed 1 -maxframes 4500
+#     -scenario shiftorders -logPrefix shiftorders_
+#
+# See mobstress.txt for the line grammar.
+
+30    spawn          0  ChinaInfantryBlackLotus   1  760 920
+30    spawn          0  ChinaTankOverlord         1  760 1100
+30    spawn          1  AmericaSupplyCenter       1  1300 1150
+
+60    shiftmove      0  ChinaInfantryBlackLotus   1000 950
+61    shiftpower     0  ChinaInfantryBlackLotus   1 AmericaSupplyCenter SpecialAbilityBlackLotusCaptureBuilding
+62    shiftmove      0  ChinaInfantryBlackLotus   800 1250
+
+60    shiftmove      0  ChinaTankOverlord         1000 1300
+61    shiftupgrade   0  ChinaTankOverlord         Upgrade_ChinaOverlordGattlingCannon
+62    shiftmove      0  ChinaTankOverlord         700 1500
+63    shiftguard     0  ChinaTankOverlord         700 1500
+1500  shiftmove      0  ChinaTankOverlord         950 1750
+
+65    arrive         0  ChinaInfantryBlackLotus   800 1250 150
+65    arrive         0  ChinaTankOverlord         700 1500 150
+
+# The guard is a post, and nothing goes behind it: the move at frame 1500, given once the Overlord is
+# already standing guard, is turned away, so it must never reach 950,1750, a short drive from its
+# post. This line has to report 0 of 1.
+65    arrive         0  ChinaTankOverlord         950 1750 100
+
+4490  tally          0  AmericaSupplyCenter
+4490  tally          1  AmericaSupplyCenter
+
+# The rifleman's capture, the Red Guard's and the Ranger's, which walk up and go in by the door where
+# Black Lotus hacks from range. Both stay paused until the player owns Capture Building, so the
+# barracks researches it first (30 s, done at frame 930) and the lists go out once it is. Each list
+# is a walk, a capture and a walk on, and a capture at the door runs about 650 frames: the arrive
+# lines say each finished, the tallies whose buildings they are. The Ranger is China's here so
+# nobody in this file fires on anybody else.
+30    spawn          0  ChinaBarracks             1  400 700
+31    shiftupgrade   0  ChinaBarracks             Upgrade_InfantryCaptureBuilding
+30    spawn          0  ChinaInfantryRedguard     1  600 850
+30    spawn          0  AmericaInfantryRanger     1  600 1000
+30    spawn          1  AmericaPowerPlant         1  1300 800
+30    spawn          1  AmericaBarracks           1  1300 1450
+
+960   shiftmove      0  ChinaInfantryRedguard     1000 950
+961   shiftpower     0  ChinaInfantryRedguard     1 AmericaPowerPlant SpecialAbilityRedGuardCaptureBuilding
+962   shiftmove      0  ChinaInfantryRedguard     800 1250
+
+960   shiftmove      0  AmericaInfantryRanger     1000 1300
+961   shiftpower     0  AmericaInfantryRanger     1 AmericaBarracks SpecialAbilityRangerCaptureBuilding
+962   shiftmove      0  AmericaInfantryRanger     700 1500
+
+965   arrive         0  ChinaInfantryRedguard     800 1250 150
+965   arrive         0  AmericaInfantryRanger     700 1500 150
+
+4490  tally          0  AmericaPowerPlant
+4490  tally          1  AmericaPowerPlant
+4490  tally          0  AmericaBarracks
+4490  tally          1  AmericaBarracks
