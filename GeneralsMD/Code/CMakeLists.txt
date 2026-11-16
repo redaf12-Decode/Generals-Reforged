@@ -19,21 +19,21 @@ project(GeneralsMD CXX C)
 # ZH_PLATFORM_WINDOWS; only a flag written in one compiler's own syntax asks which compiler is
 # reading it.  PORTING.md has the rest of the design.
 # Windows against POSIX, not Windows against macOS.  The port targets macOS first but is meant to
-# reach Linux and other POSIX systems, so "is this not Windows" is ZH_PLATFORM_POSIX, and the two
+# reach Linux and other POSIX systems, so "is this not Windows" is ZH_PLATFORM_POSIX, and the
 # refinements below are for the few things that genuinely differ between POSIX systems (a window,
 # audio, CPU detection) - never for "is this not Windows".  An unported platform-specific file fails
 # with an #error naming what it lacks (cpudetect.cpp does this), which is louder and more useful than
 # refusing to configure.
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-  set(ZH_PLATFORM_WINDOWS TRUE)
-else()
-  set(ZH_PLATFORM_POSIX TRUE)
-  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    set(ZH_PLATFORM_MACOS TRUE)
-  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    set(ZH_PLATFORM_LINUX TRUE)
-  endif()
-endif()
+#
+# Android is one of those refinements, and the one that is not desktop Linux: it has bionic libc, no
+# X11 or Wayland, and its own lifecycle.  It keeps ZH_PLATFORM_POSIX (the SDL3 window, the event
+# loop, the D3D9-shaped device) and never sets ZH_PLATFORM_LINUX, so everything gated on Linux -
+# LLD and mold, fontconfig, the X11 and Wayland link dependencies, the Steam Runtime packaging -
+# stays out of an Android build.  The decision is one function, in cmake/DetectPlatform.cmake, so
+# Tests/test_platform_detection.cmake can check every row of the matrix without a toolchain.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/DetectPlatform.cmake)
+zh_detect_platform("${CMAKE_SYSTEM_NAME}" "${ANDROID}"
+  ZH_PLATFORM_WINDOWS ZH_PLATFORM_POSIX ZH_PLATFORM_MACOS ZH_PLATFORM_LINUX ZH_PLATFORM_ANDROID)
 
 # The other half of the split.  A target that only Windows can build is gated out below; a target
 # whose sources do not compile under clang *yet* is a different thing, and this is it.  Those stay
@@ -1359,7 +1359,7 @@ endif()
 set_tests_properties(gametext_csf PROPERTIES SKIP_RETURN_CODE 77)
 # The global operator new against the alignment the ABI promises for it, on Linux, where it is also the
 # one Mesa's libLLVM gets.  See Tests/test_global_new_alignment.cpp.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(ZH_PLATFORM_LINUX)
   add_executable(test_global_new_alignment ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_global_new_alignment.cpp
     ${GE}/Source/Common/System/GameMemory.cpp ${GE}/Source/Common/System/MemoryInit.cpp
     ${GE}/Source/Common/System/UnicodeString.cpp ${GE}/Source/Common/System/AsciiString.cpp
@@ -2453,6 +2453,12 @@ enable_testing()
 
 set(TESTS ${CMAKE_CURRENT_SOURCE_DIR}/Tests)
 
+# The platform matrix of cmake/DetectPlatform.cmake, checked by `cmake -P` with no compiler, no
+# toolchain and no vendored sources - so the Android rows are exercised even on a Linux or macOS
+# host.  Pure CMake, so it needs no shell and runs on every platform, Windows included.
+add_test(NAME platform_detection_check
+         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_platform_detection.cmake)
+
 # Shared runner for the micro-harness in Tests/test_harness.h; every test
 # binary links it instead of writing its own main().
 add_library(test_harness STATIC ${TESTS}/test_main.cpp)
@@ -3191,7 +3197,7 @@ endif()  # ZH_PLATFORM_POSIX - shader generator checks
 # data - but it does need an interpreter, so it is only registered when one is present.
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  if(ZH_PLATFORM_LINUX)
     add_executable(water_clean_defaults_probe ${TESTS}/water_clean_defaults_probe.cpp)
     target_include_directories(water_clean_defaults_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Libraries/Include ${ZH_POSIX_RENDER_DIR})
     set_target_properties(water_clean_defaults_probe PROPERTIES CXX_STANDARD 17)

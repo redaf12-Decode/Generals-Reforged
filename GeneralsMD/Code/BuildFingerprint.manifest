@@ -3668,6 +3668,7 @@ Tests/test_msvc_float_casts.cpp
 Tests/test_observer_camera.inc
 Tests/test_online.cpp
 Tests/test_pixelcentre.cpp
+Tests/test_platform_detection.cmake
 Tests/test_posix_draw_resolve.cpp
 Tests/test_posix_gpu_draw.cpp
 Tests/test_posix_reset.cpp
@@ -4806,3 +4807,4 @@ Tools/wolSetup/wolSetup.dsw
 Tools/wolSetup/wolSetup.h
 Tools/wolSetup/wolSetup.ico
 Tools/wolSetup/wolSetup.rc
+cmake/DetectPlatform.cmake
