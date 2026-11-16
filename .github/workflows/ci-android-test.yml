@@ -100,7 +100,10 @@ jobs:
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          curl -fL --retry 3 -o /tmp/cmdline-tools.zip \
+          # --retry-all-errors and --http1.1: the 157 MiB cmdline-tools download has been seen to fail
+          # at 90%+ with "HTTP/2 stream was not closed cleanly" (curl 92), which plain --retry does not
+          # cover. The SDK is cached once it succeeds, so this is the one download that must be robust.
+          curl -fL --http1.1 --retry 5 --retry-all-errors --retry-delay 5 -o /tmp/cmdline-tools.zip \
             "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
           echo "${CMDLINE_TOOLS_SHA1}  /tmp/cmdline-tools.zip" | sha1sum -c -
           mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools"
