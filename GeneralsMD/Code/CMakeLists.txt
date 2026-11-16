@@ -2342,13 +2342,6 @@ if(ZH_PLATFORM_POSIX)
     set_tests_properties(test_sdl_input PROPERTIES ENVIRONMENT "ZH_DATA_DIR=${ZH_GAME_DATA}")
   endif()
 
-  # Phase 4: the touch gesture decisions (SdlDevice/GameClient/SdlTouch.h).  sdlinput globs
-  # SdlTouch.cpp, so linking it is what puts the file's non-Android half (the pure helpers) into
-  # this binary; the Android half is compiled out here (ZH_ANDROID == 0).  No SDL device and no game
-  # data: the thresholds and the tap/drag classification are functions of their arguments.
-  add_lib_test(test_sdl_touch sdlinput)
-  target_include_directories(test_sdl_touch PRIVATE $<TARGET_PROPERTY:gameengine,INCLUDE_DIRECTORIES>)
-  target_compile_definitions(test_sdl_touch PRIVATE $<TARGET_PROPERTY:gameengine,COMPILE_DEFINITIONS>)
 
   # The entry sequence without game data: see the script.
   add_test(NAME generals_smoke
@@ -2660,6 +2653,17 @@ target_include_directories(test_msvc_float_casts PRIVATE ${CMAKE_CURRENT_SOURCE_
 # proof that ZH_DESKTOP_LINUX is 0 there even though the NDK defines __linux__ (Task 2.1).
 add_lib_test(test_platform_predicates)
 target_include_directories(test_platform_predicates PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Libraries/Include)
+
+# Phase 4: the touch gesture decisions (SdlDevice/GameClient/SdlTouch.h).  The target links sdlinput,
+# which globs SdlTouch.cpp, so the file's non-Android half (the pure helpers) is in this binary; the
+# Android half is compiled out here (ZH_ANDROID == 0).  No SDL device and no game data: the
+# thresholds and the tap/drag classification are functions of their arguments.  POSIX-only because
+# sdlinput is.
+if(ZH_PLATFORM_POSIX)
+  add_lib_test(test_sdl_touch sdlinput)
+  target_include_directories(test_sdl_touch PRIVATE $<TARGET_PROPERTY:gameengine,INCLUDE_DIRECTORIES>)
+  target_compile_definitions(test_sdl_touch PRIVATE $<TARGET_PROPERTY:gameengine,COMPILE_DEFINITIONS>)
+endif()
 
 # MilesAudioDevice/AudioMixPolicy.h: the battle mix's budget and folding arithmetic.
 add_lib_test(test_audio_mix_policy)
