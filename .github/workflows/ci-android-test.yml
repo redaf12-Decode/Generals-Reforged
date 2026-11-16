@@ -206,6 +206,12 @@ jobs:
 
           system=$(ls "$BUILD"/CMakeFiles/*/CMakeSystem.cmake)
           compiler=$(ls "$BUILD"/CMakeFiles/*/CMakeCXXCompiler.cmake)
+          # CMake's Ninja generator writes the compile and link command lines to CMakeFiles/rules.ninja;
+          # build.ninja only holds the build statements that name those rules. The target triple is
+          # therefore looked for in rules.ninja, and build.ninja's existence proves the generator.
+          rules="$BUILD/CMakeFiles/rules.ninja"
+          [ -f "$BUILD/build.ninja" ] || fail "build.ninja is missing: the Ninja generator did not run"
+          [ -f "$rules" ] || fail "CMakeFiles/rules.ninja is missing: no compile rules were generated"
 
           echo "--- CMakeSystem.cmake ---"; grep -E 'CMAKE_SYSTEM_(NAME|PROCESSOR)' "$system"
           echo "--- Android cache entries ---"; grep -E '^ANDROID_(ABI|PLATFORM|STL|NDK_HOME)' "$BUILD/CMakeCache.txt"
@@ -214,16 +220,22 @@ jobs:
             || fail "CMAKE_SYSTEM_NAME is not Android in $system"
           grep -qE 'set\(CMAKE_SYSTEM_PROCESSOR +"?(aarch64|arm64)"?\)' "$system" \
             || fail "CMAKE_SYSTEM_PROCESSOR is not aarch64 in $system"
+          if grep -qE 'set\(CMAKE_SYSTEM_PROCESSOR +"?(x86_64|amd64|x64)"?\)' "$system"; then
+            fail "CMAKE_SYSTEM_PROCESSOR is a host x86-64 value: Android arm64 must not be classified as x86-64"
+          fi
 
+          # The compiler's target architecture, three independent ways: CMake's own architecture id, the
+          # sysroot triple, and an actual compile command.
+          grep -q 'set(CMAKE_CXX_COMPILER_ARCHITECTURE_ID "aarch64")' "$compiler" \
+            || fail "the C++ compiler architecture id is not aarch64 in $compiler"
           grep -q 'aarch64-linux-android' "$compiler" \
-            || fail "the C++ compiler is not aarch64-linux-android in $compiler"
+            || fail "the C++ library architecture is not aarch64-linux-android in $compiler"
+          grep -q 'aarch64-linux-android' "$rules" \
+            || fail "no compile command in $rules invokes an aarch64-linux-android compiler"
 
           grep -qE '^ANDROID_ABI:[^=]*=arm64-v8a$'       "$BUILD/CMakeCache.txt" || fail "ANDROID_ABI is not arm64-v8a"
           grep -qE '^ANDROID_PLATFORM:[^=]*=android-28$' "$BUILD/CMakeCache.txt" || fail "ANDROID_PLATFORM is not android-28"
           grep -qE '^ANDROID_STL:[^=]*=c\+\+_shared$'    "$BUILD/CMakeCache.txt" || fail "ANDROID_STL is not c++_shared"
-
-          grep -q 'aarch64-linux-android' "$BUILD/build.ninja" \
-            || fail "build.ninja does not invoke an aarch64-linux-android compiler"
 
           echo "system: Android; processor: aarch64; compiler: aarch64-linux-android; abi: arm64-v8a; api: 28; stl: c++_shared"
 
@@ -238,15 +250,18 @@ jobs:
           # build. These are exactly the things gated on ZH_PLATFORM_LINUX / ZH_PLATFORM_WINDOWS,
           # which Android never sets (checked above), so their presence would mean the platform
           # split leaked. Link-library names are used, not bare words, so a first-party target whose
-          # name merely contains a substring (posixd3d9, say) cannot cause a false failure.
+          # name merely contains a substring (posixd3d9, say) cannot cause a false failure. Both Ninja
+          # files are scanned: build.ninja holds the build statements, rules.ninja the command lines
+          # with the -l flags.
           for token in '-lfontconfig' '-lX11' '-lxkbcommon' '-lwayland-client' 'steamnetworkingsockets'; do
-            if grep -q -- "$token" "$BUILD/build.ninja"; then
+            if grep -q -- "$token" "$BUILD/build.ninja" "$BUILD/CMakeFiles/rules.ninja"; then
               fail "a desktop-only dependency ($token) reached the Android link graph"
             fi
           done
           echo "absent from the Android link graph: fontconfig, X11, xkbcommon, Wayland, GameNetworkingSockets"
 
           # Positive: the platform layer and the dependency-light libraries SDL3 needs are configured.
+          # Target names appear in build.ninja's build statements.
           for token in SDL3 miniaudio mbedtls; do
             grep -qi -- "$token" "$BUILD/build.ninja" || fail "$token is not in the Android build graph"
           done
