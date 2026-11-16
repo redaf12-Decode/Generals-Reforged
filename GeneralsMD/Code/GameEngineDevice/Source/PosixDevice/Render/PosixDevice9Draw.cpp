@@ -51,8 +51,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(__linux__)
-#include <execinfo.h> // bounded opt-in CPU attribution; no GPU queries/readbacks
+#if defined(__linux__) || defined(__ANDROID__)
+#include "Platform/StackWalk.h" // bounded opt-in CPU attribution; no GPU queries/readbacks
 #endif
 
 bool PosixDevice9::Clean_Water_Bind(const WaterCleanPrecompute::Image *depth,const WaterCleanPrecompute::Image *rotation,bool mainLevel)
@@ -1607,9 +1607,9 @@ RenderResult PosixDevice9::Gpu_Draw(const DrawCall &call)
 						(unsigned)states[D3DRS_SRCBLEND],(unsigned)states[D3DRS_DESTBLEND],(unsigned)states[D3DRS_COLORWRITEENABLE],
 						(int)combiner.ShadowReceiving,(int)combiner.SoftParticle,(int)combiner.DrawEffect,(int)combiner.SmokeGlow);
 #if defined(__linux__)
-					void *stack[16];const int count=backtrace(stack,16);
+					void *stack[16];const int count=zh_backtrace(stack,16);
 					fprintf(stderr,"target-alias-stack: begin event=%u frames=%d\n",aliasTraceCount,count);fflush(stderr);
-					backtrace_symbols_fd(stack,count,2);
+					zh_backtrace_print(2,stack,count);
 					fprintf(stderr,"target-alias-stack: end event=%u\n",aliasTraceCount);
 #endif
 				}

@@ -3447,12 +3447,18 @@ void MemoryPoolFactory::debugMemoryReport(Int flags, Int startCheckpoint, Int en
 	these definitions of new/delete) ahead of all others. (We do debug checking
 	to ensure that's the case)
 */
+// The pragma is MSVC's link directive, as the comment above says: another compiler must not see it.
+// GCC ignores it, but Clang turns it into an ELF .deplibs section, which LLD then tries to resolve -
+// "unable to find library from dependent library specifier: GameEngine".  Off Windows the static
+// library is named gameengine, not GameEngine, so the request is meaningless.
+#if defined(_MSC_VER)
 #if defined(_DEBUG)
 	#pragma comment(lib, "GameEngineDebug")
 #elif defined(_INTERNAL)
 	#pragma comment(lib, "GameEngineInternal")
 #else
 	#pragma comment(lib, "GameEngine")
+#endif
 #endif
 
 #ifdef MEMORYPOOL_OVERRIDE_MALLOC

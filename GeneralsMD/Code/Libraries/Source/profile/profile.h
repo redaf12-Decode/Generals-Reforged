@@ -37,7 +37,11 @@
 	#error "Only either _DEBUG or _INTERNAL should ever be defined"
 #endif
 
-// Define which libraries to use. 
+// Define which libraries to use.  The pragma is MSVC's link directive and means nothing to another
+// compiler: GCC ignores it, but Clang turns it into an ELF .deplibs section, which LLD then tries to
+// resolve - and profile.lib is a Windows library the Android link does not have (the profile target
+// is Windows-only; CMakeLists.txt says so).  MSVC only, so no other toolchain sees it.
+#if defined(_MSC_VER)
 #if defined(_INTERNAL)
 #  pragma comment (lib,"profileinternal.lib")
 #elif defined(_DEBUG)
@@ -46,6 +50,7 @@
 #  pragma comment (lib,"profileprofile.lib")
 #else
 #  pragma comment (lib,"profile.lib")
+#endif
 #endif
 
 // include all our public header files (use double quotes here)

@@ -54,6 +54,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
 
 #include "Common/CrashHandler.h"
+#include "Platform/StackWalk.h"
 #include "Common/EarlyOptions.h"
 
 #include <atomic>
@@ -74,7 +75,9 @@
 #include <mach-o/dyld.h>
 #include <sys/ucontext.h>
 #elif defined(__linux__)
+#if !defined(__ANDROID__)
 #include <execinfo.h>
+#endif
 #include <link.h>
 #include <ucontext.h>
 #else
@@ -469,7 +472,7 @@ unsigned int collectFrames( uintptr_t pc, uintptr_t fp, uintptr_t lr, uintptr_t 
 	(void)fp;
 	(void)lr;
 	void *walked[ MAX_FRAMES ];
-	const int got = backtrace( walked, (int)MAX_FRAMES );
+	const int got = zh_backtrace( walked, (int)MAX_FRAMES );
 	for (int i = 0; i < got && count < MAX_FRAMES; ++i)
 		frames[ count++ ] = (uintptr_t)walked[i];
 #endif
@@ -717,7 +720,7 @@ void installCrashHandlers( void )
 		dladdr( (const void *)&installCrashHandlers, &info );
 #if defined(__linux__)
 		void *frames[ 4 ];
-		backtrace( frames, 4 );
+		zh_backtrace( frames, 4 );
 #endif
 	}
 

@@ -896,6 +896,28 @@ set(GS_SECURESECONNECT  OFF CACHE BOOL "" FORCE)
 set(GS_BUILD_TESTS      OFF CACHE BOOL "" FORCE)
 set(GS_INCLUDE_VOICE    OFF CACHE BOOL "" FORCE)
 add_subdirectory(${LIBSRC}/GameSpy ${CMAKE_CURRENT_BINARY_DIR}/gamespy)
+# The SDK sets POSITION_INDEPENDENT_CODE from BUILD_SHARED_LIBS (its CMakeLists.txt, per module), and
+# BUILD_SHARED_LIBS is OFF here, so its objects are non-PIC.  That is fine for an executable and not
+# for Android, whose game artifact is a shared library (libmain.so): every object linked into it must
+# be PIC or the AArch64 link stops on "relocation R_AARCH64_ADR_PREL_PG_HI21 cannot be used against
+# symbol ...; recompile with -fPIC".  The modules are OBJECT libraries, and a target's PIC property
+# does not propagate to the objects it links, so each one is set here, after add_subdirectory has
+# created them.  The NDK toolchain already asks for PIC build-wide; this is the SDK's override undone.
+if(ZH_PLATFORM_ANDROID)
+  # The SDK is several directories deep (src/<module>), and BUILDSYSTEM_TARGETS is per-directory, so
+  # walk the tree the SDK was added as.
+  function(zh_android_gamespy_pic directory)
+    get_property(zh_gamespy_targets DIRECTORY "${directory}" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(zh_gamespy_target ${zh_gamespy_targets})
+      set_target_properties(${zh_gamespy_target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    endforeach()
+    get_property(zh_gamespy_subdirs DIRECTORY "${directory}" PROPERTY SUBDIRECTORIES)
+    foreach(zh_gamespy_subdir ${zh_gamespy_subdirs})
+      zh_android_gamespy_pic("${zh_gamespy_subdir}")
+    endforeach()
+  endfunction()
+  zh_android_gamespy_pic("${LIBSRC}/GameSpy")
+endif()
 
 # ---- mbedtls --------------------------------------------------------------
 # mbedTLS 3.6.7 (Apache-2.0), fetched by both vendor scripts: the TLS under the online service's lobby
@@ -1193,7 +1215,33 @@ endif()
 # the files BuildFingerprint.manifest lists (the tracked sources: Tools/fingerprint-manifest.sh writes it,
 # build_fingerprint_manifest checks it), line endings normalised.  The header is rewritten only when the
 # value changes, so a rebuild with nothing changed runs nothing and recompiles nothing.
-add_executable(build_fingerprint ${CMAKE_CURRENT_SOURCE_DIR}/Tools/fingerprint/build_fingerprint.cpp)
+# Cross-compiling, the generator must be built for the BUILD host, not the target: an Android
+# aarch64 binary cannot run on the x86-64 runner ("cannot execute binary file"), and this tool runs
+# during the build to produce the header.  It is therefore an add_executable only when the target
+# and the host are the same machine; otherwise it is compiled here by the host's own C++ compiler.
+if(CMAKE_CROSSCOMPILING)
+  find_program(ZH_HOST_CXX NAMES c++ g++ clang++)
+  if(NOT ZH_HOST_CXX)
+    message(FATAL_ERROR
+      "Cross-compiling needs a host C++ compiler to build the fingerprint generator; none of c++, "
+      "g++ or clang++ was found.  Install one (Debian/Ubuntu: g++).")
+  endif()
+  set(ZH_FINGERPRINT_HOST_TOOL ${CMAKE_CURRENT_BINARY_DIR}/host-tools/build_fingerprint)
+  add_custom_command(
+    OUTPUT ${ZH_FINGERPRINT_HOST_TOOL}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/host-tools
+    COMMAND ${ZH_HOST_CXX} -O2 -std=c++17 -o ${ZH_FINGERPRINT_HOST_TOOL}
+            ${CMAKE_CURRENT_SOURCE_DIR}/Tools/fingerprint/build_fingerprint.cpp
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/Tools/fingerprint/build_fingerprint.cpp
+    COMMENT "Building the fingerprint generator for the build host (cross-compiling)"
+    VERBATIM)
+  set(ZH_FINGERPRINT_TOOL_CMD ${ZH_FINGERPRINT_HOST_TOOL})
+  set(ZH_FINGERPRINT_TOOL_DEP ${ZH_FINGERPRINT_HOST_TOOL})
+else()
+  add_executable(build_fingerprint ${CMAKE_CURRENT_SOURCE_DIR}/Tools/fingerprint/build_fingerprint.cpp)
+  set(ZH_FINGERPRINT_TOOL_CMD $<TARGET_FILE:build_fingerprint>)
+  set(ZH_FINGERPRINT_TOOL_DEP build_fingerprint)
+endif()
 set(ZH_FINGERPRINT_MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/BuildFingerprint.manifest)
 set(ZH_FINGERPRINT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/fingerprint)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${ZH_FINGERPRINT_MANIFEST})
@@ -1203,14 +1251,17 @@ add_custom_command(
   OUTPUT ${ZH_FINGERPRINT_DIR}/BuildFingerprint.stamp
   BYPRODUCTS ${ZH_FINGERPRINT_DIR}/BuildFingerprint.h
   COMMAND ${CMAKE_COMMAND} -E make_directory ${ZH_FINGERPRINT_DIR}
-  COMMAND build_fingerprint ${CMAKE_CURRENT_SOURCE_DIR} ${ZH_FINGERPRINT_MANIFEST} ${ZH_FINGERPRINT_DIR}/BuildFingerprint.h
+  COMMAND ${ZH_FINGERPRINT_TOOL_CMD} ${CMAKE_CURRENT_SOURCE_DIR} ${ZH_FINGERPRINT_MANIFEST} ${ZH_FINGERPRINT_DIR}/BuildFingerprint.h
   COMMAND ${CMAKE_COMMAND} -E touch ${ZH_FINGERPRINT_DIR}/BuildFingerprint.stamp
-  DEPENDS build_fingerprint ${ZH_FINGERPRINT_MANIFEST} ${ZH_FINGERPRINT_FILES}
+  DEPENDS ${ZH_FINGERPRINT_TOOL_DEP} ${ZH_FINGERPRINT_MANIFEST} ${ZH_FINGERPRINT_FILES}
   COMMENT "Build fingerprint over the tracked sources (N1)" VERBATIM)
 add_custom_target(build_fingerprint_header DEPENDS ${ZH_FINGERPRINT_DIR}/BuildFingerprint.stamp)
 add_dependencies(gameengine build_fingerprint_header)
 target_include_directories(gameengine PRIVATE ${ZH_FINGERPRINT_DIR})
-if(ZH_PLATFORM_POSIX)		# bash and perl: the value itself is the same tool on every platform
+# Cross-compiling there is no build_fingerprint target to run on this host (see the host-tool branch
+# above), so these two are the desktop's.  The fingerprint's own cross-platform invariance is proved
+# by the desktop leg; the Android leg proves the header is generated at all.
+if(ZH_PLATFORM_POSIX AND TARGET build_fingerprint)   # bash and perl: the value itself is the same tool on every platform
   # the fingerprint: LF and CRLF copies of the tree agree, one byte or a rename changes it, the header holds it
   add_test(NAME build_fingerprint_check
            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/Tools/fingerprint-check.sh $<TARGET_FILE:build_fingerprint>
@@ -1821,12 +1872,42 @@ if(ZH_PLATFORM_POSIX)
       set(FFMPEG_POSIX_ARCH ${CMAKE_OSX_ARCHITECTURES})
     endif()
   endif()
+  # Android: FFmpeg's configure must build for bionic, not the host.  The Phase-1 audit found an
+  # x86-64 libavcodec.a in an Android build tree: given only --arch, configure still detected the
+  # host's OS and linker.  The NDK's clang lives at <ndk>/toolchains/llvm/prebuilt/<host>/bin/clang,
+  # so its sysroot and tool bin directory are named from the compiler path - no NDK variable has to
+  # be relied on here.  The script's --target-os=android and these two paths are what make the
+  # libraries AArch64.
+  #
+  # CMake passes that plain clang, whose default target is the build host - the NDK puts --target on
+  # the command line itself, so FFmpeg's configure would run its compile and link tests for x86-64
+  # ("C compiler test failed").  The NDK also ships a per-ABI, per-API wrapper beside it
+  # (aarch64-linux-android28-clang) whose whole body is `clang --target=aarch64-linux-android28 "$@"`;
+  # handing configure that wrapper is what the script's own comment assumes.  The API level comes out
+  # of ANDROID_PLATFORM, so it is the same 28 the rest of the build uses.
+  set(FFMPEG_POSIX_CC "${CMAKE_C_COMPILER}")
+  set(FFMPEG_POSIX_SYSROOT "")
+  set(FFMPEG_POSIX_BIN "")
+  if(ZH_PLATFORM_ANDROID)
+    get_filename_component(FFMPEG_POSIX_BIN "${CMAKE_C_COMPILER}" DIRECTORY)
+    get_filename_component(FFMPEG_POSIX_SYSROOT "${FFMPEG_POSIX_BIN}/../sysroot" ABSOLUTE)
+    string(REPLACE "android-" "" FFMPEG_POSIX_API "${ANDROID_PLATFORM}")
+    set(FFMPEG_POSIX_WRAPPER "${FFMPEG_POSIX_BIN}/aarch64-linux-android${FFMPEG_POSIX_API}-clang")
+    if(EXISTS "${FFMPEG_POSIX_WRAPPER}")
+      set(FFMPEG_POSIX_CC "${FFMPEG_POSIX_WRAPPER}")
+    else()
+      message(FATAL_ERROR "The NDK's AArch64 compiler wrapper is missing: ${FFMPEG_POSIX_WRAPPER}.  FFmpeg's configure cannot be given the plain clang, whose default target is the build host.")
+    endif()
+    if(NOT FFMPEG_POSIX_ARCH)
+      set(FFMPEG_POSIX_ARCH aarch64)
+    endif()
+  endif()
   add_custom_command(
     OUTPUT ${FFMPEG_POSIX_LIBS} ${FFMPEG_POSIX}/include/libavcodec/avcodec.h
     COMMAND ${CMAKE_COMMAND} -E env ${FFMPEG_POSIX_ENV}
             ${CMAKE_CURRENT_SOURCE_DIR}/Tools/ffmpeg-build-posix.sh ${FFMPEG_TARBALL}
-            ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg-work ${FFMPEG_POSIX} ${CMAKE_C_COMPILER} "${FFMPEG_POSIX_CFLAGS}"
-            "${FFMPEG_POSIX_ARCH}"
+            ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg-work ${FFMPEG_POSIX} ${FFMPEG_POSIX_CC} "${FFMPEG_POSIX_CFLAGS}"
+            "${FFMPEG_POSIX_ARCH}" "${FFMPEG_POSIX_SYSROOT}" "${FFMPEG_POSIX_BIN}"
     DEPENDS ${FFMPEG_TARBALL} ${CMAKE_CURRENT_SOURCE_DIR}/Tools/ffmpeg-build-posix.sh
     COMMENT "Building FFmpeg 8.1.2's Bink decoders for the movies (V1)"
     VERBATIM)
@@ -2190,7 +2271,19 @@ if(ZH_PLATFORM_POSIX)
     target_compile_definitions(sdldevice PRIVATE ZH_WINDOW_ICON)
   endif()
 
-  add_executable(generals ${CMAKE_CURRENT_SOURCE_DIR}/Main/PosixMain.cpp)
+  # The entry point's artifact: an executable on the desktop, a shared library on Android.  SDL3 on
+  # Android does not run a native main(): SDLActivity loads libmain.so and calls the SDL_main it
+  # exports (docs/android-port/architecture/10-android-entry-point.md).  SDL_main.h renames
+  # PosixMain.cpp's main() to that export on Android (it is already the first include there), so the
+  # source is identical either way and only the target's kind differs.  The target keeps the name
+  # `generals` so every reference below - $<TARGET_FILE:generals>, the compile definitions - is
+  # unchanged; only its artifact differs (generals vs libmain.so).
+  if(ZH_PLATFORM_ANDROID)
+    add_library(generals SHARED ${CMAKE_CURRENT_SOURCE_DIR}/Main/PosixMain.cpp)
+    set_target_properties(generals PROPERTIES OUTPUT_NAME main)
+  else()
+    add_executable(generals ${CMAKE_CURRENT_SOURCE_DIR}/Main/PosixMain.cpp)
+  endif()
   target_include_directories(generals PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Main ${GENERATED})
   set_target_properties(generals PROPERTIES CXX_STANDARD 17)
   target_link_libraries(generals PRIVATE sdldevice installroot)

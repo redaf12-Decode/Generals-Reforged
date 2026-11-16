@@ -26,9 +26,12 @@
 	 CrashHandlerPosix.cpp's, which writes ReleaseCrashInfo.txt without calling anything here.
 
 	 Nothing here allocates on the way to its output.  It may run on a crash path, where the heap
-	 cannot be trusted: with no callback it writes straight to stderr with backtrace_symbols_fd, and
+	 cannot be trusted: with no callback it writes straight to stderr with zh_backtrace_print, and
 	 with one each line is formatted into a stack buffer.  backtrace_symbols(), which mallocs, is not
-	 used.  What a callback does with its line is the caller's business. */
+	 used.  What a callback does with its line is the caller's business.
+
+	 The unwinder itself is Platform/StackWalk.h's: glibc's backtrace() where it exists, and the C++
+	 ABI's _Unwind_Backtrace on Android, whose bionic libc has no backtrace() below API 33. */
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
 
@@ -36,10 +39,11 @@
 
 #include <dlfcn.h>
 #include <stdint.h>
-#include <execinfo.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "Platform/StackWalk.h"
 
 AsciiString g_LastErrorDump;
 
@@ -74,7 +78,7 @@ void FillStackAddresses( void **addresses, unsigned int count, unsigned int skip
 	unsigned int wanted = count + skip + 1;
 	if (wanted > MAX_FRAMES)
 		wanted = MAX_FRAMES;
-	const int got = backtrace( frames, (int)wanted );
+	const int got = zh_backtrace( frames, (int)wanted );
 	for (unsigned int i = 0; i < count; ++i)
 	{
 		const unsigned int from = i + skip + 1;
@@ -89,7 +93,7 @@ void StackDumpFromAddresses( void **addresses, unsigned int count, void (*callba
 		unsigned int n = 0;
 		while (n < count && addresses[ n ] != NULL)
 			++n;
-		backtrace_symbols_fd( addresses, (int)n, STDERR_FILENO );
+		zh_backtrace_print( STDERR_FILENO, addresses, (int)n );
 		return;
 	}
 	char line[ 512 ];

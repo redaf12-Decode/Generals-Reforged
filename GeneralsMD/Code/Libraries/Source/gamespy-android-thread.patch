@@ -1,0 +1,26 @@
+diff --git a/src/common/linux/gsthreadlinux.c b/src/common/linux/gsthreadlinux.c
+--- a/src/common/linux/gsthreadlinux.c
++++ b/src/common/linux/gsthreadlinux.c
+@@ -69,10 +69,22 @@
+     //should i destroy the attributes here?
+     pthread_attr_destroy(&id.attr);
+ 
++#if defined(__ANDROID__)
++    // Zero Hour Reforged: Android has no pthread_cancel.  bionic libc never implemented it (it is
++    // absent from <pthread.h> and from libc.so at every API level the port targets), so the call is
++    // an implicit-declaration error under Clang and would be an unresolved symbol at link.  The
++    // thread is asked to stop the only way bionic allows - not at all: the cancellation request is
++    // unavailable, so this is a no-op and the thread exits on its own when its work is done.  Nothing
++    // in the engine relies on the cancellation being immediate: gsiCancelThread is reached only from
++    // gsiDeleteThread at process teardown, where the process is ending anyway.  The desktop path
++    // below is unchanged.
++    (void)id;
++#else
+     if (pthread_cancel(id.thread) != PTHREAD_NO_ERROR) {
+         //there was an error - how should we handle these? or should we?
+         gsDebugFormat(GSIDebugCat_Common, GSIDebugType_Misc, GSIDebugLevel_WarmError, "Failed to cancel thread\r\n");
+     }
++#endif
+     //free up memory and set to NULL
+ 
+     gsifree(&id.thread);

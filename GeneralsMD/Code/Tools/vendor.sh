@@ -396,6 +396,27 @@ install_gamespy_unix_patch() {
   step "gamespy-gsi-unix.patch -> Libraries/Source/GameSpy"
 }
 
+# --- And its third change, Libraries/Source/gamespy-android-thread.patch: gsiCancelThread's
+# pthread_cancel() call, which bionic libc does not have (it is absent from <pthread.h> at every API
+# level the port targets), guarded so an Android build compiles and links and the desktop path is
+# unchanged.  Applied unconditionally - the patch itself is a no-op off Android - so a checkout that
+# only ever builds for the desktop still gets the identical file, and a later Android build needs no
+# second vendor run.
+install_gamespy_android_thread_patch() {
+  local destination="$libraries/Source/GameSpy"
+  local source="$destination/src/common/linux/gsthreadlinux.c"
+  if grep -q 'Zero Hour Reforged: Android has no pthread_cancel' "$source" 2>/dev/null; then return 0; fi
+  local patch="$libraries/Source/gamespy-android-thread.patch"
+  GIT_CEILING_DIRECTORIES="$libraries/Source" \
+    git -C "$destination" -c core.autocrlf=false apply "$patch" || true
+  if ! grep -q 'Zero Hour Reforged: Android has no pthread_cancel' "$source" 2>/dev/null; then
+    echo "[vendor] gamespy-android-thread.patch did not apply to Libraries/Source/GameSpy" >&2
+    echo "[vendor] ($source still calls pthread_cancel unguarded)" >&2
+    exit 1
+  fi
+  step "gamespy-android-thread.patch -> Libraries/Source/GameSpy"
+}
+
 # --- FFmpeg. Not fetched by either script: Libraries/Source/FFmpeg/dist is committed, and it is a
 # Windows distribution - .lib import libraries and avcodec-62.dll and friends. A Mac build needs a
 # different FFmpeg entirely, and whether that is Homebrew, a vendored dylib or a static build is
@@ -752,6 +773,7 @@ report_directx
 install_gamespy
 install_gamespy_patch
 install_gamespy_unix_patch
+install_gamespy_android_thread_patch
 install_sdl3
 install_sdl3_patch
 install_miniaudio

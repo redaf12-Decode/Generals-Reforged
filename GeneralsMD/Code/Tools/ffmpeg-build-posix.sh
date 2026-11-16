@@ -19,7 +19,7 @@
 # Builds the FFmpeg the POSIX build links, from the tarball Tools/vendor.sh keeps in
 # Libraries/Source/FFmpeg, with the components the game's movies need and nothing else (V1).
 #
-#   ffmpeg-build-posix.sh <tarball> <work dir> <install prefix> <C compiler> [<extra cflags>]
+#   ffmpeg-build-posix.sh <tarball> <work dir> <install prefix> <C compiler> [<extra cflags> [<target arch> [<android sysroot> [<android toolchain bin dir>]]]]
 #
 # CMake runs it (the ffmpeg_posix custom command) whenever the tarball or this script changes. It
 # unpacks into <work dir>, configures and builds there, installs include/ and five static libraries
@@ -48,10 +48,11 @@
 set -euo pipefail
 
 if [ $# -lt 4 ]; then
-  echo "usage: $0 <tarball> <work dir> <install prefix> <C compiler> [<extra cflags> [<target arch>]]" >&2
+  echo "usage: $0 <tarball> <work dir> <install prefix> <C compiler> [<extra cflags> [<target arch> [<android sysroot> [<android toolchain bin dir>]]]]" >&2
   exit 2
 fi
 tarball="$1" work="$2" prefix="$3" cc="$4" extra_cflags="${5:-}" target_arch="${6:-}"
+android_sysroot="${7:-}" android_bin="${8:-}"
 
 # A target architecture (FFmpeg's name for it) builds for that one rather than the host's: configure
 # otherwise detects the machine it runs on.  The flags that name it go to the linker too, or
@@ -59,6 +60,23 @@ tarball="$1" work="$2" prefix="$3" cc="$4" extra_cflags="${5:-}" target_arch="${
 cross=()
 if [ -n "$target_arch" ]; then
   cross=(--arch="$target_arch" --enable-cross-compile)
+fi
+
+# Android: configure must build for bionic, not the build host.  A plain --arch is not enough - the
+# Phase-1 audit found an x86-64 libavcodec.a in an Android build tree because configure, given only
+# --arch, still detected the host's OS and linker.  --target-os=android names the target libc, the
+# sysroot names its headers and libraries, and the cross-prefix plus the explicit llvm-* tools keep
+# configure from reaching for the host's ar/nm/ranlib/strip.  $cc must already carry the target
+# triple: CMake hands the plain NDK clang here, whose default target is the build host, so CMake
+# passes the NDK's aarch64-linux-android<api>-clang wrapper instead (aarch64-linux-android28-clang,
+# whose whole body is `clang --target=aarch64-linux-android28 "$@"`).
+if [ -n "$android_sysroot" ]; then
+  cross+=(--target-os=android --cpu=armv8-a --sysroot="$android_sysroot")
+  if [ -n "$android_bin" ]; then
+    cross+=(--cross-prefix="$android_bin/llvm-"
+            --ar="$android_bin/llvm-ar" --nm="$android_bin/llvm-nm"
+            --ranlib="$android_bin/llvm-ranlib" --strip="$android_bin/llvm-strip")
+  fi
 fi
 version=8.1.2
 

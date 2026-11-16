@@ -45,7 +45,7 @@
 
 #include <cxxabi.h>
 #include <dlfcn.h>
-#include <execinfo.h>
+#include "Platform/StackWalk.h"
 #include <mutex>
 #include <string>
 
@@ -454,7 +454,7 @@ void Sdl_Creation_Log(const char *what, double started_ms, double took_ms, const
 void Sdl_Creation_Log_Trace(const char *what)
 {
 	void *frames[12];
-	const int count = backtrace(frames, 12);
+	const int count = zh_backtrace(frames, 12);
 	std::string line = std::string("PosixDevice9 create: trace ") + what + ":";
 	for (int i = 1; i < count; ++i) {
 		Dl_info info;
