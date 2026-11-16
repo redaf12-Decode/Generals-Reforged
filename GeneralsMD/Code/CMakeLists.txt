@@ -2342,6 +2342,14 @@ if(ZH_PLATFORM_POSIX)
     set_tests_properties(test_sdl_input PROPERTIES ENVIRONMENT "ZH_DATA_DIR=${ZH_GAME_DATA}")
   endif()
 
+  # Phase 4: the touch gesture decisions (SdlDevice/GameClient/SdlTouch.h).  sdlinput globs
+  # SdlTouch.cpp, so linking it is what puts the file's non-Android half (the pure helpers) into
+  # this binary; the Android half is compiled out here (ZH_ANDROID == 0).  No SDL device and no game
+  # data: the thresholds and the tap/drag classification are functions of their arguments.
+  add_lib_test(test_sdl_touch sdlinput)
+  target_include_directories(test_sdl_touch PRIVATE $<TARGET_PROPERTY:gameengine,INCLUDE_DIRECTORIES>)
+  target_compile_definitions(test_sdl_touch PRIVATE $<TARGET_PROPERTY:gameengine,COMPILE_DEFINITIONS>)
+
   # The entry sequence without game data: see the script.
   add_test(NAME generals_smoke
            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/Tests/run_generals_smoke.sh $<TARGET_FILE:generals>)

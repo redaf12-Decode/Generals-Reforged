@@ -127,6 +127,14 @@ public:
 	virtual GameMessage::Type evaluateContextCommand( Drawable *draw, 
 																										const Coord3D *pos, 
 																										CommandTranslator::CommandEvaluateType cmdType );
+
+        /** The force-attack counterpart, and the same shape: the order a Control-click would issue
+                * at this (object, world), issued or only evaluated.  Touch input has no Control key, so
+                * it asks here directly; CommandXlat answers its own Control-click with the same
+                * translator call. */
+        virtual GameMessage::Type evaluateForceAttack( Drawable *draw,
+                                                                                                                                                                                                                const Coord3D *pos,
+                                                                                                                                                                                                                CommandTranslator::CommandEvaluateType cmdType );
 	void addTextBearingDrawable( Drawable *tbd );
 	void flushTextBearingDrawables( void);
 

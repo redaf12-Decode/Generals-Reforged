@@ -1,4 +1,4 @@
-# Android ARM64 platform foundation and runtime-integration check (Phase 1, Phase 2, Phase 3).
+# Android ARM64 platform foundation and runtime-integration check (Phase 1, Phase 2, Phase 3, Phase 4).
 #
 # This is a dedicated workflow, not part of linux-release.yml, because it validates a different
 # question: does the project configure and compile for Android arm64-v8a at all. It does not package
@@ -16,7 +16,10 @@
 #   6. the SDL3 Vulkan GPU backend is compiled for Android (Phase 3): the generated build config has
 #      SDL_GPU_VULKAN, and the SDL3-GPU renderer and its device-feature/depth-format code are in the
 #      graph - so the graphics path this phase changes is reachable and aarch64-clean;
-#   7. the whole engine links as libmain.so for arm64-v8a (Phase 2): the `generals` target builds
+#   7. the native touch layer compiles for Android (Phase 4): SdlTouch.cpp's ZH_ANDROID half is
+#      compiled into sdlinput and the object is checked to define SdlTouch_dispatch/update and to
+#      reference SDL_SetHint (called only by that half), so the desktop stub is not what was built;
+#   8. the whole engine links as libmain.so for arm64-v8a (Phase 2): the `generals` target builds
 #      PosixMain.cpp as the shared library SDL3's SDLActivity loads, exercising every dependency in
 #      the link graph (GameSpy, FFmpeg, FreeType, mbedTLS, SDL3 GPU). The result is asserted to be
 #      an AArch64 shared object exporting SDL_main and linking Android system libraries only. A
@@ -39,6 +42,8 @@ on:
       - 'GeneralsMD/Code/cmake/**'
       - 'GeneralsMD/Code/Tests/**'
       - 'GeneralsMD/Code/Main/**'
+      - 'GeneralsMD/Code/GameEngineDevice/**'
+      - 'GeneralsMD/Code/GameEngine/**'
       - 'GeneralsMD/Code/Libraries/**'
       - 'scripts/build/android/**'
       - '.github/workflows/ci-android-test.yml'
@@ -338,9 +343,9 @@ jobs:
           # here as a fast signal that the Phase-3 device-feature and depth-format code is
           # aarch64-clean. A fast signal before the full engine link below.
           cmake --build "$BUILD" --parallel "$(nproc)" --target \
-            SDL3-static miniaudio mbedtls test_platform_predicates test_msvc_float_casts \
+            SDL3-static miniaudio mbedtls sdlinput test_platform_predicates test_msvc_float_casts \
             test_sdl_gpu_device_features sdl_gpu_depth_format_selfcheck
-          echo "compiled for aarch64-linux-android: SDL3, miniaudio, mbedTLS, the predicate tests, the GPU device-feature and depth-format self-checks"
+          echo "compiled for aarch64-linux-android: SDL3, miniaudio, mbedTLS, the SDL input/touch layer, the predicate tests, the GPU device-feature and depth-format self-checks"
 
       - name: Assert the SDL3 Vulkan GPU backend is compiled for Android
         env:
@@ -367,6 +372,41 @@ jobs:
             grep -qi -- "$token" "$BUILD/build.ninja" || fail "$token is not in the Android build graph"
           done
           echo "SDL_GPU_VULKAN is on for Android; the SDL3-GPU renderer and its Phase-3 code are in the graph"
+
+      - name: Assert the native touch layer compiled for Android (Phase 4)
+        env:
+          BUILD: ${{ runner.temp }}/build-android-arm64
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          obj=$(find "$BUILD" -path '*sdlinput*' -name 'SdlTouch.cpp.o' | head -n 1)
+          [ -n "$obj" ] || fail "SdlTouch.cpp was not compiled into sdlinput for Android"
+
+          compiler=$(ls "$BUILD"/CMakeFiles/*/CMakeCXXCompiler.cmake)
+          cxx=$(sed -n 's/^set(CMAKE_CXX_COMPILER "\(.*\)")$/\1/p' "$compiler" | head -n 1)
+          [ -n "$cxx" ] || fail "CMakeCXXCompiler.cmake has no CMAKE_CXX_COMPILER"
+          prebuilt=$(dirname "$cxx")
+          nm_tool="$prebuilt/llvm-nm"
+          readelf_tool="$prebuilt/llvm-readelf"
+          [ -x "$nm_tool" ] || fail "the NDK llvm-nm is missing: $nm_tool"
+
+          header=$("$readelf_tool" -h "$obj")
+          grep -q 'Machine: *AArch64' <<<"$header" || fail "the touch object is not AArch64"
+
+          # --demangle: these entry points are C++ (the SdlInput layer's convention), so the raw
+          # names are mangled; SDL_SetHint is extern "C" and is not.
+          syms=$("$nm_tool" --demangle "$obj")
+          # Defined: the entry points SdlInput_dispatch and the per-frame pump call.
+          for s in SdlTouch_install SdlTouch_dispatch SdlTouch_update SdlTouch_reset; do
+            grep -qE "[[:space:]]T $s\\(" <<<"$syms" || fail "$s is not defined in the Android SdlTouch object"
+          done
+          # Undefined: SDL_SetHint is called only by the ZH_ANDROID half (SdlTouch_install). Its
+          # presence proves that half was compiled, not the desktop stub.
+          grep -qE "[[:space:]]U SDL_SetHint$" <<<"$syms" \
+            || fail "SdlTouch.cpp.o does not reference SDL_SetHint: the Android half was not compiled"
+
+          echo "native touch layer compiled for aarch64-linux-android: SdlTouch_dispatch et al. defined, SDL_SetHint referenced"
 
       - name: Build the engine as libmain.so for arm64-v8a
         env:

@@ -189,9 +189,11 @@ void SdlMouse::update( void )
 				setCursor( getMouseCursor() );
 		}
 
-		// Win32Mouse::update: ask where the pointer is rather than trust the last event, until one comes
+		// Win32Mouse::update: ask where the pointer is rather than trust the last event, until one comes.
+		// On a touch-only device SDL enumerates no mouse and SDL_GetMouseState is meaningless, so this
+		// is skipped and the pointer is left where the touch layer put it (hasRealMouse).
 		m_cursorInWindow = SDL_GetMouseFocus() == window;
-		if (!m_positionReported && m_cursorInWindow)
+		if (hasRealMouse() && !m_positionReported && m_cursorInWindow)
 		{
 			float wx = 0, wy = 0;
 			SDL_GetMouseState( &wx, &wy );
@@ -233,6 +235,22 @@ void SdlMouse::update( void )
 		m_cursorInWindow = FALSE;
 	}
 	Mouse::update();
+}
+
+void SdlMouse::setTouchCursorPos( Int x, Int y )
+{
+	m_currMouse.pos.x = x;
+	m_currMouse.pos.y = y;
+}
+
+Bool SdlMouse::hasRealMouse( void )
+{
+	// A real pointer is a mouse SDL enumerates, not the synthetic one SDL_GetMouseState answers
+	// for a touch device.  SDL_GetMice lists the devices; with none there is no pointer to ask.
+	int count = 0;
+	SDL_MouseID *mice = SDL_GetMice( &count );
+	SDL_free( mice );
+	return count > 0;
 }
 
 void SdlMouse::addEvent( EventKind kind, Int x, Int y, Button button, Int clicks, Int wheelDelta, UnsignedInt timeMs )

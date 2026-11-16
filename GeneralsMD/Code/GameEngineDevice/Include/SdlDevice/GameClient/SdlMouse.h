@@ -70,6 +70,17 @@ public:
 
 	void lostFocus( Bool state ) { m_lostFocus = state; }	///< Win32Mouse's, for the focus handling
 
+	/** Writes the pointer position and nothing else.  The touch layer publishes the live finger
+		* position here, because InGameUI's radius cursor and placement ghost read
+		* TheMouse->getMouseStatus()->pos every frame.  No message is sent: this is the preview
+		* point, not the event that drives the GUI hilite. */
+	void setTouchCursorPos( Int x, Int y );
+
+	/** TRUE when a real pointer exists.  On a touch-only Android device SDL enumerates no mice, so
+		* update() must not invent a position from SDL_GetMouseState (which would park the pointer at
+		* 0,0 and scroll the map away).  Always TRUE on the desktop. */
+	static Bool hasRealMouse( void );
+
 	/// The mouse SDL's events go to: the one the game made, or none yet
 	static SdlMouse *active( void ) { return s_active; }
 

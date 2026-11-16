@@ -26,6 +26,7 @@
 #include "SdlDevice/GameClient/SdlKeyTable.h"
 #include "SdlDevice/GameClient/SdlKeyboard.h"
 #include "SdlDevice/GameClient/SdlMouse.h"
+#include "SdlDevice/GameClient/SdlTouch.h"
 
 #include <SDL3/SDL.h>
 
@@ -79,6 +80,7 @@ void SdlInput_install( void )
 	installed = TRUE;
 	SDL_SetHint( SDL_HINT_MAC_CTRL_CLICK_EMULATE_RIGHT_CLICK, "0" );	// force fire is Control + LEFT click
 	SDL_SetHint( SDL_HINT_IME_IMPLEMENTED_UI, "composition" );				// W3DTextEntry draws it; the platform draws candidates
+	SdlTouch_install();                                                                     // SDL stops synthesizing mouse events from touches
 	PosixIMEManager::DeviceHooks hooks = { startTextInput, stopTextInput };
 	PosixIMEManager::setDeviceHooks( hooks );
 }
@@ -133,6 +135,10 @@ void SdlInput_resetWheel( void )
 Bool SdlInput_dispatch( const SDL_Event &event )
 {
 	SdlInput_install();
+	// A finger is the touch layer's, and only its: SDL_HINT_TOUCH_MOUSE_EVENTS is off (SdlTouch_install),
+	// so a touch never also becomes a mouse event, and this returns FALSE for every non-touch event.
+	if (SdlTouch_dispatch( event ))
+		return TRUE;
 	switch (event.type)
 	{
 		case SDL_EVENT_KEY_DOWN:
@@ -162,6 +168,8 @@ Bool SdlInput_dispatch( const SDL_Event &event )
 
 		case SDL_EVENT_MOUSE_MOTION:
 		{
+			if (SdlTouch_isTouchMouseEvent( event.motion.which, SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID ))
+				return TRUE;	// synthesized from a touch or a pen; the touch layer owns it
 			if (SdlMouse::active() == NULL)
 				return TRUE;
 			Int x, y;
@@ -173,6 +181,8 @@ Bool SdlInput_dispatch( const SDL_Event &event )
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 		case SDL_EVENT_MOUSE_BUTTON_UP:
 		{
+			if (SdlTouch_isTouchMouseEvent( event.button.which, SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID ))
+				return TRUE;	// synthesized from a touch or a pen; the touch layer owns it
 			SdlMouse::Button button;
 			switch (event.button.button)
 			{
@@ -194,6 +204,8 @@ Bool SdlInput_dispatch( const SDL_Event &event )
 
 		case SDL_EVENT_MOUSE_WHEEL:
 		{
+			if (SdlTouch_isTouchMouseEvent( event.wheel.which, SDL_TOUCH_MOUSEID, SDL_PEN_MOUSEID ))
+				return TRUE;	// synthesized from a touch or a pen; the touch layer owns it
 			// 120 a notch, WHEEL_DELTA; SDL has already applied the user's natural-scrolling setting
 			theWheelCarry += event.wheel.y * 120.0f;
 			const Int delta = (Int)theWheelCarry;		// toward zero: the fraction waits for the next event

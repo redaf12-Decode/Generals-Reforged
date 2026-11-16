@@ -31,6 +31,7 @@
 #include "SdlDevice/Common/SdlMessageBox.h"
 #include "SdlDevice/GameClient/SdlInput.h"
 #include "SdlDevice/GameClient/SdlMouse.h"
+#include "SdlDevice/GameClient/SdlTouch.h"
 #include "W3DDevice/GameClient/W3DGameClient.h"
 #include "PosixDevice/Common/PosixFileResolutionDump.h"
 #include "MilesAudioDevice/MilesAudioManager.h"
@@ -368,6 +369,9 @@ void SdlGameEngine::serviceWindowsOS( void )
 				break;
 		}
 	}
+	// The gestures' camera motion, once per frame and after every event: several motion events
+	// can arrive in one frame, and the projection would go stale between them.  No-op off Android.
+	SdlTouch_update();
 }
 
 // Win32GameEngine's factories, the same W3D classes (decision 8); the radar too: W3DRadar, and
