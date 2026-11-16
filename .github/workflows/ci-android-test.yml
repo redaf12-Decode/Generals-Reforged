@@ -363,24 +363,29 @@ jobs:
           readelf_tool="$(dirname "$cxx")/llvm-readelf"
           [ -x "$readelf_tool" ] || fail "the NDK llvm-readelf is missing: $readelf_tool"
 
+          # readelf's output is captured first, and grepped from a variable rather than piped: under
+          # `set -o pipefail` a `readelf ... | grep -q` on the multi-megabyte symbol table fails with
+          # SIGPIPE (grep exits at the first match while readelf is still writing), which reports a
+          # symbol that IS present as missing.
+          header=$("$readelf_tool" -h "$BUILD/libmain.so")
           echo "--- libmain.so ELF header ---"
-          "$readelf_tool" -h "$BUILD/libmain.so" | grep -E 'Class:|Machine:|Type:'
-          "$readelf_tool" -h "$BUILD/libmain.so" | grep -q 'Machine: *AArch64' \
-            || fail "libmain.so is not an AArch64 object"
-          "$readelf_tool" -h "$BUILD/libmain.so" | grep -qE 'Type: *DYN' \
-            || fail "libmain.so is not a shared object (DYN)"
+          grep -E 'Class:|Machine:|Type:' <<<"$header"
+          grep -q 'Machine: *AArch64' <<<"$header" || fail "libmain.so is not an AArch64 object"
+          grep -qE 'Type: *DYN' <<<"$header" || fail "libmain.so is not a shared object (DYN)"
 
           # SDL3's SDLActivity dlsym()s SDL_main from libmain.so: the entry point must be exported.
-          "$readelf_tool" --dyn-syms "$BUILD/libmain.so" | grep -qE '[[:space:]]SDL_main$' \
+          dynsyms=$("$readelf_tool" --dyn-syms "$BUILD/libmain.so")
+          grep -qE '[[:space:]]SDL_main$' <<<"$dynsyms" \
             || fail "libmain.so does not export SDL_main (SDLActivity cannot start the game)"
 
+          needed=$("$readelf_tool" -d "$BUILD/libmain.so")
           echo "--- libmain.so NEEDED ---"
-          "$readelf_tool" -d "$BUILD/libmain.so" | grep -E 'NEEDED|SONAME'
-          "$readelf_tool" -d "$BUILD/libmain.so" | grep -q 'libc++_shared.so' \
+          grep -E 'NEEDED|SONAME' <<<"$needed"
+          grep -q 'libc++_shared.so' <<<"$needed" \
             || fail "libmain.so does not link the Android shared C++ runtime (c++_shared)"
           # No desktop-Linux library may have reached the shared object's dependencies.
           for token in libX11 libfontconfig libwayland libxkbcommon libGL.so; do
-            if "$readelf_tool" -d "$BUILD/libmain.so" | grep -q -- "$token"; then
+            if grep -q -- "$token" <<<"$needed"; then
               fail "a desktop-only library ($token) reached libmain.so's NEEDED list"
             fi
           done
