@@ -3595,6 +3595,7 @@ Tests/shader_cases.h
 Tests/terrain_golden.txt
 Tests/terrain_grid.h
 Tests/terrain_oracle.cpp
+Tests/test_architecture_detection.cmake
 Tests/test_audio_mix_policy.cpp
 Tests/test_bigfilesystem.cpp
 Tests/test_bigfilesystem_stubs.cpp
@@ -4809,4 +4810,5 @@ Tools/wolSetup/wolSetup.dsw
 Tools/wolSetup/wolSetup.h
 Tools/wolSetup/wolSetup.ico
 Tools/wolSetup/wolSetup.rc
+cmake/DetectArchitecture.cmake
 cmake/DetectPlatform.cmake

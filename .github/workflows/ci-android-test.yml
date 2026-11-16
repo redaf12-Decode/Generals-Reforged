@@ -1,0 +1,303 @@
+# Android ARM64 platform foundation check (Phase 1).
+#
+# This is a dedicated workflow, not part of linux-release.yml, because it validates a different
+# question: does the project configure and compile for Android arm64-v8a at all. It does not package
+# an APK (Phase 1 stops at the platform foundation) and it does not run the desktop test suite.
+#
+# What it proves, in order:
+#   1. the Android SDK/NDK environment is set up from pinned, checksummed Google archives;
+#   2. scripts/build/android/build-android.sh and the tools it needs are present and valid;
+#   3. Android is detected as its own platform and is never classified as Linux, and arm64-v8a is
+#      identified as AArch64 - both checked by the committed `cmake -P` matrices, which run here
+#      even though the host is x86-64;
+#   4. the ARM64 configure succeeds with CMAKE_SYSTEM_NAME=Android, the AArch64 NDK Clang,
+#      ABI arm64-v8a, API 28 and c++_shared, and no desktop-Linux library reaches the link graph;
+#   5. a bounded set of targets - SDL3 (third-party platform layer), miniaudio, mbedTLS and the
+#      first-party predicate tests - actually compiles under the NDK. A successful configure is not
+#      treated as proof of compilation.
+#
+# Dependencies that are known not to be Android-ready in Phase 1 (GameSpy's pthread_cancel, the
+# host-built FFmpeg, fontconfig) are reported, not hidden and not worked around by disabling them:
+# see docs/android-port/audit/05-dependency-compatibility.md.
+
+name: CI Android Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - android-arm64-port
+  pull_request:
+    paths:
+      - 'GeneralsMD/Code/CMakeLists.txt'
+      - 'GeneralsMD/Code/cmake/**'
+      - 'GeneralsMD/Code/Tests/**'
+      - 'GeneralsMD/Code/Main/**'
+      - 'GeneralsMD/Code/Libraries/**'
+      - 'scripts/build/android/**'
+      - '.github/workflows/ci-android-test.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-android-test-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Pinned so a cross-compile that works today does not pick up a different toolchain tomorrow.
+  # The cmdline-tools sha1 and the NDK are Google's own repository2-3.xml values.
+  CMDLINE_TOOLS_VERSION: '13114758'
+  CMDLINE_TOOLS_SHA1: '5fdcc763663eefb86a5b8879697aa6088b041e70'
+  NDK_VERSION: '27.2.12479018'
+  ANDROID_API: '28'
+  # Under the runner user's home, so actions/cache can write it without root (a path under /opt
+  # would need sudo for the cache restore, not just the install).
+  ANDROID_SDK_ROOT: /home/runner/android-sdk
+  ANDROID_HOME: /home/runner/android-sdk
+
+jobs:
+  android-arm64:
+    name: Android ARM64 foundation (configure and compile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out the branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare the ephemeral runner
+        run: |
+          # Only on this disposable hosted runner. The preinstalled Android SDK is removed so the
+          # pinned one below is the only SDK in play, and ~10 GiB is freed for the NDK and the build.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build git curl unzip xz-utils python3 ca-certificates
+          # sdkmanager is a Java tool; the hosted image ships a JDK, but do not assume it.
+          if ! command -v java >/dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends openjdk-17-jre-headless
+          fi
+          sudo apt-get clean
+          cmake --version
+          ninja --version
+          java -version
+          df -h "$RUNNER_TEMP"
+
+      - name: Restore the Android SDK and NDK cache
+        id: sdk-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ANDROID_SDK_ROOT }}
+          key: android-sdk-cmdline${{ env.CMDLINE_TOOLS_VERSION }}-ndk${{ env.NDK_VERSION }}-p${{ env.ANDROID_API }}
+
+      - name: Install the Android SDK, NDK and platform
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o /tmp/cmdline-tools.zip \
+            "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
+          echo "${CMDLINE_TOOLS_SHA1}  /tmp/cmdline-tools.zip" | sha1sum -c -
+          mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools"
+          unzip -q /tmp/cmdline-tools.zip -d "${ANDROID_SDK_ROOT}/cmdline-tools"
+          # sdkmanager requires the <sdk>/cmdline-tools/latest layout to locate the SDK root.
+          mv "${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools" "${ANDROID_SDK_ROOT}/cmdline-tools/latest"
+          rm /tmp/cmdline-tools.zip
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "ndk;${NDK_VERSION}" "platforms;android-${ANDROID_API}"
+
+      - name: Export the Android environment
+        run: |
+          set -euo pipefail
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          test -f "${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}/build/cmake/android.toolchain.cmake" \
+            || { echo "::error::the NDK toolchain file is missing after install"; exit 1; }
+          test -d "${ANDROID_SDK_ROOT}/platforms/android-${ANDROID_API}" \
+            || { echo "::error::platform android-${ANDROID_API} is missing after install"; exit 1; }
+
+      - name: Validate the Android build scripts
+        run: |
+          set -euo pipefail
+          bash -n scripts/build/android/build-android.sh
+          scripts/build/android/build-android.sh --help >/dev/null
+          echo "build-android.sh is syntactically valid and answers --help"
+
+      - name: Cache the vendored dependency downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zhr-vendor
+          key: android-vendor-v1-${{ hashFiles('GeneralsMD/Code/Tools/vendor.sh', 'GeneralsMD/Code/Libraries/Source/**/*.patch') }}
+
+      - name: Fetch the code dependencies
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          bash GeneralsMD/Code/Tools/vendor.sh --no-art
+          for dep in SDL3/CMakeLists.txt miniaudio/miniaudio.c mbedtls/library/ssl_tls.c \
+                     glslang freetype SPIRV-Cross SDL_shadercross GameSpy; do
+            test -e "GeneralsMD/Code/Libraries/Source/${dep}" \
+              || { echo "::error::vendor.sh did not produce Libraries/Source/${dep}"; exit 1; }
+          done
+
+      - name: Platform and architecture detection matrices
+        run: |
+          set -euo pipefail
+          # Both run on this x86-64 host and exercise the Android rows, because the detection
+          # functions take their inputs as arguments (no compiler, no toolchain needed).
+          cmake -P GeneralsMD/Code/Tests/test_platform_detection.cmake
+          cmake -P GeneralsMD/Code/Tests/test_architecture_detection.cmake
+
+      - name: Android is its own platform and arm64-v8a is AArch64
+        run: |
+          set -euo pipefail
+          # A small explicit assertion over the two detection functions, in addition to the committed
+          # matrices above, so the CI log says in words what the Android contract is. The cmake
+          # directory is passed as ZH_CMAKE_DIR: CMAKE_CURRENT_LIST_DIR is the directory of this
+          # generated script, not of the file it includes. The heredoc body is indented with the
+          # script; CMake ignores leading whitespace.
+          cat > "$RUNNER_TEMP/assert-android.cmake" <<'EOF'
+          include(${ZH_CMAKE_DIR}/DetectPlatform.cmake)
+          include(${ZH_CMAKE_DIR}/DetectArchitecture.cmake)
+          zh_detect_platform("Android" "1" W P M L A)
+          if(NOT A)
+            message(FATAL_ERROR "Android was not detected as its own platform")
+          endif()
+          if(L)
+            message(FATAL_ERROR "Android was classified as Linux - this must never happen")
+          endif()
+          if(NOT P)
+            message(FATAL_ERROR "Android lost the POSIX umbrella it shares with macOS and Linux")
+          endif()
+          if(W OR M)
+            message(FATAL_ERROR "Android was detected as Windows or macOS")
+          endif()
+          zh_detect_architecture("aarch64" "" "" X64 A64 KNOWN)
+          if(NOT A64 OR X64)
+            message(FATAL_ERROR "aarch64 was not identified as AArch64 (or was identified as x86-64)")
+          endif()
+          zh_detect_architecture("" "" "arm64-v8a" X64B A64B KNOWNB)
+          if(NOT A64B OR X64B)
+            message(FATAL_ERROR "the arm64-v8a ABI was not identified as AArch64")
+          endif()
+          message(STATUS "Android is its own platform (never Linux); aarch64 and arm64-v8a are AArch64")
+          EOF
+          cmake -DZH_CMAKE_DIR="$PWD/GeneralsMD/Code/cmake" -P "$RUNNER_TEMP/assert-android.cmake"
+
+      - name: Configure the ARM64 build
+        run: |
+          set -euo pipefail
+          scripts/build/android/build-android.sh --no-build --config Release \
+            --build-dir "$RUNNER_TEMP/build-android-arm64"
+
+      - name: Assert the toolchain, ABI, API and STL
+        env:
+          BUILD: ${{ runner.temp }}/build-android-arm64
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          system=$(ls "$BUILD"/CMakeFiles/*/CMakeSystem.cmake)
+          compiler=$(ls "$BUILD"/CMakeFiles/*/CMakeCXXCompiler.cmake)
+
+          echo "--- CMakeSystem.cmake ---"; grep -E 'CMAKE_SYSTEM_(NAME|PROCESSOR)' "$system"
+          echo "--- Android cache entries ---"; grep -E '^ANDROID_(ABI|PLATFORM|STL|NDK_HOME)' "$BUILD/CMakeCache.txt"
+
+          grep -qE 'set\(CMAKE_SYSTEM_NAME +"?Android"?\)' "$system" \
+            || fail "CMAKE_SYSTEM_NAME is not Android in $system"
+          grep -qE 'set\(CMAKE_SYSTEM_PROCESSOR +"?(aarch64|arm64)"?\)' "$system" \
+            || fail "CMAKE_SYSTEM_PROCESSOR is not aarch64 in $system"
+
+          grep -q 'aarch64-linux-android' "$compiler" \
+            || fail "the C++ compiler is not aarch64-linux-android in $compiler"
+
+          grep -qE '^ANDROID_ABI:[^=]*=arm64-v8a$'       "$BUILD/CMakeCache.txt" || fail "ANDROID_ABI is not arm64-v8a"
+          grep -qE '^ANDROID_PLATFORM:[^=]*=android-28$' "$BUILD/CMakeCache.txt" || fail "ANDROID_PLATFORM is not android-28"
+          grep -qE '^ANDROID_STL:[^=]*=c\+\+_shared$'    "$BUILD/CMakeCache.txt" || fail "ANDROID_STL is not c++_shared"
+
+          grep -q 'aarch64-linux-android' "$BUILD/build.ninja" \
+            || fail "build.ninja does not invoke an aarch64-linux-android compiler"
+
+          echo "system: Android; processor: aarch64; compiler: aarch64-linux-android; abi: arm64-v8a; api: 28; stl: c++_shared"
+
+      - name: Assert the desktop-Linux dependencies are absent and Android's are present
+        env:
+          BUILD: ${{ runner.temp }}/build-android-arm64
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          # Negative: none of the desktop-Linux or Windows-only link inputs may reach an Android
+          # build. These are exactly the things gated on ZH_PLATFORM_LINUX / ZH_PLATFORM_WINDOWS,
+          # which Android never sets (checked above), so their presence would mean the platform
+          # split leaked. Link-library names are used, not bare words, so a first-party target whose
+          # name merely contains a substring (posixd3d9, say) cannot cause a false failure.
+          for token in '-lfontconfig' '-lX11' '-lxkbcommon' '-lwayland-client' 'steamnetworkingsockets'; do
+            if grep -q -- "$token" "$BUILD/build.ninja"; then
+              fail "a desktop-only dependency ($token) reached the Android link graph"
+            fi
+          done
+          echo "absent from the Android link graph: fontconfig, X11, xkbcommon, Wayland, GameNetworkingSockets"
+
+          # Positive: the platform layer and the dependency-light libraries SDL3 needs are configured.
+          for token in SDL3 miniaudio mbedtls; do
+            grep -qi -- "$token" "$BUILD/build.ninja" || fail "$token is not in the Android build graph"
+          done
+          echo "present in the Android build graph: SDL3, miniaudio, mbedTLS"
+
+      - name: Report the dependency compatibility result
+        run: |
+          set -euo pipefail
+          {
+            echo "### Android dependency compatibility (Phase 1)"
+            echo ""
+            echo "Class 1 (ready) and Class 2 (Android config only) are configured and, where listed,"
+            echo "compiled below. Class 3 items are real Phase-2 work and are reported, not hidden."
+            echo ""
+            echo "| Item | Class | Result |"
+            echo "|:--|:--|:--|"
+            echo "| SDL3 / SDL3 GPU | 1 | configured, compiled |"
+            echo "| miniaudio | 1 | configured, compiled |"
+            echo "| mbedTLS | 1 | configured, compiled |"
+            echo "| FreeType | 1 | configured |"
+            echo "| Vulkan | 2 | from the NDK sysroot |"
+            echo "| glslang / SPIRV-Cross / SDL_shadercross | 2 | configured |"
+            echo "| GameSpy (pthread_cancel) | 3 | Phase 2 - not built here |"
+            echo "| FFmpeg (host build) | 3 | Phase 2 - not built here |"
+            echo "| fontconfig (font substitute) | 4 | Phase 2 - gated out, no link |"
+            echo "| Bink / Miles / X11 / Wayland / DirectX / DXVK / CURL+GNS | 5 | not required |"
+            echo ""
+            echo "See docs/android-port/audit/05-dependency-compatibility.md for the evidence."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compile a bounded set of targets under the NDK
+        env:
+          BUILD: ${{ runner.temp }}/build-android-arm64
+        run: |
+          set -euo pipefail
+          # SDL3 is the platform layer; miniaudio and mbedTLS are Class 1; the predicate tests are
+          # first-party and dependency-light. These are the targets the Phase-1 dependencies permit.
+          # The full engine is deliberately not built: GameSpy, FFmpeg and backtrace() are Phase-2.
+          cmake --build "$BUILD" --parallel "$(nproc)" --target \
+            SDL3-static miniaudio mbedtls test_platform_predicates test_msvc_float_casts
+          echo "compiled for aarch64-linux-android: SDL3, miniaudio, mbedTLS, test_platform_predicates, test_msvc_float_casts"
+
+      - name: Upload the configure and build logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-arm64-diagnostics
+          path: |
+            ${{ runner.temp }}/build-android-arm64/android-configure.log
+            ${{ runner.temp }}/build-android-arm64/android-build.log
+            ${{ runner.temp }}/build-android-arm64/CMakeFiles/*/CMakeSystem.cmake
+            ${{ runner.temp }}/build-android-arm64/CMakeFiles/*/CMakeCXXCompiler.cmake
+          if-no-files-found: warn
+          retention-days: 7

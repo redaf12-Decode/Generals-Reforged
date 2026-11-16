@@ -26,6 +26,18 @@
 
 #include "test_harness.h"
 
+// Compile-time proof, not a run-time check.  The two predicates are macros, so the compiler can prove
+// the invariants on any host - including the Android one, where the point is that __linux__ is defined
+// and ZH_DESKTOP_LINUX must still be 0.  A run-time CHECK would only catch a mistake on a build that
+// got far enough to run.
+static_assert(ZH_ANDROID == 0 || ZH_ANDROID == 1, "ZH_ANDROID is a 0/1 predicate");
+static_assert(ZH_DESKTOP_LINUX == 0 || ZH_DESKTOP_LINUX == 1, "ZH_DESKTOP_LINUX is a 0/1 predicate");
+static_assert(!(ZH_ANDROID && ZH_DESKTOP_LINUX), "Android is never desktop Linux");
+#if defined(__ANDROID__)
+static_assert(ZH_ANDROID == 1, "the NDK defines __ANDROID__, so ZH_ANDROID must be 1");
+static_assert(ZH_DESKTOP_LINUX == 0, "__linux__ is defined on Android too, but this is not desktop Linux");
+#endif
+
 TEST(platform_predicates_are_boolean)
 {
         CHECK(ZH_ANDROID == 0 || ZH_ANDROID == 1);

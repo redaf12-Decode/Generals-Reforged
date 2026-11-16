@@ -35,6 +35,27 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/DetectPlatform.cmake)
 zh_detect_platform("${CMAKE_SYSTEM_NAME}" "${ANDROID}"
   ZH_PLATFORM_WINDOWS ZH_PLATFORM_POSIX ZH_PLATFORM_MACOS ZH_PLATFORM_LINUX ZH_PLATFORM_ANDROID)
 
+# The architecture, which is a separate axis from the platform: Android arm64-v8a is AArch64, not
+# "Linux on x86-64".  The only architecture tests in the tree used to be
+# `CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64"`, which is MSVC's own spelling and is empty
+# under Clang and GCC - on the NDK's Clang it reads as "not ARM64", the opposite of the truth.  The
+# decision is one function, in cmake/DetectArchitecture.cmake, so Tests/test_architecture_detection.cmake
+# can check every row of the matrix without a toolchain.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/DetectArchitecture.cmake)
+zh_detect_architecture("${CMAKE_SYSTEM_PROCESSOR}" "${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}" "${ANDROID_ABI}"
+  ZH_ARCH_X86_64 ZH_ARCH_AARCH64 ZH_ARCH_KNOWN)
+
+# Android is arm64-v8a only (scripts/build/android/android.toolchain.cmake states the ABI once), so an
+# Android configure that is not AArch64 is refused here, with the fix named, rather than surfacing as
+# a wrong-architecture link error much later.  The desktop platforms are not constrained by this: the
+# pointer-size guard below is their only architecture rule, and it is unchanged.
+if(ZH_PLATFORM_ANDROID AND NOT ZH_ARCH_AARCH64)
+  message(FATAL_ERROR
+    "The Android build targets arm64-v8a (AArch64) only, but CMAKE_SYSTEM_PROCESSOR is "
+    "'${CMAKE_SYSTEM_PROCESSOR}'. Configure with -DANDROID_ABI=arm64-v8a (scripts/build/android/"
+    "build-android.sh does this), or point the NDK toolchain at the AArch64 compiler.")
+endif()
+
 # The other half of the split.  A target that only Windows can build is gated out below; a target
 # whose sources do not compile under clang *yet* is a different thing, and this is it.  Those stay
 # defined on macOS, so that tasks B1-B6 have something to drive with --target and see real errors
@@ -448,8 +469,10 @@ set(WWLIB_SOURCES
   ${WW}/WWLib/wwfile.cpp     ${WW}/WWLib/wwfont.cpp     ${WW}/WWLib/wwstring.cpp
   ${WW}/WWLib/xpipe.cpp      ${WW}/WWLib/xstraw.cpp     ${WW}/WWLib/xsurface.cpp)
 # Windows on Arm leaves mpu.cpp out, as the build off Windows does (the POSIX list below says why nothing
-# needs it): its four functions read the x86 time-stamp counter, which ARM64 does not have.
-if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+# needs it): its four functions read the x86 time-stamp counter, which ARM64 does not have.  ZH_ARCH_AARCH64
+# (cmake/DetectArchitecture.cmake), not CMAKE_CXX_COMPILER_ARCHITECTURE_ID, so the answer is the same
+# whether the compiler names the architecture in MSVC's spelling or Clang's.
+if(ZH_ARCH_AARCH64)
   list(REMOVE_ITEM WWLIB_SOURCES ${WW}/WWLib/mpu.cpp)
 endif()
 # Win32 subsystem code, left out of wwlib everywhere but Windows.  Each of these is a whole file of
@@ -1954,8 +1977,10 @@ list(FILTER GAMEENGINEDEVICE_SOURCES EXCLUDE REGEX "/GpuParticlesUnsupported\\.c
 # format the video player asks for.  MilesAudioManager.cpp and BinkVideoPlayer.cpp are unchanged and
 # still call AIL_* and Bink*; the reconstructed headers in Miles6/include and Bink/include are still
 # the declarations.  miles_smoke and bink_smoke are the checks.
-# Windows on ARM64 links its own build, dist-arm64: Tools/ffmpeg-build.bat arm64 makes it.
-if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+# Windows on ARM64 links its own build, dist-arm64: Tools/ffmpeg-build.bat arm64 makes it.  ZH_ARCH_AARCH64
+# (cmake/DetectArchitecture.cmake) is the same answer the MSVC-spelled test gave, without depending on
+# one compiler's macro spelling.
+if(ZH_ARCH_AARCH64)
   set(FFMPEG_DIR ${LIBSRC}/FFmpeg/dist-arm64)
 else()
   set(FFMPEG_DIR ${LIBSRC}/FFmpeg/dist)
@@ -2458,6 +2483,12 @@ set(TESTS ${CMAKE_CURRENT_SOURCE_DIR}/Tests)
 # host.  Pure CMake, so it needs no shell and runs on every platform, Windows included.
 add_test(NAME platform_detection_check
          COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_platform_detection.cmake)
+
+# The architecture matrix of cmake/DetectArchitecture.cmake, checked the same way - the Android
+# arm64-v8a row (AArch64, never x86-64) included, which a configure on an x86_64 host could not
+# otherwise reach.
+add_test(NAME architecture_detection_check
+         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_architecture_detection.cmake)
 
 # Shared runner for the micro-harness in Tests/test_harness.h; every test
 # binary links it instead of writing its own main().
