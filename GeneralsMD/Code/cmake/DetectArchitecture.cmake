@@ -51,17 +51,31 @@ function(zh_detect_architecture zh_system_processor zh_compiler_arch_id zh_andro
   string(TOLOWER "${zh_compiler_arch_id}" _zh_id)
   string(TOLOWER "${zh_android_abi}" _zh_abi)
 
-  foreach(_zh_candidate "${_zh_proc}" "${_zh_id}" "${_zh_abi}")
-    # AArch64: the NDK's "aarch64", Apple's "arm64", the ABI name "arm64-v8a", the ARMv8 family.
-    # "armeabi-v7a" (32-bit) deliberately does not match.
-    if(_zh_candidate MATCHES "^(aarch64|arm64.*|armv8.*)$")
+  # The NDK's ABI, when set, decides on its own: it names the target architecture exactly, so it wins
+  # over a host-derived CMAKE_SYSTEM_PROCESSOR a toolchain left in place.  Without this an Android
+  # configure whose processor leaked "x86_64" from the host would read as both x86-64 and AArch64.
+  if(_zh_abi)
+    if(_zh_abi MATCHES "^(aarch64|arm64.*|armv8.*)$")
       set(_zh_aarch64 TRUE)
       set(_zh_known TRUE)
-    elseif(_zh_candidate MATCHES "^(x86_64|amd64|x64)$")
+    elseif(_zh_abi MATCHES "^(x86_64|amd64|x64)$")
       set(_zh_x86_64 TRUE)
       set(_zh_known TRUE)
     endif()
-  endforeach()
+    # Any other ABI (armeabi-v7a, armeabi, x86, mips) is an architecture this build does not name:
+    # known stays FALSE, which is what a caller refuses on.
+  else()
+    foreach(_zh_candidate "${_zh_proc}" "${_zh_id}")
+      # AArch64: the NDK's "aarch64", Apple's "arm64", the ARMv8 family.  Not armeabi-v7a (32-bit).
+      if(_zh_candidate MATCHES "^(aarch64|arm64.*|armv8.*)$")
+        set(_zh_aarch64 TRUE)
+        set(_zh_known TRUE)
+      elseif(_zh_candidate MATCHES "^(x86_64|amd64|x64)$")
+        set(_zh_x86_64 TRUE)
+        set(_zh_known TRUE)
+      endif()
+    endforeach()
+  endif()
 
   set(${zh_out_x86_64} ${_zh_x86_64} PARENT_SCOPE)
   set(${zh_out_aarch64} ${_zh_aarch64} PARENT_SCOPE)

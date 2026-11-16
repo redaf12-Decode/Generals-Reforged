@@ -58,7 +58,8 @@ message(STATUS "architecture detection matrix:")
 # module: none of them may be read as x86-64.
 expect_arch("Android arm64 (processor)"  "aarch64"   ""      "arm64-v8a" FALSE TRUE  TRUE)
 expect_arch("Android arm64 (abi only)"   ""          ""      "arm64-v8a" FALSE TRUE  TRUE)
-expect_arch("Android arm64 (host leaks)" "x86_64"    ""      "arm64-v8a" TRUE  TRUE  TRUE)
+# A host-derived CMAKE_SYSTEM_PROCESSOR must not leak into an Android answer: the ABI decides alone.
+expect_arch("Android arm64 (host leaks)" "x86_64"    ""      "arm64-v8a" FALSE TRUE  TRUE)
 # Apple Silicon and a Windows ARM64 build.
 expect_arch("macOS arm64"                "arm64"     ""      ""          FALSE TRUE  TRUE)
 expect_arch("Windows ARM64 (MSVC id)"    "ARM64"     "ARM64" ""          FALSE TRUE  TRUE)
