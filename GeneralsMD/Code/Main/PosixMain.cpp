@@ -433,11 +433,45 @@ static Bool takeOneCopyLock( void )
 	return TRUE;	// the descriptor stays open, and the lock with it, until the process ends
 }
 
+#if ZH_ANDROID
+/** Android has no HOME - bionic's environment carries none and getpwuid has no passwd database - so
+	* findHomeDirectory answers nothing and findUserDataDirectory (HOME, and XDG_DATA_HOME, under the
+	* XDG convention, EarlyOptions.h) answers nothing either.  Everything the engine writes goes
+	* through it: Options.ini, saves, replays, the crash report, Registry.ini's install path, the
+	* one-copy lock.  Without it the game cannot save a setting or remember where the player's data is.
+	*
+	* SDL knows the place: SDL_GetAndroidInternalStoragePath is the activity's getFilesDir(),
+	* /data/user/0/<package>/files, private to the app and the one directory it may always write.
+	* Pointing HOME at it lets the existing XDG resolution name <HOME>/.local/share/Command and
+	* Conquer Generals Zero Hour Data with no new convention.  SDL's JNI context is ready before
+	* SDL_main runs (SDLActivity calls nativeSetupJNI first), so this works this early.
+	*
+	* HOME is set only when it is unset, so a harness that brings one keeps it. */
+static void establishAndroidStorage()
+{
+	const char *home = getenv( "HOME" );
+	if (home != NULL && home[0] == '/')
+		return;
+	const char *files = SDL_GetAndroidInternalStoragePath();
+	if (files == NULL || files[0] != '/')
+	{
+		fprintf( stderr, "generals: SDL could not name the app's internal storage; "
+			"settings, saves and the crash report cannot be written\n" );
+		return;
+	}
+	setenv( "HOME", files, 1 );
+}
+#endif
+
 // main =======================================================================
 /** Application entry point */
 //=============================================================================
 int main( int argc, char *argv[] )
 {
+#if ZH_ANDROID
+	// Before the crash handlers and the user data directory, both of which need HOME.
+	establishAndroidStorage();
+#endif
 	// Before anything else, and before another thread exists: a crash from here on leaves
 	// ReleaseCrashInfo.txt, as WinMain's _set_se_translator and SetUnhandledExceptionFilter make it on Windows.
 	installCrashHandlers();

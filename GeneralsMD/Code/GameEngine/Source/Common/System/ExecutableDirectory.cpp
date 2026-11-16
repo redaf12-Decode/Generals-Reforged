@@ -118,7 +118,17 @@ Bool isExecutableInLinuxPackage( void )
 
 Bool isExecutablePackaged( void )
 {
+#if ZH_ANDROID
+	/* An APK is a package, and the two things this decides are both already true there.  There is no
+	 * executable directory to run in - the code is libmain.so inside the APK, and readExecutablePath
+	 * answers "" - so the "run where you are" posture an unpacked build has cannot be taken.  And the
+	 * game's data is the player's own, in a folder they pick and remember (doc 08), not a directory the
+	 * app ships: the packaged posture is the one that asks for it.  This also sends the debug logs to
+	 * the user data directory (getLogDirectory) rather than to an "" the read-only root would refuse. */
+	return TRUE;
+#else
 	return isExecutableInAppBundle() || isExecutableInLinuxPackage();
+#endif
 }
 
 void getLogDirectory( char *buf, size_t size, Bool keepTrailingSeparator )

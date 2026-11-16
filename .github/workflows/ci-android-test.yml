@@ -1,8 +1,8 @@
-# Android ARM64 platform foundation check (Phase 1).
+# Android ARM64 platform foundation and runtime-integration check (Phase 1, Phase 2).
 #
 # This is a dedicated workflow, not part of linux-release.yml, because it validates a different
 # question: does the project configure and compile for Android arm64-v8a at all. It does not package
-# an APK (Phase 1 stops at the platform foundation) and it does not run the desktop test suite.
+# an APK and it does not run the desktop test suite.
 #
 # What it proves, in order:
 #   1. the Android SDK/NDK environment is set up from pinned, checksummed Google archives;
@@ -12,13 +12,15 @@
 #      even though the host is x86-64;
 #   4. the ARM64 configure succeeds with CMAKE_SYSTEM_NAME=Android, the AArch64 NDK Clang,
 #      ABI arm64-v8a, API 28 and c++_shared, and no desktop-Linux library reaches the link graph;
-#   5. a bounded set of targets - SDL3 (third-party platform layer), miniaudio, mbedTLS and the
-#      first-party predicate tests - actually compiles under the NDK. A successful configure is not
-#      treated as proof of compilation.
+#   5. the platform layer and a bounded set of targets compile quickly, as a fast signal;
+#   6. the whole engine links as libmain.so for arm64-v8a (Phase 2): the `generals` target builds
+#      PosixMain.cpp as the shared library SDL3's SDLActivity loads, exercising every dependency in
+#      the link graph (GameSpy, FFmpeg, FreeType, mbedTLS, SDL3 GPU). The result is asserted to be
+#      an AArch64 shared object exporting SDL_main and linking Android system libraries only. A
+#      successful configure is not treated as proof of compilation.
 #
-# Dependencies that are known not to be Android-ready in Phase 1 (GameSpy's pthread_cancel, the
-# host-built FFmpeg, fontconfig) are reported, not hidden and not worked around by disabling them:
-# see docs/android-port/audit/05-dependency-compatibility.md.
+# Dependencies that are not Android-ready are reported, not hidden and not worked around by
+# disabling them: see docs/android-port/audit/05-dependency-compatibility.md.
 
 name: CI Android Test
 
@@ -298,23 +300,25 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "### Android dependency compatibility (Phase 1)"
+            echo "### Android dependency compatibility (Phase 1, Phase 2)"
             echo ""
             echo "Class 1 (ready) and Class 2 (Android config only) are configured and, where listed,"
-            echo "compiled below. Class 3 items are real Phase-2 work and are reported, not hidden."
+            echo "compiled below. The Class 3 items are built by the libmain.so link in Phase 2."
             echo ""
             echo "| Item | Class | Result |"
             echo "|:--|:--|:--|"
             echo "| SDL3 / SDL3 GPU | 1 | configured, compiled |"
             echo "| miniaudio | 1 | configured, compiled |"
             echo "| mbedTLS | 1 | configured, compiled |"
-            echo "| FreeType | 1 | configured |"
+            echo "| FreeType | 1 | configured, compiled |"
             echo "| Vulkan | 2 | from the NDK sysroot |"
-            echo "| glslang / SPIRV-Cross / SDL_shadercross | 2 | configured |"
-            echo "| GameSpy (pthread_cancel) | 3 | Phase 2 - not built here |"
-            echo "| FFmpeg (host build) | 3 | Phase 2 - not built here |"
-            echo "| fontconfig (font substitute) | 4 | Phase 2 - gated out, no link |"
-            echo "| Bink / Miles / X11 / Wayland / DirectX / DXVK / CURL+GNS | 5 | not required |"
+            echo "| glslang / SPIRV-Cross / SDL_shadercross | 2 | configured, compiled |"
+            echo "| GameSpy (pthread_cancel patched) | 3 | built and linked into libmain.so |"
+            echo "| FFmpeg 8.1.2 (cross-built for aarch64) | 3 | built and linked into libmain.so |"
+            echo "| Bink (FFmpeg-backed) | 3 | compiled into libmain.so |"
+            echo "| fontconfig (font substitute) | 4 | gated out, no link |"
+            echo "| Miles (miniaudio-backed) | 2 | compiled into libmain.so |"
+            echo "| X11 / Wayland / DirectX / DXVK / CURL+GNS | 5 | not required |"
             echo ""
             echo "See docs/android-port/audit/05-dependency-compatibility.md for the evidence."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -325,11 +329,63 @@ jobs:
         run: |
           set -euo pipefail
           # SDL3 is the platform layer; miniaudio and mbedTLS are Class 1; the predicate tests are
-          # first-party and dependency-light. These are the targets the Phase-1 dependencies permit.
-          # The full engine is deliberately not built: GameSpy, FFmpeg and backtrace() are Phase-2.
+          # first-party and dependency-light. A fast signal before the full engine link below.
           cmake --build "$BUILD" --parallel "$(nproc)" --target \
             SDL3-static miniaudio mbedtls test_platform_predicates test_msvc_float_casts
           echo "compiled for aarch64-linux-android: SDL3, miniaudio, mbedTLS, test_platform_predicates, test_msvc_float_casts"
+
+      - name: Build the engine as libmain.so for arm64-v8a
+        env:
+          BUILD: ${{ runner.temp }}/build-android-arm64
+        run: |
+          set -euo pipefail
+          # The `generals` target is PosixMain.cpp built as the shared library SDL3's SDLActivity
+          # loads (add_library(main SHARED), OUTPUT_NAME main). Linking it exercises the whole engine
+          # and every dependency in the graph - GameSpy, FFmpeg (cross-built for aarch64 here),
+          # FreeType, mbedTLS, SDL3 GPU, the SdlDevice/W3DDevice layers - so a link failure names a
+          # real Phase-2 problem rather than being hidden behind a configure that passed.
+          cmake --build "$BUILD" --parallel "$(nproc)" --target generals
+          echo "linked the engine for aarch64-linux-android: $BUILD/libmain.so"
+
+      - name: Assert libmain.so is an AArch64 shared object exporting SDL_main
+        env:
+          BUILD: ${{ runner.temp }}/build-android-arm64
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          [ -f "$BUILD/libmain.so" ] || fail "the engine did not produce libmain.so"
+
+          # The NDK's own readelf, found through the compiler CMake recorded.
+          compiler=$(ls "$BUILD"/CMakeFiles/*/CMakeCXXCompiler.cmake)
+          cxx=$(sed -n 's/^set(CMAKE_CXX_COMPILER "\(.*\)")$/\1/p' "$compiler" | head -n 1)
+          [ -n "$cxx" ] || fail "CMakeCXXCompiler.cmake has no CMAKE_CXX_COMPILER"
+          readelf_tool="$(dirname "$cxx")/llvm-readelf"
+          [ -x "$readelf_tool" ] || fail "the NDK llvm-readelf is missing: $readelf_tool"
+
+          echo "--- libmain.so ELF header ---"
+          "$readelf_tool" -h "$BUILD/libmain.so" | grep -E 'Class:|Machine:|Type:'
+          "$readelf_tool" -h "$BUILD/libmain.so" | grep -q 'Machine: *AArch64' \
+            || fail "libmain.so is not an AArch64 object"
+          "$readelf_tool" -h "$BUILD/libmain.so" | grep -qE 'Type: *DYN' \
+            || fail "libmain.so is not a shared object (DYN)"
+
+          # SDL3's SDLActivity dlsym()s SDL_main from libmain.so: the entry point must be exported.
+          "$readelf_tool" --dyn-syms "$BUILD/libmain.so" | grep -qE '[[:space:]]SDL_main$' \
+            || fail "libmain.so does not export SDL_main (SDLActivity cannot start the game)"
+
+          echo "--- libmain.so NEEDED ---"
+          "$readelf_tool" -d "$BUILD/libmain.so" | grep -E 'NEEDED|SONAME'
+          "$readelf_tool" -d "$BUILD/libmain.so" | grep -q 'libc++_shared.so' \
+            || fail "libmain.so does not link the Android shared C++ runtime (c++_shared)"
+          # No desktop-Linux library may have reached the shared object's dependencies.
+          for token in libX11 libfontconfig libwayland libxkbcommon libGL.so; do
+            if "$readelf_tool" -d "$BUILD/libmain.so" | grep -q -- "$token"; then
+              fail "a desktop-only library ($token) reached libmain.so's NEEDED list"
+            fi
+          done
+
+          echo "libmain.so: AArch64 shared object, exports SDL_main, links Android system libraries only"
 
       - name: Upload the configure and build logs
         if: always()
