@@ -1,11 +1,14 @@
 # CMake build trees. build-perf/ is the -DPERF_TIMERS=ON measurement tree, which lives beside the
 # shipping one so both exes can sit in Run/ at once (THREADING-ROADMAP.md section 0).
-build/
+# build/ is anchored to the repository root, so scripts/build/ - build scripts, not a build tree -
+# is not caught by it.  build-android-arm64/ is build-android.sh's tree.
+/build/
 build-perf/
 build-fx/
 # build-mac/ and build-linux/ are build-macos.sh's and build-linux.sh's trees (see PORTING.md).
 build-mac/
 build-linux/
+build-android-arm64/
 
 # Build/test logs from the CMake port loop
 *.log
