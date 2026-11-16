@@ -31,7 +31,13 @@
 #include FT_TRUETYPE_TABLES_H
 #include FT_TRUETYPE_TAGS_H
 
-#if !defined(__APPLE__) || defined(ZH_GLYPHS_USE_FONTCONFIG)
+#include "Platform/PlatformPredicates.h"        // ZH_DESKTOP_LINUX
+
+// fontconfig is a desktop-Linux library; the NDK sysroot has no <fontconfig/fontconfig.h>, and Android
+// defines __linux__ too, so the guard says desktop (ZH_DESKTOP_LINUX).  Android then takes the no-fontconfig
+// branch below - which reads fixed file names, as macOS does - so its own font discovery is still to come
+// (docs/android-port/architecture/11-dependency-inventory.md).
+#if ZH_DESKTOP_LINUX || defined(ZH_GLYPHS_USE_FONTCONFIG)
 #include <fontconfig/fontconfig.h>
 #define ZH_GLYPHS_FONTCONFIG 1
 #endif

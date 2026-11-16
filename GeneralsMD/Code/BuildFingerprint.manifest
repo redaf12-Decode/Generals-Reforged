@@ -2393,6 +2393,7 @@ Libraries/Include/Platform/ModernWaterBuild.h
 Libraries/Include/Platform/ModernWaterConfig.h
 Libraries/Include/Platform/ModernWaterMaterial.h
 Libraries/Include/Platform/MsvcFloatCasts.h
+Libraries/Include/Platform/PlatformPredicates.h
 Libraries/Include/Platform/PosixD3D9/d3d9.h
 Libraries/Include/Platform/PosixD3D9/d3d9caps.h
 Libraries/Include/Platform/PosixD3D9/d3d9types.h
@@ -3669,6 +3670,7 @@ Tests/test_observer_camera.inc
 Tests/test_online.cpp
 Tests/test_pixelcentre.cpp
 Tests/test_platform_detection.cmake
+Tests/test_platform_predicates.cpp
 Tests/test_posix_draw_resolve.cpp
 Tests/test_posix_gpu_draw.cpp
 Tests/test_posix_reset.cpp

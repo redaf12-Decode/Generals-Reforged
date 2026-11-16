@@ -27,6 +27,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
 
 #include "Common/ExecutableDirectory.h"
+#include "Platform/PlatformPredicates.h"        // ZH_DESKTOP_LINUX, ZH_ANDROID
 #if !defined(_WIN32)
 #include "Common/EarlyOptions.h"	// findUserDataDirectory, for getLogDirectory
 #endif
@@ -39,7 +40,7 @@
 #include <limits.h>
 #include <mach-o/dyld.h>
 #include <stdlib.h>
-#elif defined(__linux__)
+#elif ZH_DESKTOP_LINUX
 #include <unistd.h>
 #endif
 
@@ -48,7 +49,9 @@
 	 resolved file.  Darwin's _NSGetExecutablePath is the path the program was started by - through a
 	 symbolic link, the link's directory (measured) - so it goes through realpath, and the two agree:
 	 the directory the binary itself is in.  A path that does not fit is "", never a truncated one,
-	 which would name some other directory. */
+	 which would name some other directory.  Android is not the Linux branch: /proc/self/exe there is
+	 the zygote image (/system/bin/app_process64), not the app's own code (libmain.so), so the answer
+	 is "" and the callers use app-private storage instead. */
 static void readExecutablePath( char *buf, size_t size )
 {
 #if defined(__APPLE__)
@@ -58,9 +61,11 @@ static void readExecutablePath( char *buf, size_t size )
 	if (_NSGetExecutablePath( started, &length ) != 0 || realpath( started, resolved ) == NULL
 			|| strlcpy( buf, resolved, size ) >= size)
 		buf[0] = 0;
-#elif defined(__linux__)
+#elif ZH_DESKTOP_LINUX
 	const ssize_t length = readlink( "/proc/self/exe", buf, size );		// readlink does not terminate
 	buf[ (length > 0 && (size_t)length < size) ? length : 0 ] = 0;		// length == size: it may not all be there
+#elif ZH_ANDROID
+	buf[0] = 0;		// /proc/self/exe is the zygote, not the app; see above
 #else
 #error "getExecutableDirectory: find the running executable's path on this platform"
 #endif

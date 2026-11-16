@@ -2517,6 +2517,11 @@ add_lib_test(test_postshader postprocess)
 add_lib_test(test_msvc_float_casts)
 target_include_directories(test_msvc_float_casts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Libraries/Include)
 
+# Platform/PlatformPredicates.h: the C++ twin of cmake/DetectPlatform.cmake.  On Android it is the
+# proof that ZH_DESKTOP_LINUX is 0 there even though the NDK defines __linux__ (Task 2.1).
+add_lib_test(test_platform_predicates)
+target_include_directories(test_platform_predicates PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Libraries/Include)
+
 # MilesAudioDevice/AudioMixPolicy.h: the battle mix's budget and folding arithmetic.
 add_lib_test(test_audio_mix_policy)
 target_include_directories(test_audio_mix_policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Include)

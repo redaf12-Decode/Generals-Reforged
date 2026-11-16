@@ -114,7 +114,12 @@ class STLSpecialAlloc;
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+// <sys/timeb.h> (ftime, struct timeb) is a glibc/Darwin header Android's bionic does not have.  Nothing
+// in the tree calls ftime - the only uses of "timeb" are this include - so Android skips it and loses
+// nothing.  See docs/android-port/architecture/12-platform-macro-audit.md.
+#if !defined(__ANDROID__)
 #include <sys/timeb.h>
+#endif
 #include <sys/types.h>
 #include <time.h>
 #include <wchar.h>
