@@ -243,9 +243,16 @@ jobs:
 
           triple=$("$wrapper" -dumpmachine)
           echo "compiler target triple: $triple"
+          # The NDK's Clang reports the triple as "aarch64-unknown-linux-android28" (an optional vendor
+          # field and the API level appended), so match the two facts that matter rather than one
+          # exact spelling: the target is aarch64, and it is Android.
           case "$triple" in
-            aarch64-linux-android*) ;;
-            *) fail "the compiler targets '$triple', not aarch64-linux-android" ;;
+            aarch64*) ;;
+            *) fail "the compiler targets '$triple', which is not an aarch64 target" ;;
+          esac
+          case "$triple" in
+            *android*) ;;
+            *) fail "the compiler targets '$triple', which is not an Android target" ;;
           esac
 
           printf 'int zh_arch_probe(void) { return 0; }\n' > "$RUNNER_TEMP/arch-probe.cpp"
