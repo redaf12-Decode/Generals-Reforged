@@ -233,8 +233,8 @@ jobs:
           # NDK's own arm64 compiler what it targets, then compile a translation unit with it and read
           # the machine back out of the object. The wrapper's name and its -dumpmachine both carry the
           # aarch64-linux-android triple, and the object's ELF header must say AArch64.
-          cxx=$(sed -n 's/^CMAKE_CXX_COMPILER:[^=]*=//p' "$BUILD/CMakeCache.txt" | head -n 1)
-          [ -n "$cxx" ] || fail "CMakeCache.txt has no CMAKE_CXX_COMPILER"
+          cxx=$(sed -n 's/^set(CMAKE_CXX_COMPILER "\(.*\)")$/\1/p' "$compiler" | head -n 1)
+          [ -n "$cxx" ] || fail "CMakeCXXCompiler.cmake has no CMAKE_CXX_COMPILER"
           prebuilt=$(dirname "$cxx")
           wrapper="$prebuilt/aarch64-linux-android${ANDROID_API}-clang++"
           readelf_tool="$prebuilt/llvm-readelf"
