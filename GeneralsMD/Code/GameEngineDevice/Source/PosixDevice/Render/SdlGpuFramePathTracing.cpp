@@ -133,6 +133,7 @@ bool SdlGpuFrame::Prepare_Water_Path(const std::vector<WaterPathTracing::Triangl
         pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
         pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.enable_depth_clip = true;
         pipeline.target_info.color_target_descriptions = &target;
         pipeline.target_info.num_color_targets = 1;
         p.Pipeline = SDL_CreateGPUGraphicsPipeline(GpuDevice,&pipeline);

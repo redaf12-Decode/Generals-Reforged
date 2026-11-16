@@ -38,6 +38,7 @@
 #include "Platform/WaterCleanPrecompute.h"
 #include "Platform/RenderTypes.h"
 #include "Platform/WaterFftSpectrum.h"
+#include "SdlGpuDeviceFeatures.h"
 
 #include <stdint.h>
 #include <string>
@@ -322,6 +323,10 @@ public:
 	bool Upload_Back_Buffer(const std::vector<uint8_t> & bgra);
 
 	SDL_GPUDevice * Device() const { return GpuDevice; }
+	/// Whether the device was made with the optional sampler-anisotropy feature.  False when the
+	/// driver lacked it and Create_Gpu_Device dropped it (SdlGpuDeviceFeatures.h); the sampler cache
+	/// then asks for linear filtering instead, as D3D9 does on a device whose caps lack it.
+	bool Anisotropy_Available() const { return Sdl_Gpu_Features_For_Attempt(DeviceAttempt).Anisotropy; }
 	SDL_GPUTexture * Back_Buffer() const { return BackBuffer; }
 	/// What the last Present showed: the back buffer is copied here at each Present, so the front buffer
 	/// (GetFrontBufferData) is the presented picture whenever it is asked for (A3d).
@@ -476,6 +481,7 @@ private:
 	bool Submit_Flush(struct SDL_GPUCommandBuffer * commands);
 
 	SdlGpuFrame();
+	void Create_Gpu_Device(bool debug);
 	bool Create_Targets(unsigned int width, unsigned int height);
 	void Release_Targets();
 	bool Record_Batch(struct SDL_GPUCommandBuffer * commands);
@@ -493,6 +499,8 @@ private:
 	bool Upload_Ramp(struct SDL_GPUCommandBuffer * commands, const uint16_t (*ramp)[256]);
 
 	SDL_GPUDevice * GpuDevice;
+	unsigned int DeviceAttempt = 0;                 ///< which feature set made GpuDevice (SdlGpuDeviceFeatures.h)
+	std::string DeviceError;                        ///< why no device was made, for Create's error
 	SDL_Window * Window;				///< C2's, claimed; null for an offscreen frame
 	SDL_GPUTexture * BackBuffer;
 	SDL_GPUTexture * DepthStencil;

@@ -489,8 +489,9 @@ bool Sdl_Sampler_Description(const RenderUInt32 ss[14], void *create_info, std::
 	return true;
 }
 
-SdlSamplerCache::SdlSamplerCache(SDL_GPUDevice *device) :
+SdlSamplerCache::SdlSamplerCache(SDL_GPUDevice *device, bool anisotropy_available) :
 	Device(device),
+	AnisotropyAvailable(anisotropy_available),
 	RecentSize(0), LastRecent(0), NextRecent(0), TableLookups(0)
 {
 }
@@ -547,6 +548,13 @@ SDL_GPUSampler *SdlSamplerCache::Sampler(const RenderUInt32 sampler_states[14])
 	std::string refusal;
 	SDL_GPUSampler *sampler = NULL;
 	if (Sdl_Sampler_Description(sampler_states, &info, refusal)) {
+		// A device made without the sampler-anisotropy feature would refuse an anisotropic
+		// sampler (SDL_gpu.h: enable_anisotropy requires the feature), so the request becomes
+		// plain linear filtering, as D3D9 falls back on a device whose caps lack it.
+		if (info.enable_anisotropy && !AnisotropyAvailable) {
+			info.enable_anisotropy = false;
+			info.max_anisotropy = 1.0f;
+		}
 		const double started = Sdl_Creation_Log_Asked() ? Sdl_Now_Ms() : 0.0;
 		sampler = SDL_CreateGPUSampler(Device, &info);
 		if (Sdl_Creation_Log_Asked()) {

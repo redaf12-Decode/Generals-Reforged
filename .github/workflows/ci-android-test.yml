@@ -1,4 +1,4 @@
-# Android ARM64 platform foundation and runtime-integration check (Phase 1, Phase 2).
+# Android ARM64 platform foundation and runtime-integration check (Phase 1, Phase 2, Phase 3).
 #
 # This is a dedicated workflow, not part of linux-release.yml, because it validates a different
 # question: does the project configure and compile for Android arm64-v8a at all. It does not package
@@ -13,14 +13,18 @@
 #   4. the ARM64 configure succeeds with CMAKE_SYSTEM_NAME=Android, the AArch64 NDK Clang,
 #      ABI arm64-v8a, API 28 and c++_shared, and no desktop-Linux library reaches the link graph;
 #   5. the platform layer and a bounded set of targets compile quickly, as a fast signal;
-#   6. the whole engine links as libmain.so for arm64-v8a (Phase 2): the `generals` target builds
+#   6. the SDL3 Vulkan GPU backend is compiled for Android (Phase 3): the generated build config has
+#      SDL_GPU_VULKAN, and the SDL3-GPU renderer and its device-feature/depth-format code are in the
+#      graph - so the graphics path this phase changes is reachable and aarch64-clean;
+#   7. the whole engine links as libmain.so for arm64-v8a (Phase 2): the `generals` target builds
 #      PosixMain.cpp as the shared library SDL3's SDLActivity loads, exercising every dependency in
 #      the link graph (GameSpy, FFmpeg, FreeType, mbedTLS, SDL3 GPU). The result is asserted to be
 #      an AArch64 shared object exporting SDL_main and linking Android system libraries only. A
 #      successful configure is not treated as proof of compilation.
 #
 # Dependencies that are not Android-ready are reported, not hidden and not worked around by
-# disabling them: see docs/android-port/audit/05-dependency-compatibility.md.
+# disabling them: see docs/android-port/audit/05-dependency-compatibility.md. The Phase-3 graphics
+# changes are described in docs/android-port/architecture/13-android-vulkan-rendering.md.
 
 name: CI Android Test
 
@@ -329,10 +333,40 @@ jobs:
         run: |
           set -euo pipefail
           # SDL3 is the platform layer; miniaudio and mbedTLS are Class 1; the predicate tests are
-          # first-party and dependency-light. A fast signal before the full engine link below.
+          # first-party and dependency-light. The two GPU self-checks are dependency-light too (one
+          # links only SDL3's headers, one links nothing but its own translation unit), so they compile
+          # here as a fast signal that the Phase-3 device-feature and depth-format code is
+          # aarch64-clean. A fast signal before the full engine link below.
           cmake --build "$BUILD" --parallel "$(nproc)" --target \
-            SDL3-static miniaudio mbedtls test_platform_predicates test_msvc_float_casts
-          echo "compiled for aarch64-linux-android: SDL3, miniaudio, mbedTLS, test_platform_predicates, test_msvc_float_casts"
+            SDL3-static miniaudio mbedtls test_platform_predicates test_msvc_float_casts \
+            test_sdl_gpu_device_features sdl_gpu_depth_format_selfcheck
+          echo "compiled for aarch64-linux-android: SDL3, miniaudio, mbedTLS, the predicate tests, the GPU device-feature and depth-format self-checks"
+
+      - name: Assert the SDL3 Vulkan GPU backend is compiled for Android
+        env:
+          BUILD: ${{ runner.temp }}/build-android-arm64
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          # SDL3 has exactly three GPU backends (Metal, D3D12, Vulkan) and no GLES one, and on Android
+          # only Vulkan is enabled (SDL_build_config_android.h). The generated build config is the
+          # proof: SDL3's own CMakeLists file(GENERATE)s it from the platform config, so this is the
+          # header SDL3 actually compiles against for this ABI, not the committed source.
+          config=$(find "$BUILD" -path '*/build_config/SDL_build_config.h' | head -n 1)
+          [ -n "$config" ] || fail "SDL3's generated build_config/SDL_build_config.h was not found under $BUILD"
+          echo "--- $config ---"
+          grep -E 'SDL_GPU_VULKAN|SDL_VIDEO_VULKAN' "$config" || true
+          grep -qE '^#define SDL_GPU_VULKAN 1' "$config" \
+            || fail "SDL_GPU_VULKAN is not enabled in the Android SDL3 build config: the game has no GPU backend on Android"
+
+          # The engine's renderer is the SDL3-GPU one (posixd3d9), and it must be in the Android graph:
+          # if it were gated out, libmain.so would link without a renderer and the Vulkan work would be
+          # unreachable. The device-feature fallback and the depth-format self-check are its own code.
+          for token in posixd3d9 SdlGpuDeviceFeatures SdlGpuFrame; do
+            grep -qi -- "$token" "$BUILD/build.ninja" || fail "$token is not in the Android build graph"
+          done
+          echo "SDL_GPU_VULKAN is on for Android; the SDL3-GPU renderer and its Phase-3 code are in the graph"
 
       - name: Build the engine as libmain.so for arm64-v8a
         env:

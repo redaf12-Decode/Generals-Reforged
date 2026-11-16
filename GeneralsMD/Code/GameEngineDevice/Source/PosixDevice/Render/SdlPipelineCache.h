@@ -128,7 +128,7 @@ bool Sdl_Sampler_Description(const RenderUInt32 sampler_states[14], void *create
 class SdlSamplerCache
 {
 public:
-	explicit SdlSamplerCache(SDL_GPUDevice *device);
+	explicit SdlSamplerCache(SDL_GPUDevice *device, bool anisotropy_available = true);
 	~SdlSamplerCache();
 	/// Null for a refusal (Refusal() says why) or when the device refuses it.
 	SDL_GPUSampler *Sampler(const RenderUInt32 sampler_states[14]);
@@ -150,6 +150,9 @@ private:
 		size_t operator()(const Key &key) const;
 	};
 	SDL_GPUDevice *Device;
+	/// False when the device was made without the sampler-anisotropy feature (SdlGpuDeviceFeatures.h):
+	/// an anisotropic request is then turned into plain linear filtering, which every device has.
+	bool AnisotropyAvailable;
 	std::unordered_map<Key, SDL_GPUSampler *, KeyHash> Samplers;
 	// Consecutive stages often alternate a few settings. Retain the last-hit shortcut,
 	// with a bounded ring for the other recent keys, including cached refusals.

@@ -178,6 +178,7 @@ SDL_GPUGraphicsPipeline * SdlGpuFrame::Clear_Pipeline(unsigned int which, const 
 	info.fragment_shader = ClearPixel;
 	info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
 	info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+	info.rasterizer_state.enable_depth_clip = true;
 	info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
 	info.depth_stencil_state.enable_depth_test = (which & 2) != 0;
 	info.depth_stencil_state.enable_depth_write = (which & 2) != 0;

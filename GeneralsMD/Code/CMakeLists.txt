@@ -1559,6 +1559,13 @@ if(ZH_PLATFORM_POSIX)
   target_link_libraries(sdl_gpu_depth_format_selfcheck PRIVATE SDL3::Headers)
   add_test(NAME sdl_gpu_depth_format_selfcheck COMMAND sdl_gpu_depth_format_selfcheck)
 
+  # The device-feature fallback order (Android device creation): pure logic, no SDL and no GPU.
+  add_executable(test_sdl_gpu_device_features ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_sdl_gpu_device_features.cpp
+    ${ZH_POSIX_RENDER_DIR}/SdlGpuDeviceFeatures.cpp)
+  set_target_properties(test_sdl_gpu_device_features PROPERTIES CXX_STANDARD 17)
+  target_include_directories(test_sdl_gpu_device_features PRIVATE ${ZH_POSIX_RENDER_DIR})
+  add_test(NAME test_sdl_gpu_device_features COMMAND test_sdl_gpu_device_features)
+
   # A3a's frame: a clear read back, and the gamma pass through a picture that shows any flip.  Needs a GPU
   # but no window; exits 77 (skipped, and ctest says so) where SDL has no GPU device to give.
   add_executable(sdl_gpu_frame_selfcheck ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_sdl_gpu_frame.cpp)

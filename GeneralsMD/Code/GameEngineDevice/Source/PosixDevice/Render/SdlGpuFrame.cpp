@@ -20,6 +20,7 @@
 
 #include "SdlGpuFrame.h"
 #include "SdlGpuDepthFormat.h"
+#include "SdlGpuDeviceFeatures.h"
 #include "sdl3shadercompile.h"
 #include "Platform/WaterFftSpectrum.h"
 #include "Platform/WaterPerformanceSettings.h"
@@ -108,6 +109,23 @@ bool Sdl_Gamma_Is_Identity(const uint16_t (*ramp)[256])
 	return true;
 }
 
+// The identity ramp, built once: what Upload_Ramp needs when a Present asks for no gamma correction but
+// still has to go through the gamma pass (a target whose format is not the back buffer's).
+static const uint16_t (*Identity_Ramp())[256]
+{
+        static uint16_t ramp[3][256];
+        static bool built = false;
+        if (!built) {
+                for (int channel = 0; channel < 3; ++channel) {
+                        for (int index = 0; index < 256; ++index) {
+                                ramp[channel][index] = (uint16_t)(index * 257);
+                        }
+                }
+                built = true;
+        }
+        return ramp;
+}
+
 // Main-thread resource generations stay distinct even if SDL recycles handles after device recreation.
 static uint64_t next_scene_generation()
 {
@@ -189,14 +207,52 @@ SdlGpuFrame::SdlGpuFrame() :
 	TargetSet = false;
 }
 
+// The device, asking for the optional Vulkan features the game needs and giving up, one at a time,
+// the ones it does not when a driver cannot provide them.  SDL_CreateGPUDevice's default asks for all
+// four (SdlGpuDeviceFeatures.h); on a mobile driver one of them is usually absent, and a single
+// attempt then fails where a real device was available.  Attempt 0 is that default call, so a desktop
+// machine makes exactly the device it made before; a later attempt uses SDL_CreateGPUDeviceWithProperties
+// with the drop set, and says in the log what it gave up.
+void SdlGpuFrame::Create_Gpu_Device(bool debug)
+{
+	const SDL_GPUShaderFormat formats = SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL;
+	const unsigned int attempts = Sdl_Gpu_Attempt_Count();
+	for (unsigned int attempt = 0; attempt < attempts; ++attempt) {
+		if (attempt == 0) {
+			GpuDevice = SDL_CreateGPUDevice(formats, debug, NULL);
+		} else {
+			const SdlGpuOptionalFeatures features = Sdl_Gpu_Features_For_Attempt(attempt);
+			SDL_PropertiesID props = SDL_CreateProperties();
+			SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+			SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN, true);
+			SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, debug);
+			SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_CLIP_DISTANCE_BOOLEAN, features.ClipDistance);
+			SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN, features.IndirectDrawFirstInstance);
+			SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_DEPTH_CLAMPING_BOOLEAN, features.DepthClamping);
+			SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN, features.Anisotropy);
+			GpuDevice = SDL_CreateGPUDeviceWithProperties(props);
+			SDL_DestroyProperties(props);
+		}
+		if (GpuDevice != NULL) {
+			DeviceAttempt = attempt;
+			if (attempt != 0) {
+				fprintf(stderr, "SdlGpuFrame: the GPU device was made without %s (this driver does not offer it)\n",
+					Sdl_Gpu_Dropped_Feature_Names(attempt));
+			}
+			return;
+		}
+		DeviceError = std::string("SDL_CreateGPUDevice: ") + SDL_GetError();
+	}
+}
+
 SdlGpuFrame * SdlGpuFrame::Create(RenderWindow window, unsigned int width, unsigned int height, std::string & error)
 {
 	SdlGpuFrame * frame = new SdlGpuFrame();
 	// Debug validation only when asked: it is slow, and the game runs without it.
 	const bool debug = getenv("ZH_GPU_DEBUG") != NULL;
-	frame->GpuDevice = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL, debug, NULL);
+	frame->Create_Gpu_Device(debug);
 	if (frame->GpuDevice == NULL) {
-		error = std::string("SDL_CreateGPUDevice: ") + SDL_GetError();
+		error = frame->DeviceError;
 		delete frame;
 		return NULL;
 	}
@@ -502,6 +558,7 @@ bool SdlGpuFrame::Create_Ocean(WaterFftSpectrum::Configuration configuration)
 			pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
 			pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
 			pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+			pipeline.rasterizer_state.enable_depth_clip = true;
 			pipeline.target_info.color_target_descriptions = targets;
 			pipeline.target_info.num_color_targets = headedOnly ? 4 : 6;
 			Ocean->Pipelines[variant][i] = SDL_CreateGPUGraphicsPipeline(GpuDevice, &pipeline);
@@ -767,6 +824,7 @@ struct SdlGpuFrame::CoastalSurfResources
 		SDL_GPUGraphicsPipelineCreateInfo info={};info.vertex_shader=Vertex;info.fragment_shader=pixel;
 		info.primitive_type=SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;info.rasterizer_state.cull_mode=SDL_GPU_CULLMODE_NONE;
 		info.rasterizer_state.fill_mode=SDL_GPU_FILLMODE_FILL;
+		info.rasterizer_state.enable_depth_clip = true;
 		info.target_info.color_target_descriptions=&target;info.target_info.num_color_targets=1;
 		SDL_GPUGraphicsPipeline *pipeline=SDL_CreateGPUGraphicsPipeline(Device,&info);
 		if(!pipeline){SDL_ReleaseGPUShader(Device,pixel);return false;}
@@ -929,6 +987,7 @@ bool SdlGpuFrame::Install_Coastal_Surf(uint64_t revision,
 		SDL_GPUGraphicsPipelineCreateInfo pipeline={};pipeline.vertex_shader=next->Vertex;
 		pipeline.fragment_shader=next->Pixels[which];pipeline.primitive_type=SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
 		pipeline.rasterizer_state.cull_mode=SDL_GPU_CULLMODE_NONE;pipeline.rasterizer_state.fill_mode=SDL_GPU_FILLMODE_FILL;
+		pipeline.rasterizer_state.enable_depth_clip = true;
 		pipeline.target_info.color_target_descriptions=&target;pipeline.target_info.num_color_targets=1;
 		next->Pipelines[which]=SDL_CreateGPUGraphicsPipeline(GpuDevice,&pipeline);
 		if(!next->Pipelines[which]) return false;
@@ -1185,6 +1244,7 @@ bool SdlGpuFrame::Set_Coastal_Surf_View(uint64_t revision,const WaterShoreHistor
         SDL_GPUGraphicsPipelineCreateInfo pi={};pi.vertex_shader=CoastalSurf->Vertex;pi.fragment_shader=view->Pixel;
         pi.primitive_type=SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;pi.rasterizer_state.cull_mode=SDL_GPU_CULLMODE_NONE;
         pi.rasterizer_state.fill_mode=SDL_GPU_FILLMODE_FILL;
+        pi.rasterizer_state.enable_depth_clip = true;
         pi.target_info.color_target_descriptions=&colour;pi.target_info.num_color_targets=1;
         view->Pipeline=SDL_CreateGPUGraphicsPipeline(GpuDevice,&pi);if(!view->Pipeline)return fail();
         // Old CPU draws must retain the old view until submitted before its release.
@@ -1410,6 +1470,7 @@ bool SdlGpuFrame::Create_Scene_Depth_Pipeline()
 		info.fragment_shader = SceneDepthPixel;
 		info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
 		info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+		info.rasterizer_state.enable_depth_clip = true;
 		info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
 		info.target_info.color_target_descriptions = &target;
 		info.target_info.num_color_targets = 1;
@@ -1749,6 +1810,7 @@ SDL_GPUGraphicsPipeline * SdlGpuFrame::Gamma_Pipeline(unsigned int format)
 	info.fragment_shader = GammaPixel;
 	info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
 	info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+	info.rasterizer_state.enable_depth_clip = true;
 	info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
 	info.target_info.color_target_descriptions = &target;
 	info.target_info.num_color_targets = 1;
@@ -1834,18 +1896,27 @@ bool SdlGpuFrame::Present_Into(SDL_GPUCommandBuffer * commands, SDL_GPUTexture *
 	unsigned int height, unsigned int format, const uint16_t (*ramp)[256])
 {
 	if (Sdl_Gamma_Is_Identity(ramp)) {
-		SDL_GPUBlitInfo blit;
-		SDL_zero(blit);
-		blit.source.texture = BackBuffer;
-		blit.source.w = BackWidth;
-		blit.source.h = BackHeight;
-		blit.destination.texture = target;
-		blit.destination.w = width;
-		blit.destination.h = height;
-		blit.load_op = SDL_GPU_LOADOP_DONT_CARE;
-		blit.filter = SDL_GPU_FILTER_LINEAR;
-		SDL_BlitGPUTexture(commands, &blit);
-		return true;
+		// A blit is only a copy between the same format: SDL_BlitGPUTexture is a bare vkCmdBlitImage
+		// (SDL_gpu_vulkan.c VULKAN_Blit), which does not swizzle channels.  B8G8R8A8 (the back buffer)
+		// to R8G8B8A8 (SDL's SDR swapchain fallback, chosen on Android) would then swap red and blue.
+		// So the same-format shortcut is taken only when the target's format is the back buffer's;
+		// otherwise the gamma pass copies it, sampling the back buffer (which swizzles correctly) and
+		// writing the target's format, with the identity ramp when the caller wants no correction.
+		if (format == (unsigned int)BACK_BUFFER_FORMAT) {
+			SDL_GPUBlitInfo blit;
+			SDL_zero(blit);
+			blit.source.texture = BackBuffer;
+			blit.source.w = BackWidth;
+			blit.source.h = BackHeight;
+			blit.destination.texture = target;
+			blit.destination.w = width;
+			blit.destination.h = height;
+			blit.load_op = SDL_GPU_LOADOP_DONT_CARE;
+			blit.filter = SDL_GPU_FILTER_LINEAR;
+			SDL_BlitGPUTexture(commands, &blit);
+			return true;
+		}
+		ramp = Identity_Ramp();
 	}
 	SDL_GPUGraphicsPipeline * pipeline = Gamma_Pipeline(format);
 	if (pipeline == NULL || !Upload_Ramp(commands, ramp)) {

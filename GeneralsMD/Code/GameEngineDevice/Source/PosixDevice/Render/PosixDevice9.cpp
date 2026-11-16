@@ -245,7 +245,7 @@ RenderResult PosixDevice9::Create_Gpu_Frame(bool offscreen)
 	Programs = new SdlProgramCache(Gpu->Device());
 	Pipelines = new SdlPipelineCache(Gpu->Device());
 	Pipelines->Describe_Shader = [this](const SDL_GPUShader *shader) { return Programs->Key_Of(shader); };
-	Samplers = new SdlSamplerCache(Gpu->Device());
+	Samplers = new SdlSamplerCache(Gpu->Device(), Gpu->Anisotropy_Available());
 	Mirrors = new SdlResourceMirrors(Gpu);
 	return D3D_OK;
 }

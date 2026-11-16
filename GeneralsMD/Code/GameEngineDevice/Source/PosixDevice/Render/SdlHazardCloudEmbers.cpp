@@ -57,6 +57,7 @@ bool makeResources(SdlGpuFrame *frame)
     description.fragment_shader = pixelShader;
     description.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
     description.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+    description.rasterizer_state.enable_depth_clip = true;
     description.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
     description.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_ALWAYS;
     description.depth_stencil_state.enable_depth_test = false;

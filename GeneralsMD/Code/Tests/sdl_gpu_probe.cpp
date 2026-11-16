@@ -108,9 +108,26 @@ int main(void)
 		(have & SDL_GPU_SHADERFORMAT_DXIL) ? "DXIL " : "",
 		(have & SDL_GPU_SHADERFORMAT_DXBC) ? "DXBC " : "");
 	/* Created with the defaults, which SDL_gpu.h documents as *requiring* these features; its
-	   properties exist only to relax them.  So a device here has them. */
+	   properties exist only to relax them.  So a device here has them.  On a mobile driver one is
+	   usually absent, which is why SdlGpuFrame::Create_Gpu_Device drops them one at a time
+	   (SdlGpuDeviceFeatures.h); each is probed on its own below, with the property that turns it off. */
 	printf("  clip distance, depth clamp,  yes (required by a default device; SDL_gpu.h)\n");
 	printf("  anisotropy, indirect first\n");
+	static const struct { const char *name; const char *property; } optional[] = {
+		{ "depth clamping",           SDL_PROP_GPU_DEVICE_CREATE_FEATURE_DEPTH_CLAMPING_BOOLEAN },
+		{ "clip distance",            SDL_PROP_GPU_DEVICE_CREATE_FEATURE_CLIP_DISTANCE_BOOLEAN },
+		{ "indirect draw first inst", SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN },
+		{ "anisotropy",               SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN },
+	};
+	printf("  Optional features, each alone (what a driver may lack; the Android fallback)\n");
+	for (int i = 0; i < (int)(sizeof(optional) / sizeof(optional[0])); ++i) {
+		SDL_PropertiesID p = SDL_CreateProperties();
+		SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+		SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN, true);
+		SDL_SetBooleanProperty(p, optional[i].property, true);
+		printf("  %-28s %-4s\n", optional[i].name, yes_no(SDL_GPUSupportsProperties(p)));
+		SDL_DestroyProperties(p);
+	}
 
 	static const FormatRow sampled[] = {
 		{ SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM, "BC1 (DXT1)",          "the art: DDS" },
