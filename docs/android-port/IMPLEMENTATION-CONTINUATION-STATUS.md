@@ -18,6 +18,14 @@ workflow or dependency file was touched. Only this document was written.**
 > the verification criteria per stage) have been added. The earlier findings were re-verified, not
 > copied.
 
+> **Phase 2 (application shell) is now implemented** on this branch: Stage 1 (Gradle project,
+> manifest, thin `SDLActivity` subclass, resources, SDL3 Java glue staged by a script,
+> `libc++_shared.so` staged), Stage 3 (packaging) and the Gradle half of Stage 5 (CI) of §10 below.
+> Stage 2 (the folder picker) and Stage 4 (font substitute + on-device verification) remain. The
+> shell's design, the values chosen and what a green CI run does and does not prove are recorded in
+> [`architecture/16-android-application-shell.md`](architecture/16-android-application-shell.md). No
+> file under `GeneralsMD/Code/` was changed.
+
 ---
 
 ## 1. Repository and branch information
