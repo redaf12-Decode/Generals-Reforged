@@ -1,9 +1,10 @@
-# Android application shell (Phase 2 of the Android port).
+# Android application shell (Phase 2) and game-folder access (Phase 3) of the Android port.
 #
 # A dedicated workflow, separate from ci-android-test.yml, because it answers a different
 # question: does the Gradle application project build and package a correct APK around the
 # engine libmain.so the other workflow compiles. ci-android-test.yml proves the native half
-# (configure, compile, link libmain.so for arm64-v8a); this one proves the shell half.
+# (configure, compile, link libmain.so for arm64-v8a); this one proves the shell half and the
+# game-folder screen.
 #
 # It does not install or launch on a device - there is no device here - so it never claims
 # either. What it proves, in order:
@@ -13,17 +14,22 @@
 #      version, the namespace/applicationId, SDK levels, ABI filter and version are read back
 #      from Gradle's own resolved model, not from the source text;
 #   3. the staged Java shell compiles and the packaged manifest is the merged one AGP
-#      produces: the launcher Activity, the landscape orientation, the configChanges set, the
-#      single justified multicast permission and the absence of storage permissions;
-#   4. an APK is actually assembled and its contents inspected - libmain.so and
-#      libc++_shared.so under lib/arm64-v8a, no other ABI, and no duplicate SDL3 shared object;
-#   5. the packaging script is syntactically valid and finds the libraries it stages.
+#      produces: the setup (folder-picker) Activity and the game Activity, the landscape
+#      orientation, the configChanges set, the single justified multicast permission and the
+#      absence of storage permissions;
+#   4. the game-folder logic is unit-tested on the host: the engine's own install-folder rule
+#      (INIZH.big plus the base game's Textures.big) and the incremental staging plan (copy
+#      once, then only what changed) - see GameFolderValidatorTest, GameDataStagingTest;
+#   5. an APK is actually assembled and its contents inspected - libmain.so and
+#      libc++_shared.so under lib/arm64-v8a, no other ABI, no duplicate SDL3 shared object,
+#      SetupActivity as the home-screen entry point, and no storage permission;
+#   6. the packaging script is syntactically valid and finds the libraries it stages.
 #
-# The Activity, the manifest and the packaging script are the Phase-2 deliverables; the native
-# engine is not built here (that is ci-android-test.yml), so a stand-in libmain.so exporting
-# SDL_main is placed where build-android.sh would write the real one, purely so the packaging
-# path and the APK contents can be exercised. The stand-in is never shipped and never
-# committed.
+# The Activity, the manifest, the setup screen and the packaging script are the Phase-2/Phase-3
+# deliverables; the native engine is not built here (that is ci-android-test.yml), so a stand-in
+# libmain.so exporting SDL_main is placed where build-android.sh would write the real one, purely
+# so the packaging path and the APK contents can be exercised. The stand-in is never shipped and
+# never committed.
 
 name: CI Android App
 
@@ -189,6 +195,17 @@ jobs:
           grep -q 'android:name="io.github.olcayseygan.zerohourreforged.ZeroHourActivity"' "$MANIFEST" \
             || fail "the launcher Activity is not the project's own ZeroHourActivity"
 
+          # 2b. The Phase-3 launcher screen is present; the game Activity is still declared (a
+          #     shortcut placed before it still resolves). Which one is the home-screen entry point
+          #     is asserted from the packaged APK's badging below.
+          grep -q 'android:name="io.github.olcayseygan.zerohourreforged.SetupActivity"' "$MANIFEST" \
+            || fail "the setup Activity (the folder picker screen) is not declared"
+          if grep -q 'android.intent.category.LAUNCHER' "$MANIFEST" ; then
+            : # present; its owner is checked on the APK below
+          else
+            fail "no LAUNCHER entry point is declared"
+          fi
+
           # 3. Orientation and the configChanges set SDL3 3.4.16's android-project declares.
           grep -q 'android:screenOrientation="landscape"' "$MANIFEST" \
             || fail "the Activity is not landscape"
@@ -212,6 +229,21 @@ jobs:
           [ "$perms" -le 2 ] || fail "$perms permissions declared; only the two justified ones are allowed"
 
           echo "the Gradle configuration and the packaged manifest are consistent"
+
+      - name: Run the game-folder unit tests
+        run: |
+          set -euo pipefail
+          # The folder validator and the staging plan are pure Java (no Android types), so they run
+          # as JVM unit tests: the engine's own install-folder rule (INIZH.big + the base game's
+          # Textures.big) and the incremental copy plan (copy once, then only what changed).
+          ( cd android && gradle --no-daemon :app:testDebugUnitTest )
+          report=$(find android/app/build/test-results -name 'TEST-*.xml' | head -n 1)
+          [ -n "$report" ] || { echo "::error::no JUnit report was produced"; exit 1; }
+          echo "--- unit test results ---"
+          grep -h -o 'testsuite name="[^"]*" tests="[0-9]*"[^>]*' $(find android/app/build/test-results -name 'TEST-*.xml') || true
+          failures=$(grep -h -o 'failures="[0-9]*"' $(find android/app/build/test-results -name 'TEST-*.xml') | grep -o '[0-9]*' | paste -sd+ | bc)
+          [ "${failures:-0}" = "0" ] || { echo "::error::$failures unit test failures"; exit 1; }
+          echo "the game-folder unit tests passed"
 
       - name: Assemble the APK and inspect its contents
         run: |
@@ -242,7 +274,22 @@ jobs:
           "$readelf" -h "$RUNNER_TEMP/apk-lib/lib/arm64-v8a/libmain.so" | grep -q 'Machine: *AArch64' \
             || fail "the packaged libmain.so is not AArch64"
 
-          echo "the APK carries libmain.so and libc++_shared.so for arm64-v8a only, and no separate SDL3"
+          # The packaged manifest's home-screen entry point is the setup screen, not the game.
+          aapt2=$(find "$ANDROID_SDK_ROOT/build-tools" -name aapt2 | head -n 1)
+          [ -n "$aapt2" ] || fail "aapt2 is not present in build-tools"
+          badging=$("$aapt2" dump badging "$APK")
+          echo "--- APK badging ---"; echo "$badging"
+          launchable=$(sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p" <<<"$badging")
+          [ "$launchable" = "io.github.olcayseygan.zerohourreforged.SetupActivity" ] \
+            || fail "the home-screen entry point is '$launchable', not the setup screen"
+          # No storage permission in the packaged APK, as in the merged manifest.
+          for p in MANAGE_EXTERNAL_STORAGE READ_EXTERNAL_STORAGE WRITE_EXTERNAL_STORAGE; do
+            if grep -q "uses-permission: name='android.permission.$p'" <<<"$badging"; then
+              fail "the packaged APK requests $p"
+            fi
+          done
+
+          echo "the APK carries libmain.so and libc++_shared.so for arm64-v8a only, no separate SDL3, and SetupActivity is the launcher"
 
       - name: Upload the APK and diagnostics
         if: always()

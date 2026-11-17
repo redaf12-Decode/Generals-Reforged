@@ -74,3 +74,11 @@ android {
         abortOnError false
     }
 }
+
+dependencies {
+    // The only test dependency: the host-side unit tests for the folder validator and the staging
+    // plan (GameFolderValidatorTest, GameDataStagingTest). Both are pure Java with no Android types,
+    // so they run as JVM unit tests on CI's `:app:testDebugUnitTest`. The app itself has no runtime
+    // dependency beyond the Android platform.
+    testImplementation 'junit:junit:4.13.2'
+}

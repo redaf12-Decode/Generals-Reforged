@@ -26,6 +26,18 @@ workflow or dependency file was touched. Only this document was written.**
 > [`architecture/16-android-application-shell.md`](architecture/16-android-application-shell.md). No
 > file under `GeneralsMD/Code/` was changed.
 
+> **Phase 3 (game folder access) is now implemented** on this branch: Stage 2 of §10 below - the
+> Android folder picker. A `SetupActivity` launcher screen drives the system Storage Access Framework
+> picker (`ACTION_OPEN_DOCUMENT_TREE`), takes the read grant as persistable so it survives a restart,
+> validates the picked folder against the engine's own rule (`INIZH.big` + the base game's
+> `Textures.big`), and stages it **once, incrementally** into the app's own external files directory
+> - a real POSIX path, because the engine's file layer cannot open a `content://` URI. The engine is
+> rooted there with `-root`, which `PosixMain` already honours. No `MANAGE_EXTERNAL_STORAGE` is
+> requested; the two Phase-2 permissions are unchanged. Stage 4 (font substitute + on-device
+> verification) remains, and nothing here is verified on a device. The design is recorded in
+> [`architecture/17-game-folder-access.md`](architecture/17-game-folder-access.md). No file under
+> `GeneralsMD/Code/` was changed.
+
 ---
 
 ## 1. Repository and branch information

@@ -11,8 +11,13 @@
         (SdlAndroidPlatform.cpp acquireMulticastLock);
       - INTERNET for the LAN lobby's UDP sockets (GameEngine/Source/GameNetwork/udp.cpp), which Android
         refuses to open without it.
-    No storage permission is declared: the game reads a folder the player picks and writes only to its own
-    private storage (docs/android-port/architecture/08-game-data-delivery.md).
+    No storage permission is declared. The game reads a folder the player picks through the system
+    folder picker (the Storage Access Framework, ACTION_OPEN_DOCUMENT_TREE), which returns a
+    content:// tree; because the engine's file layer is POSIX and cannot open a content:// URI, the
+    picked tree is staged once into this app's own external files directory - a real path it may
+    always write with no permission - and the engine is rooted there with -root
+    (docs/android-port/architecture/17-game-folder-access.md). Writes (saves, Options.ini, logs) go
+    to the app's private storage, not the install root.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -39,10 +44,31 @@
         android:theme="@style/AppTheme">
 
         <!--
+            The launcher: the one screen outside the game. It picks the folder Zero Hour is installed
+            in (the system Storage Access Framework picker), stages it into a real filesystem path the
+            engine can open, and starts the game. It is the home-screen entry point so a folder can be
+            chosen or changed without the game having launched first (docs/android-port/architecture/
+            17-game-folder-access.md).
+        -->
+        <activity
+            android:name=".SetupActivity"
+            android:label="@string/app_name"
+            android:exported="true"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
             The game surface. The class extends org.libsdl.app.SDLActivity (staged into
             src/main/java-sdl), which loads libmain.so and calls its exported SDL_main on a
             dedicated thread. configChanges is the exact set SDL3 3.4.16's own android-project
             declares, so SDL handles these without the Activity being recreated underneath it.
+            It keeps MAIN (no LAUNCHER) so a home-screen shortcut placed before the setup screen
+            existed still resolves; the game is started from SetupActivity, which has checked that
+            the staged folder validates.
         -->
         <activity
             android:name=".ZeroHourActivity"
@@ -55,7 +81,6 @@
             android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
     </application>

@@ -1,3 +1,25 @@
 <resources>
     <string name="app_name">Zero Hour Reforged</string>
+
+    <!-- The setup screen: the one screen outside the game. It picks the folder Zero Hour is
+         installed in and stages it into a real filesystem path the engine can open. -->
+    <string name="setup_title">Zero Hour Reforged</string>
+    <string name="setup_explanation">Choose the folder Command &amp; Conquer Generals Zero Hour is installed in (the one with INIZH.big). Its files are copied once into this app\'s own storage so the game can read them; the original files are not changed.</string>
+    <string name="setup_select_folder">Choose game folder</string>
+    <string name="setup_launch">Start game</string>
+    <string name="setup_clear_folder">Forget this folder</string>
+    <string name="setup_problem_title">Cannot use this folder</string>
+    <string name="setup_no_picker">This device has no folder picker. Install a file manager that provides one, then try again.</string>
+    <string name="setup_staging_failed">Copying the game data did not finish.</string>
+
+    <string name="setup_status_none">No game folder chosen yet.</string>
+    <string name="setup_detail_none">Tap \"Choose game folder\" and pick the folder Zero Hour is installed in.</string>
+    <string name="setup_status_staging">Copying the game data…</string>
+    <string name="setup_status_permission_lost">Access to \"%1$s\" was withdrawn.</string>
+    <string name="setup_detail_permission_lost">The system no longer grants access to the folder you picked. Choose it again.</string>
+    <string name="setup_status_incomplete">\"%1$s\" is not a complete Zero Hour folder.</string>
+    <string name="setup_detail_no_zero_hour">It has no INIZH.big. Choose the folder Zero Hour is installed in, the one with INIZH.big in it.</string>
+    <string name="setup_detail_no_base_game">Zero Hour is there, but not the original Command &amp; Conquer Generals it needs. Copy Generals\' .big files into a folder named ZH_Generals inside the Zero Hour folder (its Textures.big must be there), then choose the Zero Hour folder again.</string>
+    <string name="setup_status_ready">Ready: \"%1$s\".</string>
+    <string name="setup_detail_staging">The game reads its data from %1$s</string>
 </resources>

@@ -18,7 +18,12 @@
 
 package io.github.olcayseygan.zerohourreforged;
 
+import android.content.Intent;
+import android.os.Bundle;
+
 import org.libsdl.app.SDLActivity;
+
+import java.io.File;
 
 /**
  * The game's Android Activity: a thin shell over SDL3's SDLActivity.
@@ -53,5 +58,33 @@ public class ZeroHourActivity extends SDLActivity {
         // SDL3's JNI_OnLoad, so SDLActivity's JNI bindings are registered when this
         // library loads. There is no separate libSDL3.so to load.
         return new String[] { "main" };
+    }
+
+    /**
+     * The engine's install root: {@code -root <folder>}, which {@code PosixMain.cpp}'s
+     * {@code chooseInstallRoot} takes as given and {@code chdir}s into before the engine exists.
+     *
+     * <p>The folder is the staged copy of the one the player picked (see {@link SafTreeStager}),
+     * a real filesystem path - the engine's file access is POSIX and cannot open the
+     * {@code content://} URI the picker returns. SDL passes these strings to the native
+     * {@code main} as argv[1..], so the engine never has to guess where its data is.
+     */
+    @Override
+    protected String[] getArguments() {
+        File root = GameFolderStore.engineRoot(this);
+        return new String[] { "-root", root.getAbsolutePath() };
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        // Reached from SetupActivity only when the staged folder validated. A direct start (a stale
+        // shortcut, or a relaunch after the folder moved) sends the player to the picker instead.
+        // SDLActivity starts the native SDL_main thread on the first resume, so finishing here -
+        // before onResume - means the engine never runs with a folder that does not validate.
+        if (!GameFolderStore.isReady(this)) {
+            startActivity(new Intent(this, SetupActivity.class));
+            finish();
+        }
     }
 }
