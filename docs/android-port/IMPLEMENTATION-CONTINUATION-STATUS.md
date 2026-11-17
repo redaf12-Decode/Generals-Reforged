@@ -38,6 +38,19 @@ workflow or dependency file was touched. Only this document was written.**
 > [`architecture/17-game-folder-access.md`](architecture/17-game-folder-access.md). No file under
 > `GeneralsMD/Code/` was changed.
 
+> **Phase 4 (native dependencies and APK packaging) is now implemented** on this branch: Stage 3
+> (packaging) and the CI half of Stage 5 of §10 below, made real. The application workflow
+> (`ci-android-app.yml`) now builds the engine itself with `scripts/build/android/build-android.sh`
+> (no compatible native output exists to reuse — the native workflow uploads logs, not the `.so`),
+> reads the engine's runtime dependency set back from the linked ELF, classifies every `DT_NEEDED`
+> as Android-system or packaged, and inspects the actual APK: exactly `libmain.so` +
+> `libc++_shared.so` under `lib/arm64-v8a`, no other ABI, no duplicates, no game data, every
+> non-system `DT_NEEDED` present, `SDL_main` exported, SDL3 provably static (zero undefined `SDL_*`
+> symbols), `minSdk 28` / `target 35`, `SetupActivity` the launcher, no storage permission. The
+> design is recorded in [`architecture/18-native-dependency-packaging.md`](architecture/18-native-dependency-packaging.md).
+> Stage 4 (font substitute + on-device verification) remains, and nothing here is verified on a
+> device. No file under `GeneralsMD/Code/` was changed.
+
 ---
 
 ## 1. Repository and branch information

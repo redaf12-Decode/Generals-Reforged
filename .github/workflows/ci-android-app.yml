@@ -1,35 +1,40 @@
-# Android application shell (Phase 2) and game-folder access (Phase 3) of the Android port.
+# Android application shell (Phase 2), game-folder access (Phase 3) and native dependency
+# packaging (Phase 4) of the Android port.
 #
 # A dedicated workflow, separate from ci-android-test.yml, because it answers a different
-# question: does the Gradle application project build and package a correct APK around the
-# engine libmain.so the other workflow compiles. ci-android-test.yml proves the native half
-# (configure, compile, link libmain.so for arm64-v8a); this one proves the shell half and the
-# game-folder screen.
+# question: does the Gradle application project build and package a correct, shippable APK around
+# the engine libmain.so. ci-android-test.yml proves the native half (configure, compile, link
+# libmain.so for arm64-v8a); this one builds that same engine, classifies its runtime
+# dependencies, packages them and inspects the actual APK.
 #
 # It does not install or launch on a device - there is no device here - so it never claims
 # either. What it proves, in order:
 #   1. the Android SDK, build-tools, platform 35 and the NDK are set up from pinned Google
 #      archives, and Gradle 8.12 (SDL3 3.4.16's own wrapper version) is on PATH;
-#   2. the application project's Gradle configuration is valid: settings.gradle, the AGP
-#      version, the namespace/applicationId, SDK levels, ABI filter and version are read back
-#      from Gradle's own resolved model, not from the source text;
-#   3. the staged Java shell compiles and the packaged manifest is the merged one AGP
-#      produces: the setup (folder-picker) Activity and the game Activity, the landscape
-#      orientation, the configChanges set, the single justified multicast permission and the
-#      absence of storage permissions;
-#   4. the game-folder logic is unit-tested on the host: the engine's own install-folder rule
+#   2. the engine links as libmain.so for arm64-v8a from the real sources (build-android.sh):
+#      a real runtime dependency set, not a stand-in, is what gets packaged;
+#   3. the native dependencies are classified from the ELF itself (Phase 4): Class/Machine/Type,
+#      SONAME, the DT_NEEDED set, the exported SDL_main, the dynamic symbols the loader must
+#      resolve, and the Android API the object was built for - no desktop library may appear;
+#   4. the application project's Gradle configuration is valid and the packaged manifest is the
+#      merged one AGP produces: the setup (folder-picker) Activity and the game Activity, the
+#      landscape orientation, the configChanges set, the single justified multicast permission
+#      and the absence of storage permissions;
+#   5. the game-folder logic is unit-tested on the host: the engine's own install-folder rule
 #      (INIZH.big plus the base game's Textures.big) and the incremental staging plan (copy
 #      once, then only what changed) - see GameFolderValidatorTest, GameDataStagingTest;
-#   5. an APK is actually assembled and its contents inspected - libmain.so and
-#      libc++_shared.so under lib/arm64-v8a, no other ABI, no duplicate SDL3 shared object,
-#      SetupActivity as the home-screen entry point, and no storage permission;
-#   6. the packaging script is syntactically valid and finds the libraries it stages.
+#   6. the packaging script is syntactically valid and finds the libraries it stages;
+#   7. an APK is actually assembled and its contents inspected - libmain.so and libc++_shared.so
+#      under lib/arm64-v8a, no other ABI, no duplicate SDL3 shared object, every non-system
+#      DT_NEEDED of libmain.so present in the APK, no proprietary game data, SetupActivity as the
+#      home-screen entry point, and no storage permission.
 #
-# The Activity, the manifest, the setup screen and the packaging script are the Phase-2/Phase-3
-# deliverables; the native engine is not built here (that is ci-android-test.yml), so a stand-in
-# libmain.so exporting SDL_main is placed where build-android.sh would write the real one, purely
-# so the packaging path and the APK contents can be exercised. The stand-in is never shipped and
-# never committed.
+# Reuse: the engine is built here rather than downloaded because no compatible native output
+# exists to reuse - ci-android-test.yml publishes only logs (no libmain.so artifact) and does not
+# trigger on this branch. Rebuilding it is therefore the only way to package the real engine, and
+# it happens here, in GitHub Actions, never locally. The dependency classification (step 3) is
+# the reference port's "every non-system DT_NEEDED must be a real file inside the APK" check,
+# adapted: this port links SDL3 statically, so the only non-system need is libc++_shared.so.
 
 name: CI Android App
 
@@ -60,15 +65,20 @@ env:
   CMDLINE_TOOLS_SHA1: '5fdcc763663eefb86a5b8879697aa6088b041e70'
   NDK_VERSION: '27.2.12479018'
   GRADLE_VERSION: '8.12'
+  # The app packages against 35 (compileSdk/targetSdk); the native engine is built against 28 (the
+  # port's floor - build-android.sh --api). Both platforms are installed.
   ANDROID_API: '35'
+  NATIVE_API: '28'
   ANDROID_SDK_ROOT: /home/runner/android-sdk
   ANDROID_HOME: /home/runner/android-sdk
+  # The native engine's build tree, shared by the native build and the packaging step.
+  NATIVE_BUILD: ${{ github.workspace }}/build-android-arm64
 
 jobs:
   android-app:
-    name: Android application shell (Gradle configure, assemble and APK inspection)
+    name: Android application shell, native dependency packaging and APK inspection
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - name: Check out the branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,9 +91,14 @@ jobs:
           # pinned one below is the only SDK in play.
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
           sudo apt-get update
+          # cmake and ninja are needed by the native half (build-android.sh builds the real engine
+          # here); git/curl/unzip/xz-utils/python3 are what vendor.sh and the FFmpeg cross-build
+          # need. The same set ci-android-test.yml uses for the identical build.
           sudo apt-get install -y --no-install-recommends \
-            curl unzip xz-utils ca-certificates
+            cmake ninja-build git curl unzip xz-utils python3 ca-certificates
           sudo apt-get clean
+          cmake --version
+          ninja --version
           df -h "$RUNNER_TEMP"
 
       - name: Set up JDK 17
@@ -97,7 +112,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.ANDROID_SDK_ROOT }}
-          key: android-sdk-cmdline${{ env.CMDLINE_TOOLS_VERSION }}-ndk${{ env.NDK_VERSION }}-p${{ env.ANDROID_API }}
+          # The key names both platforms: an SDK cached before android-28 was added would restore
+          # without the native build's platform and fail the engine configure.
+          key: android-sdk-cmdline${{ env.CMDLINE_TOOLS_VERSION }}-ndk${{ env.NDK_VERSION }}-p${{ env.ANDROID_API }}-n${{ env.NATIVE_API }}
 
       - name: Install the Android SDK, build-tools, platform and NDK
         if: steps.sdk-cache.outputs.cache-hit != 'true'
@@ -115,7 +132,11 @@ jobs:
           rm /tmp/cmdline-tools.zip
           SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install "ndk;${NDK_VERSION}" "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_API}.0.0" "platform-tools"
+          # android-28 is the native engine's platform floor (build-android.sh's --api 28); android-35
+          # is what the app packages against. Both are installed so the same SDK serves the native
+          # build and Gradle.
+          "$SDKMANAGER" --install "ndk;${NDK_VERSION}" "platforms;android-${ANDROID_API}" \
+            "platforms;android-${NATIVE_API}" "build-tools;${ANDROID_API}.0.0" "platform-tools"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.4.4
@@ -129,20 +150,35 @@ jobs:
           echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
           test -d "${ANDROID_SDK_ROOT}/platforms/android-${ANDROID_API}" \
             || { echo "::error::platform android-${ANDROID_API} is missing after install"; exit 1; }
+          test -d "${ANDROID_SDK_ROOT}/platforms/android-${NATIVE_API}" \
+            || { echo "::error::platform android-${NATIVE_API} (the native build's floor) is missing after install"; exit 1; }
           test -d "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_API}.0.0" \
             || { echo "::error::build-tools ${ANDROID_API}.0.0 is missing after install"; exit 1; }
 
-      - name: Fetch the code dependencies (SDL3's Java glue)
+      - name: Cache the vendored dependency downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zhr-vendor
+          key: android-vendor-v1-${{ hashFiles('GeneralsMD/Code/Tools/vendor.sh', 'GeneralsMD/Code/Libraries/Source/**/*.patch') }}
+
+      - name: Fetch the code dependencies (the engine's vendored sources and SDL3's Java glue)
         env:
           TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          # The Java glue is staged from the vendored SDL3 tree, so it must exist. --no-art keeps the
-          # multi-gigabyte game art out of a job that only needs the code.
+          # The native engine is built in this job, so the whole vendored source set is needed (SDL3,
+          # FFmpeg, FreeType, glslang, ...), not just SDL3's Java glue. --no-art keeps the
+          # multi-gigabyte game art out of a job that only needs the code. Same fetch as
+          # ci-android-test.yml.
           bash GeneralsMD/Code/Tools/vendor.sh --no-art
+          for dep in SDL3/CMakeLists.txt miniaudio/miniaudio.c mbedtls/library/ssl_tls.c \
+                     glslang freetype SPIRV-Cross SDL_shadercross GameSpy; do
+            test -e "GeneralsMD/Code/Libraries/Source/${dep}" \
+              || { echo "::error::vendor.sh did not produce Libraries/Source/${dep}"; exit 1; }
+          done
           test -d GeneralsMD/Code/Libraries/Source/SDL3/android-project/app/src/main/java/org/libsdl/app \
             || { echo "::error::vendor.sh did not produce SDL3's Java glue"; exit 1; }
-          echo "SDL3's Java glue is present in the vendored tree"
+          echo "the vendored sources and SDL3's Java glue are present"
 
       - name: Validate the packaging script
         run: |
@@ -151,25 +187,135 @@ jobs:
           scripts/build/android/package-android.sh --help >/dev/null
           echo "package-android.sh is syntactically valid and answers --help"
 
-      - name: Configure the Gradle application project
+      - name: Build the native engine as libmain.so for arm64-v8a
         run: |
           set -euo pipefail
-          # The native engine is not built in this job, so a stand-in libmain.so is placed where
-          # build-android.sh writes the real one. It exports SDL_main so the packaging assertions have
-          # something to find; it is never shipped (the APK job below only inspects contents) and is
-          # not committed.
-          ndkbin="${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          mkdir -p "$RUNNER_TEMP/build-android-arm64"
-          printf '%s\n' \
-            'int SDL_main(int argc, char *argv[]) { (void)argc; (void)argv; return 0; }' \
-            > "$RUNNER_TEMP/stub.c"
-          "$ndkbin/aarch64-linux-android28-clang" -shared -fPIC \
-            -o "$RUNNER_TEMP/build-android-arm64/libmain.so" "$RUNNER_TEMP/stub.c"
-          "$ndkbin/llvm-readelf" -h "$RUNNER_TEMP/build-android-arm64/libmain.so" | grep -q 'Machine: *AArch64' \
-            || { echo "::error::the stand-in libmain.so is not AArch64"; exit 1; }
-          echo "stand-in libmain.so prepared at $RUNNER_TEMP/build-android-arm64/libmain.so"
+          # The real engine, built by the same script the desktop and native CI use. The app
+          # workflow builds it here (rather than downloading one) because no compatible native
+          # output exists to reuse: ci-android-test.yml publishes only logs and does not trigger on
+          # this branch. Building it here is what makes the APK contain the real engine, with its
+          # real runtime dependency set, instead of a stand-in.
+          scripts/build/android/build-android.sh --config Release \
+            --build-dir "$NATIVE_BUILD" --target generals
+          test -f "$NATIVE_BUILD/libmain.so" \
+            || { echo "::error::the engine did not produce $NATIVE_BUILD/libmain.so"; exit 1; }
+          ls -la "$NATIVE_BUILD/libmain.so"
 
-          scripts/build/android/package-android.sh --build-dir "$RUNNER_TEMP/build-android-arm64"
+      - name: Audit the native dependencies from the ELF (Phase 4)
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          LIB="$NATIVE_BUILD/libmain.so"
+          [ -f "$LIB" ] || fail "libmain.so was not built"
+
+          # The NDK's own LLVM tools, the same ones the native workflow uses. The prebuilt host
+          # directory is the only one under toolchains/llvm/prebuilt on this runner.
+          BIN="$(ls -d "${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}"/toolchains/llvm/prebuilt/*/bin | head -n 1)"
+          READELF="$BIN/llvm-readelf"
+          NM="$BIN/llvm-nm"
+          [ -x "$READELF" ] || fail "llvm-readelf is missing: $READELF"
+          [ -x "$NM" ] || fail "llvm-nm is missing: $NM"
+
+          # readelf output is captured into variables and grepped from there, never piped into
+          # `grep -q`: under `set -o pipefail` a `readelf ... | grep -q` on a multi-megabyte symbol
+          # table dies with SIGPIPE and reports a symbol that IS present as missing.
+
+          echo "===== ELF header ====="
+          header=$("$READELF" -h "$LIB"); echo "$header"
+          grep -q 'Class: *ELF64' <<<"$header" || fail "libmain.so is not ELF64"
+          grep -q 'Machine: *AArch64' <<<"$header" || fail "libmain.so is not AArch64"
+          grep -qE 'Type: *DYN' <<<"$header" || fail "libmain.so is not a shared object (DYN)"
+
+          echo "===== SONAME and DT_NEEDED ====="
+          dynamic=$("$READELF" -d "$LIB"); grep -E 'SONAME|NEEDED' <<<"$dynamic"
+          grep -q 'libmain\.so' <<<"$dynamic" || fail "libmain.so has no SONAME (libmain.so)"
+          grep -q 'Library soname: \[libmain\.so\]' <<<"$dynamic" \
+            || fail "libmain.so's SONAME is not libmain.so"
+
+          # The exported entry point SDL3's SDLActivity dlsym()s.
+          echo "===== exported SDL_main ====="
+          dynsyms=$("$READELF" --dyn-syms "$LIB")
+          grep -qE '[[:space:]]SDL_main$' <<<"$dynsyms" \
+            || fail "libmain.so does not export SDL_main (SDLActivity cannot start the game)"
+
+          # ---- dependency classification (the Phase-4 deliverable) ----
+          # Every DT_NEEDED is placed in exactly one class. System libraries are provided by the
+          # device through the NDK's stable ABI and must NOT be packaged; anything else must be a
+          # real file inside the APK. A desktop library in either set is a port defect.
+          needed=$(sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' <<<"$dynamic")
+          echo "--- DT_NEEDED, classified ---"
+          system=()
+          packaged=()
+          for lib in $needed; do
+            case "$lib" in
+              libc.so|libm.so|libdl.so|liblog.so|libandroid.so|libz.so|libGLESv1_CM.so|libGLESv2.so|\
+              libGLESv3.so|libEGL.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libmediandk.so|\
+              libcamera2ndk.so|libjnigraphics.so|libnativewindow.so|libsync.so)
+                system+=("$lib"); echo "  system-provided : $lib" ;;
+              libc++_shared.so)
+                packaged+=("$lib"); echo "  packaged in APK : $lib" ;;
+              *)
+                fail "libmain.so needs '$lib', which is neither a known Android system library nor one this port packages. Classify it before shipping." ;;
+            esac
+          done
+          [ "${#packaged[@]}" -eq 1 ] && [ "${packaged[0]}" = "libc++_shared.so" ] \
+            || fail "the only non-system dependency must be libc++_shared.so; got: ${packaged[*]:-none}"
+
+          # No desktop-Linux or Windows library may have reached the shared object.
+          for token in libX11 libfontconfig libwayland libxkbcommon libGL.so libSDL3 libdxvk libcurl; do
+            if grep -q -- "$token" <<<"$dynamic"; then
+              fail "a desktop-only or duplicate library ($token) reached libmain.so's DT_NEEDED"
+            fi
+          done
+
+          # SDL3 must be static: if it were shared, the link graph would carry a libSDL3 DT_NEEDED
+          # (there is none - the loop above would have failed) and the APK would need a second .so.
+          # Confirm no SDL_ symbol is left strongly undefined (weak references are ignored: they are
+          # optional by definition).
+          undef_sdl=$("$NM" --undefined-only "$LIB" | grep -E '(^| )U +SDL_' || true)
+          if [ -n "$undef_sdl" ]; then
+            echo "$undef_sdl"
+            fail "SDL_ symbols are undefined: SDL3 is not linked statically into libmain.so"
+          fi
+          echo "no SDL_ symbol is undefined: SDL3 is linked in statically"
+
+          # The Android API the object was built for: the build's own configure record is the
+          # authoritative floor; the NDK normally also stamps an Android ident note into the ELF, so
+          # report it (a warning if absent - the CMakeCache check below is what fails the build).
+          echo "===== Android API compatibility ====="
+          grep -E '^ANDROID_PLATFORM:[^=]*=' "$NATIVE_BUILD/CMakeCache.txt" \
+            || fail "the native build's CMakeCache has no ANDROID_PLATFORM"
+          grep -qE "^ANDROID_PLATFORM:[^=]*=android-${NATIVE_API}$" "$NATIVE_BUILD/CMakeCache.txt" \
+            || fail "the engine was not built for android-${NATIVE_API}"
+          notes=$("$READELF" -n "$LIB")
+          if grep -qi 'android' <<<"$notes"; then
+            echo "--- Android ident note ---"; grep -i -A2 'android' <<<"$notes"
+          else
+            echo "::warning::libmain.so carries no Android ident note; the ANDROID_PLATFORM record above is the API floor"
+          fi
+          echo "libmain.so is stamped for android-${NATIVE_API} (the configure record)"
+
+          # Unresolved dynamic symbols: every UND entry must be satisfied by the DT_NEEDED set
+          # (a system library or the packaged libc++_shared.so). Print the count and the classes of
+          # what remains undefined so the log records the loader's work; a symbol from neither set
+          # would already have failed the DT_NEEDED classification above.
+          undef=$("$READELF" --dyn-syms "$LIB" | grep -c 'UND' || true)
+          echo "undefined dynamic symbols the loader resolves from DT_NEEDED: ${undef}"
+
+          echo "libmain.so: ELF64 AArch64 DYN, SONAME libmain.so, exports SDL_main, SDL3 static,"
+          echo "            DT_NEEDED = system libs + libc++_shared.so (the only packaged dependency)"
+
+      - name: Package the APK (stage the engine and the C++ runtime, then run Gradle)
+        run: |
+          set -euo pipefail
+          # package-android.sh stages libmain.so and the NDK's libc++_shared.so into
+          # android/app/src/main/jniLibs/arm64-v8a (and SDL3's Java glue into java-sdl/), then runs
+          # Gradle. Both staged directories are gitignored and re-staged every run.
+          scripts/build/android/package-android.sh --build-dir "$NATIVE_BUILD"
+          APK="$PWD/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK" || { echo "::error::the packaging script produced no APK"; exit 1; }
+          ls -la "$APK"
 
       - name: Assert the Gradle configuration and the packaged manifest
         run: |
@@ -245,17 +391,19 @@ jobs:
           [ "${failures:-0}" = "0" ] || { echo "::error::$failures unit test failures"; exit 1; }
           echo "the game-folder unit tests passed"
 
-      - name: Assemble the APK and inspect its contents
+      - name: Inspect the packaged APK (structure, dependencies, ABI, manifest)
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
           ANDROID_DIR="$PWD/android"
-          ( cd "$ANDROID_DIR" && gradle --no-daemon :app:assembleDebug )
           APK="$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk"
-          [ -f "$APK" ] || fail "assembleDebug did not produce an APK"
+          [ -f "$APK" ] || fail "the packaging step produced no APK"
           echo "--- APK ---"; ls -la "$APK"
 
-          # The APK must carry libmain.so and libc++_shared.so, for arm64-v8a only.
+          # 0. Archive integrity: a corrupt zip is not a shippable APK.
+          unzip -tq "$APK" >/dev/null || fail "the APK is not a valid zip archive"
+
+          # 1. Expected native libraries at the expected paths, for arm64-v8a only.
           entries=$(unzip -Z1 "$APK")
           grep -q '^lib/arm64-v8a/libmain\.so$' <<<"$entries" \
             || fail "the APK does not carry lib/arm64-v8a/libmain.so"
@@ -263,18 +411,75 @@ jobs:
             || fail "the APK does not carry lib/arm64-v8a/libc++_shared.so"
           others=$(grep -E '^lib/(armeabi|armeabi-v7a|x86|x86_64)/' <<<"$entries" || true)
           [ -z "$others" ] || fail "the APK carries an ABI other than arm64-v8a: $others"
+          # The staged set is exactly two libraries: nothing else may be under lib/ (directory
+          # entries, which end in '/', are not libraries).
+          extra_libs=$(grep -E '^lib/' <<<"$entries" | grep -vE '/$' \
+            | grep -vE '^lib/arm64-v8a/(libmain|libc\+\+_shared)\.so$' || true)
+          [ -z "$extra_libs" ] || fail "the APK carries unexpected native libraries: $extra_libs"
           # SDL3 is static in libmain.so: there must be no separate SDL3 shared object.
           if grep -qE '^lib/.*/libSDL3.*\.so$' <<<"$entries"; then
             fail "the APK carries a libSDL3 shared object, but SDL3 is linked statically into libmain.so"
           fi
 
-          # The packaged library is the one the packaging script staged: an AArch64 shared object.
-          unzip -o -q "$APK" 'lib/arm64-v8a/libmain.so' -d "$RUNNER_TEMP/apk-lib"
-          readelf="$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-          "$readelf" -h "$RUNNER_TEMP/apk-lib/lib/arm64-v8a/libmain.so" | grep -q 'Machine: *AArch64' \
-            || fail "the packaged libmain.so is not AArch64"
+          # 2. No duplicate native library anywhere in the archive (same basename twice), and no
+          #    library staged in more than one ABI directory.
+          dupes=$(grep -E '\.so$' <<<"$entries" | xargs -n1 basename | sort | uniq -d || true)
+          [ -z "$dupes" ] || fail "the APK carries duplicate native libraries: $dupes"
 
-          # The packaged manifest's home-screen entry point is the setup screen, not the game.
+          # 3. No proprietary game data: the player supplies their own .big archives. The APK must
+          #    carry none of the engine's game-data extensions or folders.
+          game_data=$(grep -iE '\.(big|bik|w3d|w3x|tga|dds|rep)$|(^|/)Data/' <<<"$entries" || true)
+          [ -z "$game_data" ] || fail "the APK carries game data (the player must supply their own): $game_data"
+          # There is no assets/ directory at all: game data is never bundled.
+          if grep -qE '^assets/' <<<"$entries"; then
+            fail "the APK carries an assets/ directory: $(grep -E '^assets/' <<<"$entries" | head -n 5)"
+          fi
+
+          # 4. The packaged libmain.so is the real engine: an AArch64 shared object, and its
+          #    DT_NEEDED set is satisfied by the APK's own contents plus Android system libraries
+          #    (the reference port's cross-check, adapted to this port's static SDL3).
+          unzip -o -q "$APK" 'lib/arm64-v8a/*' -d "$RUNNER_TEMP/apk-lib"
+          BIN="$(ls -d "${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}"/toolchains/llvm/prebuilt/*/bin | head -n 1)"
+          readelf="$BIN/llvm-readelf"
+          [ -x "$readelf" ] || fail "llvm-readelf is missing: $readelf"
+          header=$("$readelf" -h "$RUNNER_TEMP/apk-lib/lib/arm64-v8a/libmain.so")
+          grep -q 'Class: *ELF64' <<<"$header" || fail "the packaged libmain.so is not ELF64"
+          grep -q 'Machine: *AArch64' <<<"$header" || fail "the packaged libmain.so is not AArch64"
+          grep -qE 'Type: *DYN' <<<"$header" || fail "the packaged libmain.so is not a shared object"
+          dynsyms=$("$readelf" --dyn-syms "$RUNNER_TEMP/apk-lib/lib/arm64-v8a/libmain.so")
+          grep -qE '[[:space:]]SDL_main$' <<<"$dynsyms" || fail "the packaged libmain.so does not export SDL_main"
+
+          # The packaged engine is the one just built and audited: compare the dynamic dependency
+          # set, which AGP's symbol stripping does not touch (a stand-in stub would not link
+          # libc++_shared.so, so this also proves the real engine is what was packaged).
+          built_needed=$(sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' <<<"$("$readelf" -d "$NATIVE_BUILD/libmain.so")" | sort)
+          apk_needed=$(sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' <<<"$("$readelf" -d "$RUNNER_TEMP/apk-lib/lib/arm64-v8a/libmain.so")" | sort)
+          [ "$built_needed" = "$apk_needed" ] \
+            || fail "the packaged libmain.so's dependencies differ from the engine that was built"
+          grep -q 'libc++_shared.so' <<<"$apk_needed" \
+            || fail "the packaged libmain.so does not link libc++_shared.so: it is not the real engine"
+          echo "the packaged libmain.so is the built engine (identical dependency set)"
+
+          # Every non-system DT_NEEDED must be a real file inside the APK.
+          dynamic=$("$readelf" -d "$RUNNER_TEMP/apk-lib/lib/arm64-v8a/libmain.so")
+          echo "--- packaged libmain.so DT_NEEDED ---"; grep -E 'SONAME|NEEDED' <<<"$dynamic"
+          missing=0
+          for lib in $(sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' <<<"$dynamic"); do
+            case "$lib" in
+              libc.so|libm.so|libdl.so|liblog.so|libandroid.so|libz.so|libGLESv1_CM.so|libGLESv2.so|\
+              libGLESv3.so|libEGL.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libmediandk.so|\
+              libcamera2ndk.so|libjnigraphics.so|libnativewindow.so|libsync.so)
+                continue ;;  # an Android system library the device provides via the NDK stable ABI
+            esac
+            if [ ! -f "$RUNNER_TEMP/apk-lib/lib/arm64-v8a/$lib" ]; then
+              echo "::error::libmain.so needs '$lib' at runtime but it is not packaged in the APK"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || fail "the APK is missing a required native library; it would fail to load on a device"
+          echo "every non-system DT_NEEDED of libmain.so is present in the APK"
+
+          # 5. Manifest metadata and ABI targeting, from the packaged manifest itself.
           aapt2=$(find "$ANDROID_SDK_ROOT/build-tools" -name aapt2 | head -n 1)
           [ -n "$aapt2" ] || fail "aapt2 is not present in build-tools"
           badging=$("$aapt2" dump badging "$APK")
@@ -282,6 +487,14 @@ jobs:
           launchable=$(sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p" <<<"$badging")
           [ "$launchable" = "io.github.olcayseygan.zerohourreforged.SetupActivity" ] \
             || fail "the home-screen entry point is '$launchable', not the setup screen"
+          grep -q "package: name='io.github.olcayseygan.zerohourreforged'" <<<"$badging" \
+            || fail "the packaged applicationId is not the project's own id"
+          grep -q "native-code: 'arm64-v8a'" <<<"$badging" \
+            || fail "the packaged native-code ABI is not arm64-v8a alone"
+          grep -q "sdkVersion:'28'" <<<"$badging" \
+            || fail "the packaged minSdkVersion is not 28 (the native engine's floor)"
+          grep -q "targetSdkVersion:'35'" <<<"$badging" \
+            || fail "the packaged targetSdkVersion is not 35"
           # No storage permission in the packaged APK, as in the merged manifest.
           for p in MANAGE_EXTERNAL_STORAGE READ_EXTERNAL_STORAGE WRITE_EXTERNAL_STORAGE; do
             if grep -q "uses-permission: name='android.permission.$p'" <<<"$badging"; then
@@ -289,9 +502,10 @@ jobs:
             fi
           done
 
-          echo "the APK carries libmain.so and libc++_shared.so for arm64-v8a only, no separate SDL3, and SetupActivity is the launcher"
+          echo "the APK: valid archive; libmain.so + libc++_shared.so for arm64-v8a only, no duplicates,"
+          echo "        no game data, every DT_NEEDED satisfied, SetupActivity the launcher, minSdk 28/target 35"
 
-      - name: Upload the APK and diagnostics
+      - name: Upload the APK, the engine and the diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -299,5 +513,7 @@ jobs:
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app/build/outputs/logs/
+            build-android-arm64/android-configure.log
+            build-android-arm64/android-build.log
           if-no-files-found: warn
           retention-days: 7
