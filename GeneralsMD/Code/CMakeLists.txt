@@ -2665,6 +2665,21 @@ if(ZH_PLATFORM_POSIX)
   target_compile_definitions(test_sdl_touch PRIVATE $<TARGET_PROPERTY:gameengine,COMPILE_DEFINITIONS>)
 endif()
 
+# Phase 5: the Android lifecycle decision (SdlDevice/Common/SdlAndroidPlatform.h).  sdldevice globs
+# SdlAndroidPlatform.cpp, so its non-Android half (the pure lifecycle state machine) is in this binary;
+# the event watch and the JNI are compiled out on the host (ZH_ANDROID == 0).  POSIX-only because
+# sdldevice is.  test_gameengine_stubs.cpp supplies the names sdldevice's larger pull needs (as
+# test_sdl_platform does).
+if(ZH_PLATFORM_POSIX)
+  add_executable(test_sdl_android_platform ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_sdl_android_platform.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_gameengine_stubs.cpp)
+  target_include_directories(test_sdl_android_platform PRIVATE $<TARGET_PROPERTY:gameengine,INCLUDE_DIRECTORIES>)
+  target_compile_definitions(test_sdl_android_platform PRIVATE $<TARGET_PROPERTY:gameengine,COMPILE_DEFINITIONS>)
+  set_target_properties(test_sdl_android_platform PROPERTIES CXX_STANDARD 17)
+  target_link_libraries(test_sdl_android_platform PRIVATE sdldevice test_harness)
+  add_test(NAME test_sdl_android_platform COMMAND test_sdl_android_platform)
+endif()
+
 # MilesAudioDevice/AudioMixPolicy.h: the battle mix's budget and folding arithmetic.
 add_lib_test(test_audio_mix_policy)
 target_include_directories(test_audio_mix_policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Include)

@@ -68,7 +68,10 @@
 #include "miniaudio.h"
 
 #include "MSS/MSS.h"
+#include "MSS/mss_ex_device.h"
 #include "MSS/mss_ex_pcm.h"
+
+#include "Platform/PlatformPredicates.h"        // ZH_ANDROID
 
 #ifndef WAVE_FORMAT_IMA_ADPCM
 #define WAVE_FORMAT_IMA_ADPCM 0x0011
@@ -1189,6 +1192,57 @@ bool useNullBackend()
 	return g_engine.offline || (backend != NULL && strcmp(backend, "null") == 0);
 }
 
+#if ZH_ANDROID
+/* The context's backend list, named explicitly instead of letting miniaudio walk its whole list:
+   AAudio first (the modern API, low latency, and the one that reports focus and interruptions) and
+   OpenSL ES after it (every device back to API 21 has it, and it is the fallback where a vendor's
+   AAudio is missing or refuses).  Naming the list also keeps miniaudio from probing the desktop
+   Linux backends - ALSA, JACK, PulseAudio - on Android at all. */
+const ma_backend ANDROID_BACKENDS[] = { ma_backend_aaudio, ma_backend_opensl };
+const ma_uint32 ANDROID_BACKEND_COUNT = sizeof(ANDROID_BACKENDS) / sizeof(ANDROID_BACKENDS[0]);
+
+/* miniaudio's device notification: started, stopped, rerouted (a headset, a Bluetooth device),
+   or an interruption begun and ended.  The engine's own pause/resume is driven by SDL's app
+   lifecycle (SdlDevice/Common/SdlAndroidPlatform.cpp); these are logged only, because on Android
+   the OS owns the stream across a reroute or an interruption and re-opens it itself. */
+void deviceNotificationCallback(const ma_device_notification *notification)
+{
+	const char *what = "unknown";
+	switch (notification->type) {
+		case ma_device_notification_type_started:            what = "started"; break;
+		case ma_device_notification_type_stopped:            what = "stopped"; break;
+		case ma_device_notification_type_rerouted:           what = "rerouted"; break;
+		case ma_device_notification_type_interruption_began: what = "interruption began"; break;
+		case ma_device_notification_type_interruption_ended: what = "interruption ended"; break;
+		case ma_device_notification_type_unlocked:           what = "unlocked"; break;
+	}
+	fprintf(stderr, "miles(miniaudio): audio device %s\n", what);
+}
+#endif
+
+/* The backend-specific settings the two Android backends take, applied to the device config
+   AIL_quick_startup makes.  A no-op off Android. */
+void applyAndroidBackendSettings( ma_device_config &deviceConfig )
+{
+#if ZH_ANDROID
+	/* AAudio's usage and content type are how the OS routes and ducks the stream: a game's audio is
+	   media, not a ringtone or an alarm, and the content is music so a voice call ducks it rather
+	   than muting it.  Left unset they fall to AAudio's own default, which is not the same on every
+	   device. */
+	deviceConfig.aaudio.usage = ma_aaudio_usage_game;
+	deviceConfig.aaudio.contentType = ma_aaudio_content_type_music;
+	/* OpenSL ES stream type: media, so the sound follows the media volume, the stream AAudio's
+	   usage maps to as well. */
+	deviceConfig.opensl.streamType = ma_opensl_stream_type_media;
+	/* Let the OS re-open the stream after a reroute (a headset plugged in, a Bluetooth device
+	   connecting) instead of leaving the device stopped until the app restarts it. */
+	deviceConfig.aaudio.noAutoStartAfterReroute = MA_FALSE;
+	deviceConfig.notificationCallback = deviceNotificationCallback;
+#else
+	(void)deviceConfig;
+#endif
+}
+
 } // namespace
 
 // =================================================================================================
@@ -1220,14 +1274,28 @@ S32 AILCALL AIL_quick_startup(S32 use_digital, S32, U32, S32, S32)
 	}
 
 	const ma_backend nullBackend[] = { ma_backend_null };
-	if (ma_context_init(useNullBackend() ? nullBackend : NULL, useNullBackend() ? 1 : 0, NULL,
-			&g_engine.context) != MA_SUCCESS) {
+	ma_context_config contextConfig = ma_context_config_init();
+	ma_device_config config = ma_device_config_init(ma_device_type_playback);
+	applyAndroidBackendSettings( config );
+
+	const ma_backend *backends = NULL;
+	ma_uint32 backendCount = 0;
+	if (useNullBackend()) {
+		backends = nullBackend;
+		backendCount = 1;
+	}
+#if ZH_ANDROID
+	else {
+		backends = ANDROID_BACKENDS;
+		backendCount = ANDROID_BACKEND_COUNT;
+	}
+#endif
+	if (ma_context_init(backends, backendCount, &contextConfig, &g_engine.context) != MA_SUCCESS) {
 		return 0;
 	}
 	g_engine.contextReady = true;
 
 	// Float stereo at the device's own rate: what XAudio2's mastering voice mixes in.
-	ma_device_config config = ma_device_config_init(ma_device_type_playback);
 	config.playback.format = ma_format_f32;
 	config.playback.channels = OUTPUT_CHANNELS;
 	config.sampleRate = 0;
@@ -1259,6 +1327,37 @@ void AILCALL AIL_quick_handles(HDIGDRIVER *pdig, HMDIDRIVER *pmdi, HDLSDEVICE *p
 	if (pdig != NULL) *pdig = g_engine.deviceReady ? DIGITAL_DRIVER : NULL;
 	if (pmdi != NULL) *pmdi = NULL;
 	if (pdls != NULL) *pdls = NULL;
+}
+
+// =================================================================================================
+// The output device, held open but stopped (mss_ex_device.h)
+// =================================================================================================
+
+void AILCALL AIL_ex_device_pause(void)
+{
+	if (!g_engine.deviceReady || g_engine.offline) {
+		return;
+	}
+	std::lock_guard<std::recursive_mutex> guard(g_engine.lock);
+	if (ma_device_is_started(&g_engine.device)) {
+		ma_device_stop(&g_engine.device);
+	}
+}
+
+void AILCALL AIL_ex_device_resume(void)
+{
+	if (!g_engine.deviceReady || g_engine.offline) {
+		return;
+	}
+	std::lock_guard<std::recursive_mutex> guard(g_engine.lock);
+	if (!ma_device_is_started(&g_engine.device)) {
+		ma_device_start(&g_engine.device);
+	}
+}
+
+S32 AILCALL AIL_ex_device_is_open(void)
+{
+	return g_engine.deviceReady ? 1 : 0;
 }
 
 S32 AILCALL AIL_ex_start_capture(const char *pathname)

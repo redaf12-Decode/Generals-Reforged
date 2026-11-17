@@ -26,6 +26,7 @@
 #include "GameClient/ApplicationWindowTitle.h"
 #include "GameNetwork/Online/OnlineQueues.h"
 #include "GameLogic/GameLogic.h"
+#include "SdlDevice/Common/SdlAndroidPlatform.h"
 #include "SdlDevice/Common/SdlDisplays.h"
 #include "SdlDevice/Common/SdlGameEngine.h"
 #include "SdlDevice/Common/SdlMessageBox.h"
@@ -252,6 +253,11 @@ void SdlGameEngine::createWindow( void )
 	ApplicationIsBorderless = m_request.borderless;
 	TheW3DWindowFrameHook = dressWindow;
 	TheW3DWindowSizeHook = sizeWindow;
+
+	// Phase 5: the Android application lifecycle (a background/foreground pause and resume of the
+	// audio output), the screen staying on, and the LAN lobby's Wi-Fi multicast lock.  A no-op off
+	// Android, where the window focus events below are what pause and resume the audio.
+	SdlAndroidPlatform_install();
 }
 
 /* -offscreen (PosixMain.cpp): SDL's video runs, because SDL3 makes no GPU device without it, but no window
@@ -298,6 +304,8 @@ void SdlGameEngine::startOffscreen( void )
 
 void SdlGameEngine_releaseWindow( void )
 {
+	// Phase 5: the lifecycle event watch and the Wi-Fi multicast lock go before SDL's video does.
+	SdlAndroidPlatform_shutdown();
 	if (s_pendingWindow != NULL)
 	{
 		if (s_titledWindow == s_pendingWindow)

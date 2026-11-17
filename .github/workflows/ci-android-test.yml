@@ -1,4 +1,4 @@
-# Android ARM64 platform foundation and runtime-integration check (Phase 1, Phase 2, Phase 3, Phase 4).
+# Android ARM64 platform foundation and runtime-integration check (Phase 1, Phase 2, Phase 3, Phase 4, Phase 5).
 #
 # This is a dedicated workflow, not part of linux-release.yml, because it validates a different
 # question: does the project configure and compile for Android arm64-v8a at all. It does not package
@@ -23,7 +23,14 @@
 #      PosixMain.cpp as the shared library SDL3's SDLActivity loads, exercising every dependency in
 #      the link graph (GameSpy, FFmpeg, FreeType, mbedTLS, SDL3 GPU). The result is asserted to be
 #      an AArch64 shared object exporting SDL_main and linking Android system libraries only. A
-#      successful configure is not treated as proof of compilation.
+#      successful configure is not treated as proof of compilation;
+#   9. the audio, storage and game-services layer compiled for Android (Phase 5): the miniaudio
+#      backend's object defines AIL_ex_device_pause/resume (the device pause the lifecycle drives) and
+#      references ma_device_stop, the platform layer's object defines SdlAndroidPlatform_install/
+#      shutdown and references SDL_AddEventWatch and SDL_GetAndroidActivity, and PosixMain.cpp's
+#      object references SDL_GetAndroidInternalStoragePath - so the Android halves, not the desktop
+#      stubs, are what was built. The objects are checked after the link above, which is what produces
+#      them.
 #
 # Dependencies that are not Android-ready are reported, not hidden and not worked around by
 # disabling them: see docs/android-port/audit/05-dependency-compatibility.md. The Phase-3 graphics
@@ -465,6 +472,67 @@ jobs:
           done
 
           echo "libmain.so: AArch64 shared object, exports SDL_main, links Android system libraries only"
+
+      - name: Assert the Android audio, storage and game-services layer compiled (Phase 5)
+        env:
+          BUILD: ${{ runner.temp }}/build-android-arm64
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          # The objects this step checks are produced by the libmain.so link above: sdldevice and
+          # milesaudio are in the engine's link graph, and PosixMain.cpp is the entry point.
+          compiler=$(ls "$BUILD"/CMakeFiles/*/CMakeCXXCompiler.cmake)
+          cxx=$(sed -n 's/^set(CMAKE_CXX_COMPILER "\(.*\)")$/\1/p' "$compiler" | head -n 1)
+          [ -n "$cxx" ] || fail "CMakeCXXCompiler.cmake has no CMAKE_CXX_COMPILER"
+          prebuilt=$(dirname "$cxx")
+          nm_tool="$prebuilt/llvm-nm"
+          readelf_tool="$prebuilt/llvm-readelf"
+          [ -x "$nm_tool" ] || fail "the NDK llvm-nm is missing: $nm_tool"
+          [ -x "$readelf_tool" ] || fail "the NDK llvm-readelf is missing: $readelf_tool"
+
+          # Audio: the Miles surface on miniaudio, with the Android backends and the device
+          # pause/resume extension the lifecycle layer drives. The AIL_* names are extern "C"
+          # (MSS.h), so they are unmangled; ma_device_stop is miniaudio's own C entry point.
+          audio_obj=$(find "$BUILD" -path '*milesaudio*' -name 'miles_miniaudio.cpp.o' | head -n 1)
+          [ -n "$audio_obj" ] || fail "miles_miniaudio.cpp was not compiled into milesaudio for Android"
+          grep -q 'Machine: *AArch64' <<<"$("$readelf_tool" -h "$audio_obj")" \
+            || fail "the miniaudio audio backend object is not AArch64"
+          audio_syms=$("$nm_tool" --demangle "$audio_obj")
+          for s in AIL_quick_startup AIL_ex_device_pause AIL_ex_device_resume AIL_ex_device_is_open; do
+            grep -qE "[[:space:]]T $s$" <<<"$audio_syms" \
+              || fail "$s is not defined in the Android miniaudio backend (the device pause/resume the lifecycle needs)"
+          done
+          # Undefined: ma_device_stop is called only by the pause/resume extension, so its presence
+          # proves that half was compiled into this object.
+          grep -qE "[[:space:]]U ma_device_stop$" <<<"$audio_syms" \
+            || fail "miles_miniaudio.cpp.o does not reference ma_device_stop: the device pause/resume half was not compiled"
+
+          # Storage: PosixMain.cpp points HOME at SDL_GetAndroidInternalStoragePath so the user data
+          # directory (EarlyOptions.h's USER_FOLDERS_ANDROID) lands in the app's private storage.
+          main_obj=$(find "$BUILD" -name 'PosixMain.cpp.o' | head -n 1)
+          [ -n "$main_obj" ] || fail "PosixMain.cpp was not compiled for Android"
+          grep -qE "[[:space:]]U SDL_GetAndroidInternalStoragePath$" <<<"$("$nm_tool" "$main_obj")" \
+            || fail "PosixMain.cpp.o does not reference SDL_GetAndroidInternalStoragePath: the private storage directory is not used"
+
+          # Game services: the platform layer's install/shutdown are compiled into sdldevice, and its
+          # Android half references the SDL event-watch API and the SDL3 Android JNI accessors, which
+          # only that half calls.
+          platform_obj=$(find "$BUILD" -path '*sdldevice*' -name 'SdlAndroidPlatform.cpp.o' | head -n 1)
+          [ -n "$platform_obj" ] || fail "SdlAndroidPlatform.cpp was not compiled into sdldevice for Android"
+          grep -q 'Machine: *AArch64' <<<"$("$readelf_tool" -h "$platform_obj")" \
+            || fail "the Android platform layer object is not AArch64"
+          platform_syms=$("$nm_tool" --demangle "$platform_obj")
+          for s in SdlAndroidPlatform_install SdlAndroidPlatform_shutdown; do
+            grep -qE "[[:space:]]T $s\\(" <<<"$platform_syms" \
+              || fail "$s is not defined in the Android platform layer"
+          done
+          grep -qE "[[:space:]]U SDL_AddEventWatch$" <<<"$platform_syms" \
+            || fail "SdlAndroidPlatform.cpp.o does not reference SDL_AddEventWatch: the lifecycle watch was not compiled"
+          grep -qE "[[:space:]]U SDL_GetAndroidActivity$" <<<"$platform_syms" \
+            || fail "SdlAndroidPlatform.cpp.o does not reference SDL_GetAndroidActivity: the game-services JNI half was not compiled"
+
+          echo "Phase 5 compiled for aarch64-linux-android: the miniaudio backend with AIL_ex_device_pause/resume, the private-storage user folder, and the Android platform layer (lifecycle watch, screen-on, multicast lock)"
 
       - name: Upload the configure and build logs
         if: always()

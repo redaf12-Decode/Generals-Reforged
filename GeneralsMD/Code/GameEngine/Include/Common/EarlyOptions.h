@@ -287,11 +287,14 @@ inline bool makeDirectoryPath( const char *path )
 enum UserFolderConvention
 {
 	USER_FOLDERS_APPLE,
-	USER_FOLDERS_XDG
+	USER_FOLDERS_XDG,
+	USER_FOLDERS_ANDROID	///< app-private internal storage, the one directory an Android app may always write
 };
 
 #if defined(__APPLE__)
 static const UserFolderConvention PLATFORM_USER_FOLDERS = USER_FOLDERS_APPLE;
+#elif defined(__ANDROID__)
+static const UserFolderConvention PLATFORM_USER_FOLDERS = USER_FOLDERS_ANDROID;
 #else
 static const UserFolderConvention PLATFORM_USER_FOLDERS = USER_FOLDERS_XDG;
 #endif
@@ -311,6 +314,10 @@ inline bool composeUserDataDirectory( UserFolderConvention convention, const cha
 		written = ::snprintf( out, outSize, "%s", override );
 	else if (convention == USER_FOLDERS_APPLE && home != NULL && home[0] == '/')
 		written = ::snprintf( out, outSize, "%s/Library/Application Support/%s", home, leaf );
+	else if (convention == USER_FOLDERS_ANDROID && home != NULL && home[0] == '/')
+		// Android has neither XDG nor Application Support: the app's own private directory, which
+		// PosixMain points HOME at (SDL_GetAndroidInternalStoragePath), holds the leaf directly.
+		written = ::snprintf( out, outSize, "%s/%s", home, leaf );
 	else if (convention == USER_FOLDERS_XDG && dataHome != NULL && dataHome[0] == '/')	// a relative one is ignored, as the specification says
 		written = ::snprintf( out, outSize, "%s/%s", dataHome, leaf );
 	else if (convention == USER_FOLDERS_XDG && home != NULL && home[0] == '/')
@@ -432,6 +439,9 @@ inline bool composeDesktopDirectory( UserFolderConvention convention, const char
 	out[0] = 0;
 	if (home == NULL || home[0] != '/')
 		return false;
+	// Android has no Desktop: the replay menu's "copy" has nowhere standard to put a replay there.
+	if (convention == USER_FOLDERS_ANDROID)
+		return false;
 	char dirsFile[4096];
 	if (convention == USER_FOLDERS_XDG && composeUserDirsFile( home, configHome, dirsFile, sizeof( dirsFile ) ))
 	{
@@ -457,13 +467,16 @@ inline bool composeDesktopDirectory( UserFolderConvention convention, const char
 	* the shell (ReplayMenu.cpp). */
 inline bool findDesktopDirectory( char *out, size_t outSize )
 {
+	if (outSize != 0)
+		out[0] = 0;
+	// Android has no Desktop: the replay menu's "copy" has nowhere standard to put a replay, and the
+	// shared-storage locations (Downloads, Documents) are not the app's to write without a permission
+	// and a scope it does not ask for.  The replay stays in the user data directory instead.
+	if (PLATFORM_USER_FOLDERS == USER_FOLDERS_ANDROID)
+		return false;
 	char home[4096];
 	if (!findHomeDirectory( home, sizeof( home ) ))
-	{
-		if (outSize != 0)
-			out[0] = 0;
 		return false;
-	}
 	return composeDesktopDirectory( PLATFORM_USER_FOLDERS, home, ::getenv( "XDG_CONFIG_HOME" ), out, outSize );
 }
 #endif

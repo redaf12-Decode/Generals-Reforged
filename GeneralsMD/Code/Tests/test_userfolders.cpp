@@ -145,6 +145,29 @@ TEST(user_data_directory_is_made_and_ends_as_windows_does)
 	if (system(command.c_str()) != 0) printf("  could not remove %s\n", root.c_str());
 }
 
+// Phase 5: Android's place, the app-private internal storage directory (SDL_GetAndroidInternalStoragePath,
+// which PosixMain points HOME at).  It is neither Apple's Application Support nor XDG's ~/.local/share:
+// the leaf sits directly in the private directory.  Checked on every host through the convention
+// parameter, so the choice is exercised even where PLATFORM_USER_FOLDERS is XDG.
+TEST(android_user_data_directory_is_the_private_storage_directory)
+{
+	const std::string leaf = "Command and Conquer Generals Zero Hour Data";
+	const UserFolderConvention ANDROID = USER_FOLDERS_ANDROID;
+	// The private files directory, /data/user/0/<package>/files, and the leaf directly under it.
+	CHECK_STR(composed(ANDROID, NULL, "/data/user/0/com.example/files", NULL).c_str(),
+		("/data/user/0/com.example/files/" + leaf).c_str());
+	// XDG_DATA_HOME means nothing here: Android is not the XDG convention.
+	CHECK_STR(composed(ANDROID, NULL, "/data/user/0/com.example/files", "/elsewhere").c_str(),
+		("/data/user/0/com.example/files/" + leaf).c_str());
+	// The override still wins, as it does for every convention.
+	CHECK_STR(composed(ANDROID, "/tmp/zh-data/", "/data/user/0/com.example/files", NULL).c_str(), "/tmp/zh-data");
+	// No home, no answer - the engine says so rather than inventing a path.
+	CHECK_STR(composed(ANDROID, NULL, NULL, NULL).c_str(), "(none)");
+	CHECK_STR(composed(ANDROID, NULL, "relative", NULL).c_str(), "(none)");
+	// Android has no Desktop: composeDesktopDirectory answers nothing for the convention.
+	CHECK_STR(desktop(ANDROID, "/data/user/0/com.example/files", NULL).c_str(), "(none)");
+}
+
 // xdg-user-dirs' file, as Linux desktops write it.
 TEST(xdg_user_dirs_file_names_the_desktop)
 {
