@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The fullscreen game theme. SDLActivity draws its own surface and the game draws
+     through SDL3's GPU API, so there are no widgets to theme. -->
+<resources>
+    <style name="AppTheme" parent="android:Theme.NoTitleBar.Fullscreen" />
+</resources>

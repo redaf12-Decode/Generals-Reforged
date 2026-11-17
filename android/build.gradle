@@ -1,0 +1,7 @@
+// The Android Gradle Plugin version is the one SDL3 3.4.16 ships in its own
+// android-project (android-project/build.gradle), so the shell is built with the
+// same toolchain SDL3's Java glue is written against. Gradle 8.12 is that
+// project's wrapper version and is the version CI sets up.
+plugins {
+    id 'com.android.application' version '8.7.3' apply false
+}

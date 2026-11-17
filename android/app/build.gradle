@@ -1,0 +1,76 @@
+// The Android application module for Zero Hour Reforged.
+//
+// It compiles only the Java shell and packages the APK. The native engine is
+// cross-compiled outside Gradle (scripts/build/android/build-android.sh) and
+// staged into src/main/jniLibs by scripts/build/android/package-android.sh,
+// together with SDL3's Java glue in src/main/java-sdl. Both staged directories
+// are gitignored.
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    // A new identity derived from this project's own published id
+    // (io.github.olcayseygan.ZeroHourReforged, its Flatpak app id and macOS
+    // bundle id). NOT the reference port's com.generalsx.zerohour.
+    namespace 'io.github.olcayseygan.zerohourreforged'
+    compileSdk 35
+
+    // The NDK the engine is cross-compiled with (scripts/build/android/build-android.sh and the CI
+    // workflows pin the same revision). Gradle does not compile native code here, but it does use the
+    // NDK's strip on the staged libraries; naming the revision keeps that deterministic instead of
+    // falling back to whatever AGP's default happens to be.
+    ndkVersion '27.2.12479018'
+
+    defaultConfig {
+        applicationId 'io.github.olcayseygan.zerohourreforged'
+
+        // The native engine is built against android-28 (the NDK API level in
+        // scripts/build/android/android.toolchain.cmake), so the APK must not
+        // declare a lower floor: a device below it would install and then fail
+        // to load libmain.so.
+        minSdk 28
+
+        // SDL3 3.4.16's own android-project targets 35 and is what the staged
+        // Java glue is written against.
+        targetSdk 35
+
+        // The engine's own version (GeneralsMD/Code/CMakeLists.txt writes
+        // VERSION_STRING "v4.0.0"), in the same major*10000+minor*100+patch
+        // scheme the version name sorts by.
+        versionCode 40000
+        versionName '4.0.0'
+
+        // The only ABI the port builds (android.toolchain.cmake, arm64-v8a).
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    sourceSets {
+        main {
+            // Staged by scripts/build/android/package-android.sh: java-sdl holds
+            // org/libsdl/app/*.java from the vendored SDL3 3.4.16 tree, so the
+            // Java glue always matches the SDL3 the engine linked; jniLibs holds
+            // libmain.so and libc++_shared.so.
+            java.srcDirs += 'src/main/java-sdl'
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Default: AGP's per-machine debug keystore. No key is committed.
+        }
+        release {
+            minifyEnabled false
+        }
+    }
+
+    lint {
+        // The staged SDL3 Java glue is upstream code this project does not own;
+        // a lint finding in it is not this project's to fix. Its own manifest
+        // and Activity are still linted.
+        abortOnError false
+    }
+}

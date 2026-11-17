@@ -1,0 +1,10 @@
+# Staged by scripts/build/android/package-android.sh on every packaging run, never committed:
+#   jniLibs/  libmain.so (the engine) and libc++_shared.so
+#   java-sdl/ org/libsdl/app/*.java copied from the vendored SDL3 tree
+app/src/main/jniLibs/
+app/src/main/java-sdl/
+
+# Gradle's own output and per-machine state.
+.gradle/
+build/
+local.properties

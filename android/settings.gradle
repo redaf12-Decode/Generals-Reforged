@@ -1,0 +1,26 @@
+// The Android application module for Zero Hour Reforged.
+//
+// The native engine is NOT built by Gradle: it is cross-compiled by
+// scripts/build/android/build-android.sh (CMake + the NDK) into libmain.so, and
+// scripts/build/android/package-android.sh stages that library and SDL3's Java
+// glue into this project before Gradle packages the APK. Gradle's job here is
+// only the Java shell (the thin Activity) and the packaging.
+//
+// Repositories are pinned to the two official ones AGP resolves from; no other
+// source is added.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = 'ZeroHourReforged'
+include ':app'

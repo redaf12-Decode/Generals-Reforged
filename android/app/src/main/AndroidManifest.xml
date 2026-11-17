@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Zero Hour Reforged on Android, arm64-v8a.
+
+    The renderer is SDL3's GPU API over Vulkan (docs/android-port/architecture/07-gpu-backend-decision.md):
+    there is no GLES fallback in SDL3 3.4.16, so Vulkan is declared but not required - a device without a
+    usable Vulkan driver fails loudly at start-up by design, rather than being refused installation.
+
+    Permissions are limited to what the existing native code actually uses:
+      - CHANGE_WIFI_MULTICAST_STATE for the LAN lobby's Wi-Fi multicast lock
+        (SdlAndroidPlatform.cpp acquireMulticastLock);
+      - INTERNET for the LAN lobby's UDP sockets (GameEngine/Source/GameNetwork/udp.cpp), which Android
+        refuses to open without it.
+    No storage permission is declared: the game reads a folder the player picks and writes only to its own
+    private storage (docs/android-port/architecture/08-game-data-delivery.md).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature
+        android:name="android.hardware.vulkan.version"
+        android:version="0x401000"
+        android:required="false" />
+
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="true" />
+
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="true"
+        android:isGame="true"
+        android:appCategory="game"
+        android:hardwareAccelerated="true"
+        android:enableOnBackInvokedCallback="false"
+        android:theme="@style/AppTheme">
+
+        <!--
+            The game surface. The class extends org.libsdl.app.SDLActivity (staged into
+            src/main/java-sdl), which loads libmain.so and calls its exported SDL_main on a
+            dedicated thread. configChanges is the exact set SDL3 3.4.16's own android-project
+            declares, so SDL handles these without the Activity being recreated underneath it.
+        -->
+        <activity
+            android:name=".ZeroHourActivity"
+            android:label="@string/app_name"
+            android:alwaysRetainTaskState="true"
+            android:launchMode="singleInstance"
+            android:screenOrientation="landscape"
+            android:exported="true"
+            android:preferMinimalPostProcessing="true"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
