@@ -51,6 +51,19 @@ workflow or dependency file was touched. Only this document was written.**
 > Stage 4 (font substitute + on-device verification) remains, and nothing here is verified on a
 > device. No file under `GeneralsMD/Code/` was changed.
 
+> **Phase 5 (Android lifecycle, Vulkan, touch and audio integration) is now implemented** on this
+> branch, in its first integration slice: the application lifecycle the platform layer already
+> watched now also takes the live touch gesture away when the app leaves the foreground. SDL delivers
+> no `FINGER_UP` on a backgrounding, so a gesture that was down was left latched and the next finger
+> was read as the second of a stale one; `SdlAndroidLifecycle_cancelsInput` (the same transition that
+> stops the audio device, once) drives `SdlTouch_reset`, which now resolves a gesture that owes the
+> engine a button-up (a held UI press, a committed placement, an area-selection box) as a
+> cancellation before dropping it, and a canceled pan no longer coasts. The design and the
+> verification are recorded in
+> [`architecture/19-android-lifecycle-and-input-integration.md`](architecture/19-android-lifecycle-and-input-integration.md).
+> Vulkan device-loss handling, the audio lifecycle on a real device and Stage 4 (font substitute +
+> on-device verification) remain, and nothing here is verified on a device.
+
 ---
 
 ## 1. Repository and branch information

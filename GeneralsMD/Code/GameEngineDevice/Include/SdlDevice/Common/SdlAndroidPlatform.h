@@ -73,6 +73,12 @@ Bool SdlAndroidLifecycle_pausesDevice( SdlAndroidLifecycle before, SdlAndroidLif
 /// that is not a terminated app.
 Bool SdlAndroidLifecycle_resumesDevice( SdlAndroidLifecycle before, SdlAndroidLifecycle after );
 
+/** TRUE when this transition takes the fingers away from the game: the app is going to the background
+        * (or being terminated), so no FINGER_UP arrives for a gesture that was live.  The touch layer
+        * must be told to resolve and drop it - once, on the same transition that stops the output -
+        * or the finger that lands when the player returns is read as the second of a stale gesture. */
+Bool SdlAndroidLifecycle_cancelsInput( SdlAndroidLifecycle before, SdlAndroidLifecycle after );
+
 // ---- The services (installed by SdlGameEngine; a no-op off Android) -------------------------------
 
 /** Installs the lifecycle event watch, keeps the screen on and takes the Wi-Fi multicast lock.  Called

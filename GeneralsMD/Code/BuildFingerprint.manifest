@@ -2024,6 +2024,7 @@ GameEngineDevice/Include/PosixDevice/Common/PosixGameEngine.h
 GameEngineDevice/Include/PosixDevice/Common/PosixInstallRoot.h
 GameEngineDevice/Include/PosixDevice/Common/PosixLocalFile.h
 GameEngineDevice/Include/PosixDevice/Common/PosixLocalFileSystem.h
+GameEngineDevice/Include/SdlDevice/Common/SdlAndroidPlatform.h
 GameEngineDevice/Include/SdlDevice/Common/SdlDisplays.h
 GameEngineDevice/Include/SdlDevice/Common/SdlGameEngine.h
 GameEngineDevice/Include/SdlDevice/Common/SdlMessageBox.h
@@ -2033,6 +2034,7 @@ GameEngineDevice/Include/SdlDevice/GameClient/SdlInput.h
 GameEngineDevice/Include/SdlDevice/GameClient/SdlKeyTable.h
 GameEngineDevice/Include/SdlDevice/GameClient/SdlKeyboard.h
 GameEngineDevice/Include/SdlDevice/GameClient/SdlMouse.h
+GameEngineDevice/Include/SdlDevice/GameClient/SdlTouch.h
 GameEngineDevice/Include/VideoDevice/Bink/BinkVideoPlayer.h
 GameEngineDevice/Include/W3DDevice/Common/W3DConvert.h
 GameEngineDevice/Include/W3DDevice/Common/W3DFunctionLexicon.h
@@ -2173,6 +2175,8 @@ GameEngineDevice/Source/PosixDevice/Render/PosixResources9.h
 GameEngineDevice/Source/PosixDevice/Render/SdlConstants.h
 GameEngineDevice/Source/PosixDevice/Render/SdlCreationLog.h
 GameEngineDevice/Source/PosixDevice/Render/SdlGpuDepthFormat.h
+GameEngineDevice/Source/PosixDevice/Render/SdlGpuDeviceFeatures.cpp
+GameEngineDevice/Source/PosixDevice/Render/SdlGpuDeviceFeatures.h
 GameEngineDevice/Source/PosixDevice/Render/SdlGpuFrame.cpp
 GameEngineDevice/Source/PosixDevice/Render/SdlGpuFrame.h
 GameEngineDevice/Source/PosixDevice/Render/SdlGpuFrameBatch.cpp
@@ -2219,6 +2223,7 @@ GameEngineDevice/Source/PosixDevice/Render/SdlSceneCapture.cpp
 GameEngineDevice/Source/PosixDevice/Render/SdlSceneCapture.h
 GameEngineDevice/Source/PosixDevice/Render/SdlSceneContext.h
 GameEngineDevice/Source/PosixDevice/Render/SdlSunShadowDebug.h
+GameEngineDevice/Source/SdlDevice/Common/SdlAndroidPlatform.cpp
 GameEngineDevice/Source/SdlDevice/Common/SdlDisplays.cpp
 GameEngineDevice/Source/SdlDevice/Common/SdlGameEngine.cpp
 GameEngineDevice/Source/SdlDevice/Common/SdlMessageBox.cpp
@@ -2228,6 +2233,7 @@ GameEngineDevice/Source/SdlDevice/GameClient/SdlInput.cpp
 GameEngineDevice/Source/SdlDevice/GameClient/SdlKeyTable.cpp
 GameEngineDevice/Source/SdlDevice/GameClient/SdlKeyboard.cpp
 GameEngineDevice/Source/SdlDevice/GameClient/SdlMouse.cpp
+GameEngineDevice/Source/SdlDevice/GameClient/SdlTouch.cpp
 GameEngineDevice/Source/VideoDevice/Bink/BinkVideoPlayer.cpp
 GameEngineDevice/Source/W3DDevice/Common/System/W3DFunctionLexicon.cpp
 GameEngineDevice/Source/W3DDevice/Common/System/W3DRadar.cpp
@@ -2410,6 +2416,7 @@ Libraries/Include/Platform/RendererName.h
 Libraries/Include/Platform/SdlHazardCloud.h
 Libraries/Include/Platform/SdlHazardCloudFlow.h
 Libraries/Include/Platform/SleepMilliseconds.h
+Libraries/Include/Platform/StackWalk.h
 Libraries/Include/Platform/StrdupAsWindows.h
 Libraries/Include/Platform/SunShadow.h
 Libraries/Include/Platform/SunShadowMode.h
@@ -2561,6 +2568,7 @@ Libraries/Source/WWVegas/Bink/include/bink.h
 Libraries/Source/WWVegas/Miles6/.gitignore
 Libraries/Source/WWVegas/Miles6/include/MSS/MSS.h
 Libraries/Source/WWVegas/Miles6/include/MSS/mss_backend_names.h
+Libraries/Source/WWVegas/Miles6/include/MSS/mss_ex_device.h
 Libraries/Source/WWVegas/Miles6/include/MSS/mss_ex_pcm.h
 Libraries/Source/WWVegas/Miles6/include/Mss.h
 Libraries/Source/WWVegas/Miles6/miles_dispatch.cpp
@@ -3472,6 +3480,7 @@ Libraries/Source/debug/test5/test5.dsp
 Libraries/Source/debug/test6/test6.cpp
 Libraries/Source/debug/test6/test6.dsp
 Libraries/Source/freetype/.gitignore
+Libraries/Source/gamespy-android-thread.patch
 Libraries/Source/gamespy-gsi-unix.patch
 Libraries/Source/gamespy-strlwr-c-only.patch
 Libraries/Source/glslang/.gitignore
@@ -3695,11 +3704,13 @@ Tests/test_renderer_particles.cpp
 Tests/test_renderer_water_foam.cpp
 Tests/test_road_buffer.cpp
 Tests/test_script_timers.inc
+Tests/test_sdl_android_platform.cpp
 Tests/test_sdl_ao.cpp
 Tests/test_sdl_atmosphere.cpp
 Tests/test_sdl_classic_foam.cpp
 Tests/test_sdl_distortion.cpp
 Tests/test_sdl_gpu_depth_format.cpp
+Tests/test_sdl_gpu_device_features.cpp
 Tests/test_sdl_gpu_frame.cpp
 Tests/test_sdl_gpu_particles.cpp
 Tests/test_sdl_heat.cpp
@@ -3711,6 +3722,7 @@ Tests/test_sdl_post.cpp
 Tests/test_sdl_program_cache.cpp
 Tests/test_sdl_reach.cpp
 Tests/test_sdl_storage.cpp
+Tests/test_sdl_touch.cpp
 Tests/test_selection_priority.inc
 Tests/test_shader_sdl.cpp
 Tests/test_smooth_motion.cpp

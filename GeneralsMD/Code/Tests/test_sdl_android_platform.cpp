@@ -19,8 +19,9 @@
 // Phase 5: the Android lifecycle decision (SdlDevice/Common/SdlAndroidPlatform.h).  The event watch,
 // the JNI and the SDL calls are compiled out on the host (ZH_ANDROID == 0); what is left - and what
 // this drives - is the pure state machine that decides whether an application-lifecycle event stops
-// the audio output, starts it again, or does nothing.  A second stop on a second pause, or a start
-// after the app was terminated, is a bug here, so it is checked here.
+// the audio output, starts it again, takes the live touch gesture away, or does nothing.  A second
+// stop on a second pause, a start after the app was terminated, or a finger taken away on a foreground
+// return is a bug here, so it is checked here.
 
 #include "test_harness.h"
 
@@ -28,12 +29,14 @@
 
 namespace {
 
-// One event through the machine, reporting whether it stopped or started the device.
+// One event through the machine, reporting whether it stopped or started the device, or took the
+// fingers away.
 struct Step
 {
 	SdlAndroidLifecycle state;
 	Bool paused;
 	Bool resumed;
+	Bool canceledInput;
 };
 
 Step step( SdlAndroidLifecycle before, SdlAndroidLifecycleEvent event )
@@ -42,6 +45,7 @@ Step step( SdlAndroidLifecycle before, SdlAndroidLifecycleEvent event )
 	s.state = SdlAndroidLifecycle_onEvent( before, event );
 	s.paused = SdlAndroidLifecycle_pausesDevice( before, s.state );
 	s.resumed = SdlAndroidLifecycle_resumesDevice( before, s.state );
+	s.canceledInput = SdlAndroidLifecycle_cancelsInput( before, s.state );
 	return s;
 }
 
@@ -122,4 +126,51 @@ TEST(android_lifecycle_termination_while_backgrounded_does_not_stop_twice)
 	CHECK(terminated.state.terminated == TRUE);
 	CHECK(terminated.paused == FALSE);
 	CHECK(terminated.resumed == FALSE);
+}
+
+// The fingers are taken away exactly when the app stops being interactive - once per backgrounding,
+// and again on termination if that is what takes it away - and never on a foreground return.  This is
+// what drives SdlTouch_reset: SDL delivers no FINGER_UP when the app leaves the foreground, so a
+// gesture that was live would otherwise be left latched (and the next finger read as its second).
+TEST(android_lifecycle_takes_the_fingers_away_when_the_app_stops_being_interactive)
+{
+	SdlAndroidLifecycle state = SdlAndroidLifecycle_begin();
+
+	// The first background event takes them, once.
+	Step back = step(state, SDL_ANDROID_EVENT_BACKGROUND);
+	CHECK(back.canceledInput == TRUE);
+	state = back.state;
+
+	// A repeated background event does not take them a second time.
+	Step again = step(state, SDL_ANDROID_EVENT_BACKGROUND);
+	CHECK(again.canceledInput == FALSE);
+	state = again.state;
+
+	// Returning to the foreground takes nothing away: the player's finger is theirs again.
+	Step front = step(state, SDL_ANDROID_EVENT_FOREGROUND);
+	CHECK(front.canceledInput == FALSE);
+	state = front.state;
+
+	// The next backgrounding takes them again.
+	Step backAgain = step(state, SDL_ANDROID_EVENT_BACKGROUND);
+	CHECK(backAgain.canceledInput == TRUE);
+}
+
+// A foreground event with nothing paused takes no fingers: this layer did not stop the app, so it has
+// no gesture of its own to drop.
+TEST(android_lifecycle_takes_no_fingers_away_in_the_foreground)
+{
+	const Step s = step(SdlAndroidLifecycle_begin(), SDL_ANDROID_EVENT_FOREGROUND);
+	CHECK(s.canceledInput == FALSE);
+}
+
+// Termination takes the fingers away, and once: the app is gone and no later event drops anything.
+TEST(android_lifecycle_takes_the_fingers_away_on_termination_once)
+{
+	Step terminated = step(SdlAndroidLifecycle_begin(), SDL_ANDROID_EVENT_TERMINATE);
+	CHECK(terminated.canceledInput == TRUE);
+
+	// A terminate after termination (already backgrounded) does not take them again.
+	Step after = step(terminated.state, SDL_ANDROID_EVENT_TERMINATE);
+	CHECK(after.canceledInput == FALSE);
 }

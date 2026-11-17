@@ -108,7 +108,10 @@ Bool SdlTouch_dispatch( const SDL_Event &event );
         * between them.  A no-op off Android. */
 void SdlTouch_update( void );
 
-/// Drops the gesture state (a window change, or a test).  A no-op off Android.
+/// Resolves and drops the gesture state, as a FINGER_CANCELED would: a gesture that owes the
+/// engine a button-up (a held UI press, a committed placement, an area-selection box) is released
+/// rather than left latched.  For a window change, and for the app leaving the foreground (no
+/// FINGER_UP arrives then).  A no-op off Android.
 void SdlTouch_reset( void );
 
 /// The touch layer is compiled into this build.  TRUE on Android only.

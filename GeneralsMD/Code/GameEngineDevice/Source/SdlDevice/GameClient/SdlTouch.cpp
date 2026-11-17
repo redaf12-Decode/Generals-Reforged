@@ -891,8 +891,10 @@ void onFingerUp( Real px, Real py, Uint64 fingerId, Bool canceled )
 
                 case TouchState::PANNING:
                 {
+                        // A canceled touch (the system took the gesture, or the app is going away) must
+                        // not leave the camera coasting: only a deliberate release starts momentum.
                         const Real speed = fabsf( s_touch.panVelX ) + fabsf( s_touch.panVelY );
-                        if (SdlTouch_momentumStarts( speed ))
+                        if (!canceled && SdlTouch_momentumStarts( speed ))
                         {
                                 s_touch.momentumX = s_touch.lastX;
                                 s_touch.momentumY = s_touch.lastY;
@@ -1135,6 +1137,14 @@ void SdlTouch_update( void )
 
 void SdlTouch_reset( void )
 {
+        // A reset is a cancel: the fingers are gone (a window change, or the app leaving the
+        // foreground) and no FINGER_UP is coming.  A gesture that owes the engine a button-up - a
+        // held UI press, a committed placement, an area-selection box, an armed command's commit -
+        // must be resolved as a cancellation, exactly as a FINGER_CANCELED would be, so no mouse
+        // button is left latched down; a live single-finger gesture in flight is released the same
+        // way.  Resolve with the fingers still tracked, then drop the state.
+        if (s_touch.phase != TouchState::IDLE)
+                onFingerUp( s_touch.lastX, s_touch.lastY, s_touch.finger1, TRUE );
         resetGesture( TouchState::IDLE );
 }
 

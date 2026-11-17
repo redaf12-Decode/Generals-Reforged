@@ -113,7 +113,10 @@ exactly as before.
 
 ## What is deliberately not here
 
-* No `AndroidMain.cpp` and no lifecycle integration — that is a later phase.
+* No `AndroidMain.cpp`: the lifecycle lives in the SDL3 device (`SdlAndroidPlatform`) and SDL's
+  `SDLActivity`, and the touch layer's part of it — a backgrounding resolves and drops the live
+  gesture, since SDL delivers no `FINGER_UP` then — is recorded in
+  [`19-android-lifecycle-and-input-integration.md`](19-android-lifecycle-and-input-integration.md).
 * No on-screen modifier buttons (force fire, waypoint, add-to-selection). The engine already
   exposes the modes (`setForceAttackMode`, `setWaypointMode`); the buttons that drive them are UI
   work, and the tap resolution already consults the modes where they change a tap's meaning.

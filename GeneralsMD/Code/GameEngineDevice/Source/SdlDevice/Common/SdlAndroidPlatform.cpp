@@ -78,6 +78,13 @@ Bool SdlAndroidLifecycle_resumesDevice( SdlAndroidLifecycle before, SdlAndroidLi
 	return before.devicePaused && !after.devicePaused;
 }
 
+Bool SdlAndroidLifecycle_cancelsInput( SdlAndroidLifecycle before, SdlAndroidLifecycle after )
+{
+	// The fingers are lost exactly when the app stops being interactive - the same transition that
+	// stops the device - and only then, so a repeated background event is a no-op.
+	return !before.devicePaused && after.devicePaused;
+}
+
 // ---- The services (installed by SdlGameEngine) ----------------------------------------------------
 
 #if ZH_ANDROID
@@ -87,6 +94,7 @@ Bool SdlAndroidLifecycle_resumesDevice( SdlAndroidLifecycle before, SdlAndroidLi
 #include <SDL3/SDL.h>
 
 #include "MSS/mss_ex_device.h"                 // AIL_ex_device_pause/resume: the mix's device
+#include "SdlDevice/GameClient/SdlTouch.h"     // SdlTouch_reset: the fingers the backgrounding takes
 
 namespace {
 
@@ -140,6 +148,15 @@ bool lifecycleWatch( void *, SDL_Event *event )
 	{
 		AIL_ex_device_resume();
 		DEBUG_LOG(( "SdlAndroidPlatform: the app is in the foreground again; the audio output is started\n" ));
+	}
+
+	// A finger that was down when the app left the foreground never gets its FINGER_UP (SDL cancels
+	// none on a backgrounding), so the gesture has to be resolved and dropped here or the next finger
+	// lands as the second of a stale one.
+	if (SdlAndroidLifecycle_cancelsInput( before, s_lifecycle ))
+	{
+		SdlTouch_reset();
+		DEBUG_LOG(( "SdlAndroidPlatform: the app left the foreground; the live touch gesture is dropped\n" ));
 	}
 	return true;
 }

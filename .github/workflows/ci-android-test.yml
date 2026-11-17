@@ -27,7 +27,8 @@
 #   9. the audio, storage and game-services layer compiled for Android (Phase 5): the miniaudio
 #      backend's object defines AIL_ex_device_pause/resume (the device pause the lifecycle drives) and
 #      references ma_device_stop, the platform layer's object defines SdlAndroidPlatform_install/
-#      shutdown and references SDL_AddEventWatch and SDL_GetAndroidActivity, and PosixMain.cpp's
+#      shutdown and references SDL_AddEventWatch, SDL_GetAndroidActivity and SdlTouch_reset (the
+#      gesture the backgrounding drops, since SDL delivers no FINGER_UP then), and PosixMain.cpp's
 #      object references SDL_GetAndroidInternalStoragePath - so the Android halves, not the desktop
 #      stubs, are what was built. The objects are checked after the link above, which is what produces
 #      them.
@@ -531,6 +532,11 @@ jobs:
             || fail "SdlAndroidPlatform.cpp.o does not reference SDL_AddEventWatch: the lifecycle watch was not compiled"
           grep -qE "[[:space:]]U SDL_GetAndroidActivity$" <<<"$platform_syms" \
             || fail "SdlAndroidPlatform.cpp.o does not reference SDL_GetAndroidActivity: the game-services JNI half was not compiled"
+          # The lifecycle watch resolves the live gesture when the app leaves the foreground (SDL
+          # delivers no FINGER_UP then), so the platform object references SdlTouch_reset - a symbol
+          # only the touch layer defines, so a stub could not satisfy it.
+          grep -qE "[[:space:]]U .*SdlTouch_reset" <<<"$platform_syms" \
+            || fail "SdlAndroidPlatform.cpp.o does not reference SdlTouch_reset: the backgrounding does not drop the live touch gesture"
 
           echo "Phase 5 compiled for aarch64-linux-android: the miniaudio backend with AIL_ex_device_pause/resume, the private-storage user folder, and the Android platform layer (lifecycle watch, screen-on, multicast lock)"
 
