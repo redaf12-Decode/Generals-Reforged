@@ -292,6 +292,11 @@ card's wording; absent or corrupt falls back to the file name) and `custom_drive
 
 ## Daily logs
 
+- `2026-11-18.md` — the Android CI **build cache**: ccache wired into
+  `scripts/build/android/build-android.sh` as a CMake compiler launcher, persisted from both
+  workflows with an explicit `actions/cache/restore`+`save` pair (plain `actions/cache` saves only
+  on job success, so a cancelled run kept nothing). Warm run measured 4m06s vs 22m42s cold at
+  99.86% hits. Also the SAF "Use this folder" crash fix and its CI evidence.
 - `2026-11-06.md` — the lightweight launcher-only Android test workflow
   (`android-unit-tests.yml`), `stage-sdl-java.sh`, the `launcherOnly` build type, the
   `engineInstalled()` guard, and the facts that cost time: positional printf args are legitimately
