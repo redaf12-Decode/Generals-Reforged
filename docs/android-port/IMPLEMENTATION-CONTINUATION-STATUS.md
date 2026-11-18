@@ -64,6 +64,19 @@ workflow or dependency file was touched. Only this document was written.**
 > Vulkan device-loss handling, the audio lifecycle on a real device and Stage 4 (font substitute +
 > on-device verification) remain, and nothing here is verified on a device.
 
+> **Phase 6 (Android documentation and in-app device information) is now implemented** on this
+> branch: the Android project is documented for users in [`../../android/README.md`](../../android/README.md),
+> the implementation and its hardware floor are audited in
+> [`audit/ANDROID-IMPLEMENTATION-FACTS.md`](audit/ANDROID-IMPLEMENTATION-FACTS.md) and
+> [`audit/ANDROID-HARDWARE-COMPATIBILITY.md`](audit/ANDROID-HARDWARE-COMPATIBILITY.md), and the setup
+> screen now opens a **System Requirements & Device Compatibility** screen (`CompatibilityActivity`)
+> that shows the application's requirements beside this device's reported capabilities and an
+> evaluated result. The requirements live in one place (`AndroidRequirements`) that both the screen
+> and the documentation read, so they cannot disagree. The Vulkan physical-device name, vendor/device
+> IDs and per-feature support are **not** available from the Android platform API, so the screen
+> reports them as unverified rather than inventing them; the mandatory Vulkan *features* are checked
+> only by the engine when it creates the device. No file under `GeneralsMD/Code/` was changed.
+
 ---
 
 ## 1. Repository and branch information

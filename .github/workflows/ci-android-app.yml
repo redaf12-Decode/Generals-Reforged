@@ -448,6 +448,14 @@ jobs:
             fail "no LAUNCHER entry point is declared"
           fi
 
+          # 2c. The in-app System Requirements & Device Compatibility screen is declared and is not
+          #     exported (it is reached only from the setup screen).
+          grep -q 'android:name="io.github.olcayseygan.zerohourreforged.CompatibilityActivity"' "$MANIFEST" \
+            || fail "the compatibility screen (CompatibilityActivity) is not declared"
+          grep -A8 'android:name="io.github.olcayseygan.zerohourreforged.CompatibilityActivity"' "$MANIFEST" \
+            | grep -q 'android:exported="false"' \
+            || fail "CompatibilityActivity must not be exported"
+
           # 3. Orientation and the configChanges set SDL3 3.4.16's android-project declares.
           grep -q 'android:screenOrientation="landscape"' "$MANIFEST" \
             || fail "the Activity is not landscape"
@@ -472,12 +480,13 @@ jobs:
 
           echo "the Gradle configuration and the packaged manifest are consistent"
 
-      - name: Run the game-folder unit tests
+      - name: Run the pure-Java unit tests
         run: |
           set -euo pipefail
-          # The folder validator and the staging plan are pure Java (no Android types), so they run
-          # as JVM unit tests: the engine's own install-folder rule (INIZH.big + the base game's
-          # Textures.big) and the incremental copy plan (copy once, then only what changed).
+          # The folder validator, the staging plan and the device-compatibility rule are pure Java (no
+          # Android types), so they run as JVM unit tests: the engine's own install-folder rule
+          # (INIZH.big + the base game's Textures.big), the incremental copy plan (copy once, then only
+          # what changed), and CompatibilityEvaluator's verdict from DeviceCapabilities.
           ( cd android && gradle --no-daemon :app:testDebugUnitTest )
           report=$(find android/app/build/test-results -name 'TEST-*.xml' | head -n 1)
           [ -n "$report" ] || { echo "::error::no JUnit report was produced"; exit 1; }
@@ -485,7 +494,7 @@ jobs:
           grep -h -o 'testsuite name="[^"]*" tests="[0-9]*"[^>]*' $(find android/app/build/test-results -name 'TEST-*.xml') || true
           failures=$(grep -h -o 'failures="[0-9]*"' $(find android/app/build/test-results -name 'TEST-*.xml') | grep -o '[0-9]*' | paste -sd+ | bc)
           [ "${failures:-0}" = "0" ] || { echo "::error::$failures unit test failures"; exit 1; }
-          echo "the game-folder unit tests passed"
+          echo "the pure-Java unit tests passed"
 
       - name: Inspect the packaged APK (structure, dependencies, ABI, manifest)
         run: |

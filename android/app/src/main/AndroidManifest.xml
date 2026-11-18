@@ -83,5 +83,18 @@
                 <action android:name="android.intent.action.MAIN" />
             </intent-filter>
         </activity>
+
+        <!--
+            The System Requirements & Device Compatibility screen, opened from the setup screen. It
+            reads the platform's public API and shows the application's requirements beside this
+            device's reported capabilities and an evaluated compatibility result
+            (CompatibilityActivity, AndroidRequirements, CompatibilityEvaluator). Not exported and not
+            a launcher: it is reached only from inside the app.
+        -->
+        <activity
+            android:name=".CompatibilityActivity"
+            android:label="@string/compat_title"
+            android:exported="false"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation" />
     </application>
 </manifest>

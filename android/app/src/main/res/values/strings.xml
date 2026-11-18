@@ -23,4 +23,18 @@
     <string name="setup_detail_no_base_game">Zero Hour is there, but not the original Command &amp; Conquer Generals it needs. Copy Generals\' .big files into a folder named ZH_Generals inside the Zero Hour folder (its Textures.big must be there), then choose the Zero Hour folder again.</string>
     <string name="setup_status_ready">Ready: \"%1$s\".</string>
     <string name="setup_detail_staging">The game reads its data from %1$s</string>
+
+    <!-- The System Requirements & Device Compatibility screen, opened from the setup screen. -->
+    <string name="compat_button">System requirements</string>
+    <string name="compat_title">System requirements</string>
+
+    <string name="compat_group_app">Application requirements</string>
+    <string name="compat_group_device">Your device</string>
+    <string name="compat_group_result">Compatibility</string>
+
+    <string name="compat_result_compatible">Compatible: all mandatory requirements were verified.</string>
+    <string name="compat_result_partial">Partially compatible: no mandatory requirement is known to be missing, but some could not be verified.</string>
+    <string name="compat_result_unsupported">Unsupported: a mandatory requirement is missing.</string>
+    <string name="compat_result_unable">Unable to verify: the device did not report enough information.</string>
+    <string name="compat_performance_note">Technical compatibility is not a promise of performance. Meeting the requirements means the renderer can start; frame rate depends on the device and the map.</string>
 </resources>

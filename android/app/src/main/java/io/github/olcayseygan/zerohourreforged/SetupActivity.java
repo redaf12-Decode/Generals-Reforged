@@ -133,6 +133,14 @@ public class SetupActivity extends Activity {
         clearButton.setText(R.string.setup_clear_folder);
         clearButton.setOnClickListener(v -> clearFolder());
         root.addView(clearButton);
+
+        // Always available: the requirements and this device's compatibility, independent of whether
+        // a game folder has been chosen. See CompatibilityActivity.
+        Button compatButton = new Button(this);
+        compatButton.setText(R.string.compat_button);
+        compatButton.setOnClickListener(v -> startActivity(
+                new Intent(this, CompatibilityActivity.class)));
+        root.addView(compatButton);
         return scroll;
     }
 

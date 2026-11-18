@@ -17,7 +17,13 @@ EA's four veterancy levels return, and upstream mod support is removed.
 
 [Downloads](#downloads) · [Graphics highlights](#graphics-highlights) · [Build](#build) · [Play](#play) · [Tests](#tests) ·
 [Linux guide](docs/linux.md) ·
+[Android](android/README.md) ·
 [Changes](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
+
+**Android arm64 build.** This branch also carries a native **Android (arm64-v8a)** port of the same
+engine — SDL3 and Vulkan, a Gradle application shell, a folder picker, and native touch controls.
+See [android/README.md](android/README.md). It is a separate build from the Linux one below and is
+not device-tested.
 
 **You need your own installed copies of Generals and Zero Hour.**
 Game data and optional upscaled art are not included.
