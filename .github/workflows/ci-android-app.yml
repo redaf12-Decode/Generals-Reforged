@@ -596,7 +596,9 @@ jobs:
             || fail "the packaged applicationId is not the project's own id"
           grep -q "native-code: 'arm64-v8a'" <<<"$badging" \
             || fail "the packaged native-code ABI is not arm64-v8a alone"
-          grep -q "minSdkVersion:'28'" <<<"$badging" \
+          # aapt2's badging line is spelled "sdkVersion:" in some build-tools releases and
+          # "minSdkVersion:" in others, so accept either.
+          grep -qE "(min)?sdkVersion:'28'" <<<"$badging" \
             || fail "the packaged minSdkVersion is not 28 (the native engine's floor)"
           grep -q "targetSdkVersion:'35'" <<<"$badging" \
             || fail "the packaged targetSdkVersion is not 35"
