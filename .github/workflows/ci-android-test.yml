@@ -172,15 +172,18 @@ jobs:
 
       - name: Restore the ccache compiler cache
         id: ccache-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          # The key pins everything a cached object depends on: the runner image, the NDK, the ABI,
-          # the build type and the build script (its flags). The source is deliberately NOT in the key:
-          # a ccache entry is a content match, so editing one file recompiles one translation unit and
-          # hits the rest. restore-keys falls back to an older entry for the same toolchain.
-          key: android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-${{ env.NATIVE_BUILD_TYPE }}-${{ hashFiles('scripts/build/android/build-android.sh', 'scripts/build/android/android.toolchain.cmake') }}
+          # A unique key per run, with prefix restore-keys (the reference workflow's pattern). The
+          # matching actions/cache/save step runs with `if: always()`, so a run cancelled or failed
+          # inside the native build still keeps its compiler output - plain actions/cache only saves
+          # on a successful job. The key pins what a cached object depends on - the runner image, NDK,
+          # ABI, build type and build script (its flags); the source is deliberately excluded, so
+          # editing one file recompiles one translation unit and hits the rest.
+          key: android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-${{ env.NATIVE_BUILD_TYPE }}-${{ hashFiles('scripts/build/android/build-android.sh', 'scripts/build/android/android.toolchain.cmake') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-${{ env.NATIVE_BUILD_TYPE }}-${{ hashFiles('scripts/build/android/build-android.sh', 'scripts/build/android/android.toolchain.cmake') }}-
             android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-${{ env.NATIVE_BUILD_TYPE }}-
             android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-
 
@@ -190,6 +193,10 @@ jobs:
           mkdir -p "${CCACHE_DIR}"
           ccache --set-config=max_size="${CCACHE_MAXSIZE}"
           ccache --set-config=compression=true
+          # A cross-compile (host clang, target aarch64-android via the NDK sysroot) confuses
+          # ccache's default mtime-based direct mode across checkouts; content hashing keeps hits
+          # reliable (the reference workflow sets this for the same reason).
+          ccache --set-config=compiler_check=content
           ccache --zero-stats >/dev/null
           echo "ccache version: $(ccache --version | head -n 1)"
           echo "ccache dir:     ${CCACHE_DIR}"
@@ -608,3 +615,13 @@ jobs:
             ${{ runner.temp }}/build-android-arm64/CMakeFiles/*/CMakeCXXCompiler.cmake
           if-no-files-found: warn
           retention-days: 7
+
+      # Saved with `if: always()` and under the run's unique key, so a run cancelled or failed inside
+      # the long native build still keeps the objects it did compile. Plain actions/cache's automatic
+      # post-step save only fires on a successful job and would drop them.
+      - name: Save the ccache compiler cache
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-${{ env.NATIVE_BUILD_TYPE }}-${{ hashFiles('scripts/build/android/build-android.sh', 'scripts/build/android/android.toolchain.cmake') }}-${{ github.run_id }}-${{ github.run_attempt }}
