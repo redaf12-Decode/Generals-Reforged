@@ -137,22 +137,50 @@ The compiler cache mechanism was already exercised by the preceding commit
 So a warm compiler cache reduces the engine build from a full rebuild to near-instant, and the
 compiler cache is genuinely used (the hit rate is read from `ccache -s`, not assumed).
 
+The explicit restore/save pair (this commit) was exercised by CI Android App run
+[44366426888](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44366426888) —
+the **first successful CI Android App run on this branch**, and the first to reach and pass the
+save step:
+
+- The run is `success`; every step, including "Build the native engine as libmain.so",
+  "Package the APK", "Run the game-folder unit tests" and "Inspect the packaged APK", passed.
+- "Restore the ccache compiler cache" ran and reported
+  `Cache not found for input keys: …-44366426888-1, …98ca1f76…-, …-Release-, …-arm64-v8a-`.
+  It missed for a benign, one-time reason: the earlier entry had been saved by commit `43c4319`
+  under the **old** key format `…-98ca1f76…` (no run-id suffix), and the new prefix `restore-keys`
+  end in `-`, which a key without that trailing segment cannot match. The entry this run saved is in
+  the new format, so the next run's first restore-key (`…98ca1f76…-`) matches it.
+- "Save the ccache compiler cache" ran with `if: always()` and reported
+  `Cache saved with key: android-ccache-Linux-X64-ndk27.2.12479018-arm64-v8a-Release-98ca1f76…-44366426888-1`
+  (172 MB). This is the behaviour the explicit pair exists for: the save fires regardless of job
+  outcome, and a unique key means it always writes.
+- The native build ran cold (restore missed): `Cacheable calls: 1376/1588`, `Hits: 0/1376 (0.00%)`,
+  `Misses: 1376/1376`, from 18:11:52 to 18:33:29.
+
+`gh api …/actions/caches` confirms the new entry
+(`android-ccache-…-98ca1f76…-44366426888-1`, `ref=refs/heads/agent/android-arm64-application-port`)
+is stored, and the SDK (`android-sdk-cmdline13114758-ndk27.2.12479018-p35-n28`), vendor
+(`android-vendor-v1-ff8704…`) and Gradle (`gradle-*`, `gradle-home-v1|…`) caches are all present.
+
 ## Implemented but not yet empirically verified
 
-- **The explicit `actions/cache/restore`+`save` pair** (this commit, `80fb8d5`). It is a change from
-  the plain `actions/cache` whose behaviour is proven above; the restore/save pair itself has not
-  yet produced a cache-hit/miss log line in a completed run. The push run
-  [44366027488](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44366027488) is the
-  first run of it.
+- **A cache hit on the new-format key.** The restore/save pair itself is proven (above), but no run
+  has yet *restored* a new-format ccache entry — the first opportunity is the next run after
+  `44366426888`, which will match its `…98ca1f76…-` restore-key. Until then, the new-format warm-hit
+  behaviour is inferred from the key construction, not observed.
 - **`compiler_check=content`** — set, but its effect (reliable hits across checkouts) is not
   separately measured.
 
 ## Remaining limitations
 
-- The CI Android App job on this branch has been **cancelled twice** (a 17:05 docs run and two
-  ccache runs) inside the long native build, apparently for reasons external to the workflow (no
-  superseding run, no timeout reached, well within `timeout-minutes: 180`). The explicit save pair
-  is the mitigation: a cancelled run now keeps its compiled objects instead of losing them.
+- The CI Android App workflow sets `concurrency: { group: ci-android-app-${{ github.ref }},
+  cancel-in-progress: true }`, so a newer push to this branch cancels an in-flight app run. The two
+  earlier app runs cancelled inside the native build (one at ~97% of the engine, `[1576/1631]`, one
+  at ~8 min) were cancelled by a subsequent push on the same branch, not by a workflow or runner
+  fault. The explicit save pair is the mitigation: a cancelled run now keeps its compiled objects
+  instead of losing them (with plain `actions/cache`, a cancelled app run saved nothing).
+- The first run on the new key format restores nothing (the previous entry used the old format), so
+  the very next run pays one more cold compile before the warm hits begin.
 - GitHub caches are evicted after 7 days of no access; the ccache is an optimization and a fully
   cold run still builds correctly (proven above).
 - ccache stores per-ABI, per-NDK objects; the key prevents an incompatible restore, so a genuinely
@@ -175,3 +203,15 @@ compiler cache is genuinely used (the hit rate is read from `ccache -s`, not ass
   (https://github.com/redaf12-Decode/Generals-Reforged/commit/80fb8d5)
 - Preceded by `43c4319` — "ci(android): cache the native compile with ccache; fix the Gradle cache
   never saving" (https://github.com/redaf12-Decode/Generals-Reforged/commit/43c4319)
+
+## CI results
+
+| Run | Workflow | Commit | Result | Cache evidence |
+|:--|:--|:--|:--|:--|
+| [44349584568](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44349584568) | CI Android Test | `043d04c` (pre-ccache) | success, 25m52s | no ccache |
+| [44356952608](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44356952608) | CI Android Test | `43c4319` | success, 22m42s | cold: 1/1384 hits; saved `…-98ca1f76…` |
+| [44363168205](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44363168205) | CI Android Test | `43c4319` | success, **4m06s** | warm: **1382/1384 hits** |
+| [44366426888](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44366426888) | CI Android App | `68a15c6` | **success**, 27m20s | restore miss (old-format key); save ran: `…-44366426888-1` |
+
+The `44366426888` app run is the first **successful** CI Android App run on this branch and the
+first run of the restore/save pair; it passed every step and saved the ccache under the new key.
