@@ -276,6 +276,44 @@ bool resolve( const char *face, bool bold, std::string &path, bool &fileIsBold, 
 #if defined(ZH_GLYPHS_FONTCONFIG)
 	metricsFace = s.gdiMetrics;
 	return fontconfigFile( s.linuxFamily, bold, path, fileIsBold );
+#elif defined(ZH_ANDROID)
+	/* Android has neither fontconfig nor the macOS font directory.  Its system fonts are the only ones
+	   to draw from, and there is no GDI here, so no metricsFace is claimed - these are the device's own
+	   faces, not metric-compatible substitutes.  Every candidate is probed, because the font package
+	   differs across Android releases and vendors.  A file a language registered (above) still wins. */
+	metricsFace = NULL;
+	const char *directory = "/system/fonts/";
+	const char *regular = "Roboto-Regular.ttf";
+	const char *boldFace = "Roboto-Bold.ttf";
+	if (s.linuxFamily != NULL && strcmp( s.linuxFamily, "Liberation Serif" ) == 0)
+	{
+		regular = "NotoSerif-Regular.ttf";
+		boldFace = "NotoSerif-Bold.ttf";
+	}
+	else if (s.linuxFamily != NULL && strcmp( s.linuxFamily, "Liberation Mono" ) == 0)
+	{
+		regular = "DroidSansMono.ttf";
+		boldFace = regular;     // a fixed-width system font, rather than assume a bold mono face exists
+	}
+	else if (s.linuxFamily != NULL && strcmp( s.linuxFamily, "DejaVu Sans" ) == 0)
+	{
+		regular = "NotoSans-Regular.ttf";
+		boldFace = "NotoSans-Bold.ttf";
+	}
+	const std::string boldPath = std::string( directory ) + boldFace;
+	if (bold && fileExists( boldPath.c_str() ))
+	{
+		path = boldPath;
+		fileIsBold = true;
+		return true;
+	}
+	path = std::string( directory ) + regular;
+	fileIsBold = false;
+	if (fileExists( path.c_str() ))
+		return true;
+	// Last resort: Roboto is present on every Android release this port targets.
+	path = std::string( directory ) + "Roboto-Regular.ttf";
+	return fileExists( path.c_str() );
 #else
 	const char *directory = "/System/Library/Fonts/Supplemental/";
 	if (bold && s.macBold != NULL && fileExists( (std::string( directory ) + s.macBold).c_str() ))

@@ -1,4 +1,5 @@
 #include "Platform/WaterTuning.h"
+#include "Platform/PlatformPredicates.h"
 /*
 **	Command & Conquer Generals Zero Hour(tm)
 **	Copyright 2025 Electronic Arts Inc.
@@ -216,6 +217,11 @@ protected:
 //=============================================================================
 StatDumpClass::StatDumpClass( const char *fname )
 {
+#if ZH_ANDROID
+	// Optional diagnostic output.  Android has no GetModuleFileName and no drive-letter path; the
+	// process's working directory is the writable one the engine was rooted in, so the file goes there.
+	m_fp = fopen( fname, "wt" );
+#else
 	char buffer[ _MAX_PATH ];
 	GetModuleFileName( NULL, buffer, sizeof( buffer ) );
 	char *pEnd = buffer + strlen( buffer );
@@ -231,6 +237,7 @@ StatDumpClass::StatDumpClass( const char *fname )
 	AsciiString fullPath;
 	fullPath.format( "%s\\%s", buffer, fname );
 	m_fp = fopen( fullPath.str(), "wt" );
+#endif
 }
 
 //=============================================================================
@@ -5359,7 +5366,7 @@ void dumpMeshAssets(MeshClass *mesh)
 					{
 						if ((texture=model->Peek_Texture(i,pass,stage)) != NULL)
 						{
-							fprintf(AssetDumpFile,"\t%s\n",texture->Get_Texture_Name());
+							fprintf(AssetDumpFile,"\t%s\n",texture->Get_Texture_Name().Peek_Buffer());
 						}
 					}
 				}
@@ -5367,7 +5374,7 @@ void dumpMeshAssets(MeshClass *mesh)
 				{
 					if ((texture=model->Peek_Single_Texture(pass,stage)) != NULL)
 					{
-						fprintf(AssetDumpFile,"\t%s\n",texture->Get_Texture_Name());
+						fprintf(AssetDumpFile,"\t%s\n",texture->Get_Texture_Name().Peek_Buffer());
 					}
 				}
 			}
