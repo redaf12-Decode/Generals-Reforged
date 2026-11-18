@@ -162,14 +162,26 @@ save step:
 is stored, and the SDK (`android-sdk-cmdline13114758-ndk27.2.12479018-p35-n28`), vendor
 (`android-vendor-v1-ff8704…`) and Gradle (`gradle-*`, `gradle-home-v1|…`) caches are all present.
 
+The next CI Android App run
+[44372296090](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44372296090) (fired
+by the existing push trigger, commit `8434c95`) closed the loop — it restored that new-format entry
+and hit it:
+
+- `Cache restored from key: android-ccache-…-98ca1f76…-44366426888-1`.
+- Native build `Hits: 1374/1376 (99.85%)`, `Misses: 2/1376`, and the build step ran **2m48s**
+  (18:44:01→18:46:49) against the cold run's **21m37s** (18:11:52→18:33:29) — a **7.7×** faster
+  native build.
+- Whole run **7m32s**, against the cold run's **27m20s**.
+- "Save the ccache compiler cache" ran again and wrote `…-44372296090-1`.
+
+So the design is proven on the app workflow itself: restore → hit → build → save, with the warm
+native build reduced from ~22 min to under 3 min.
+
 ## Implemented but not yet empirically verified
 
-- **A cache hit on the new-format key.** The restore/save pair itself is proven (above), but no run
-  has yet *restored* a new-format ccache entry — the first opportunity is the next run after
-  `44366426888`, which will match its `…98ca1f76…-` restore-key. Until then, the new-format warm-hit
-  behaviour is inferred from the key construction, not observed.
 - **`compiler_check=content`** — set, but its effect (reliable hits across checkouts) is not
-  separately measured.
+  separately measured; the hits above were obtained with it on, but not compared against a run with
+  it off.
 
 ## Remaining limitations
 
@@ -179,8 +191,8 @@ is stored, and the SDK (`android-sdk-cmdline13114758-ndk27.2.12479018-p35-n28`),
   at ~8 min) were cancelled by a subsequent push on the same branch, not by a workflow or runner
   fault. The explicit save pair is the mitigation: a cancelled run now keeps its compiled objects
   instead of losing them (with plain `actions/cache`, a cancelled app run saved nothing).
-- The first run on the new key format restores nothing (the previous entry used the old format), so
-  the very next run pays one more cold compile before the warm hits begin.
+- The first run on a new key format restores nothing (a key saved under a different format does not
+  match a `…-` restore-key), so a key-format change costs one cold build before warm hits resume.
 - GitHub caches are evicted after 7 days of no access; the ccache is an optimization and a fully
   cold run still builds correctly (proven above).
 - ccache stores per-ABI, per-NDK objects; the key prevents an incompatible restore, so a genuinely
@@ -212,6 +224,8 @@ is stored, and the SDK (`android-sdk-cmdline13114758-ndk27.2.12479018-p35-n28`),
 | [44356952608](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44356952608) | CI Android Test | `43c4319` | success, 22m42s | cold: 1/1384 hits; saved `…-98ca1f76…` |
 | [44363168205](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44363168205) | CI Android Test | `43c4319` | success, **4m06s** | warm: **1382/1384 hits** |
 | [44366426888](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44366426888) | CI Android App | `68a15c6` | **success**, 27m20s | restore miss (old-format key); save ran: `…-44366426888-1` |
+| [44372296090](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44372296090) | CI Android App | `8434c95` | **success**, **7m32s** | restore hit `…-44366426888-1`; **1374/1376 hits**; native build 2m48s |
 
 The `44366426888` app run is the first **successful** CI Android App run on this branch and the
-first run of the restore/save pair; it passed every step and saved the ccache under the new key.
+first run of the restore/save pair; it passed every step and saved the ccache under the new key. The
+`44372296090` run then restored that entry and rebuilt the engine in 2m48s instead of 21m37s.
