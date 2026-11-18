@@ -125,7 +125,16 @@ No local build, APK, emulator or device run was performed, and none is claimed.
 
 ### CI results
 
-_Pending — filled in after the dispatched runs complete._
+Both workflows passed on branch `agent/upstream-sync-4.1.0` at commit `593bebb41`, dispatched by
+hand because neither triggers on this branch name.
+
+| Workflow | Run | Result | Key evidence |
+|---|---|---|---|
+| CI Android Test | [44400654385](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44400654385) | success (28m15s) | ARM64 configure; bounded NDK compile; SDL3 Vulkan backend compiled; native touch layer compiled; **the engine links as `libmain.so` for arm64-v8a and is an AArch64 object exporting `SDL_main`**; audio/storage/services layer compiled |
+| CI Android App | [44400675124](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44400675124) | success (26m34s) | native engine built; native dependencies audited from the ELF; APK packaged and inspected (structure, ABI, manifest); pure-Java unit tests run; Gradle config and merged manifest asserted |
+
+This proves the twelve fixes compile and link for Android and that the APK still packages
+correctly. It does **not** prove runtime behaviour; no device or emulator was used.
 
 ## 7. Remaining unknowns and limitations
 
