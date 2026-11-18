@@ -23,6 +23,7 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -50,6 +51,7 @@ import java.io.File;
  */
 public class SetupActivity extends Activity {
 
+    private static final String TAG = "ZH.SetupActivity";
     private static final int REQUEST_PICK_FOLDER = 1;
 
     private TextView status;
@@ -60,11 +62,13 @@ public class SetupActivity extends Activity {
     private ProgressBar progress;
 
     private volatile boolean staging;
+    private volatile boolean destroyed;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(buildUi());
+        Log.i(TAG, "created");
         refreshStatus();
     }
 
@@ -74,6 +78,15 @@ public class SetupActivity extends Activity {
         if (!staging) {
             refreshStatus();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        // The staging thread runs for minutes on a first copy; its completion callback must not touch
+        // this Activity's views after the system has destroyed them.
+        destroyed = true;
+        super.onDestroy();
+        Log.i(TAG, "destroyed");
     }
 
     private View buildUi() {
@@ -183,17 +196,34 @@ public class SetupActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_PICK_FOLDER) {
+        boolean hasUri = data != null && data.getData() != null;
+        SafPickerResult.Outcome outcome = SafPickerResult.classify(
+                REQUEST_PICK_FOLDER, requestCode, resultCode, hasUri);
+        Log.i(TAG, "picker returned: resultCode=" + resultCode + " outcome=" + outcome);
+        if (outcome == SafPickerResult.Outcome.IGNORE) {
             return;
         }
-        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
-            // Cancelled: keep whatever was already there.
+        if (outcome == SafPickerResult.Outcome.CANCELLED) {
+            // Cancelled or a malformed result: keep whatever was already there.
             refreshStatus();
             return;
         }
         Uri tree = data.getData();
-        String name = SafTreeStager.displayName(getContentResolver(), tree);
-        GameFolderStore.remember(this, tree, name);
+        try {
+            // The picked URI is a tree, not a document. Everything that touches the provider must cope
+            // with it being refused (a revoked grant, an exotic provider); nothing here may throw out of
+            // the callback, or the app dies on the UI thread. The display name is cosmetic and already
+            // falls back on its own; remember() and stage() are defensive below.
+            String name = SafTreeStager.displayName(getContentResolver(), tree);
+            GameFolderStore.remember(this, tree, name);
+            Log.i(TAG, "remembered the picked tree and its grant");
+        } catch (RuntimeException e) {
+            // A provider refused the tree outright: say so and let the player retry, rather than crash.
+            Log.e(TAG, "could not record the picked tree", e);
+            showProblem(getString(R.string.setup_folder_unreadable));
+            refreshStatus();
+            return;
+        }
         stage(tree);
     }
 
@@ -211,38 +241,51 @@ public class SetupActivity extends Activity {
         setButtonsEnabled(false);
 
         final File stagingRoot = GameFolderStore.stagingRoot(this);
+        Log.i(TAG, "staging started");
         new Thread(() -> {
             try {
                 SafTreeStager.stage(getContentResolver(), tree, stagingRoot,
                         (copied, total) -> runOnUiThread(() -> {
+                            if (destroyed) {
+                                return;
+                            }
                             if (total > 0) {
                                 progress.setIndeterminate(false);
                                 progress.setMax((int) Math.min(total, Integer.MAX_VALUE));
                                 progress.setProgress((int) Math.min(copied, Integer.MAX_VALUE));
                             }
                         }));
-                runOnUiThread(() -> {
-                    staging = false;
-                    progress.setVisibility(View.GONE);
-                    setButtonsEnabled(true);
-                    refreshStatus();
-                    GameFolderValidator.Verdict verdict = GameFolderStore.stagedValidation(this);
-                    if (!verdict.isOk()) {
-                        showProblem(messageFor(verdict.result));
-                    }
-                });
+                Log.i(TAG, "staging finished");
+                runOnUiThread(() -> onStagingFinished(null));
             } catch (Exception e) {
+                // A staging failure is reported to the player, never swallowed and never fatal.
+                Log.e(TAG, "staging failed", e);
                 final String message = e.getMessage() != null ? e.getMessage()
                         : getString(R.string.setup_staging_failed);
-                runOnUiThread(() -> {
-                    staging = false;
-                    progress.setVisibility(View.GONE);
-                    setButtonsEnabled(true);
-                    refreshStatus();
-                    showProblem(message);
-                });
+                runOnUiThread(() -> onStagingFinished(message));
             }
         }, "game-data-staging").start();
+    }
+
+    /** The staging thread's completion, on the UI thread: report the result or the failure. */
+    private void onStagingFinished(String failure) {
+        staging = false;
+        if (destroyed) {
+            // The Activity is gone; the staged files and the stored tree are still valid, so the next
+            // launch re-reads them. There is no view to update.
+            return;
+        }
+        progress.setVisibility(View.GONE);
+        setButtonsEnabled(true);
+        refreshStatus();
+        if (failure != null) {
+            showProblem(failure);
+            return;
+        }
+        GameFolderValidator.Verdict verdict = GameFolderStore.stagedValidation(this);
+        if (!verdict.isOk()) {
+            showProblem(messageFor(verdict.result));
+        }
     }
 
     private void setButtonsEnabled(boolean enabled) {

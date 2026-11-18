@@ -23,6 +23,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.DocumentsContract;
+import android.util.Log;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -49,6 +50,8 @@ import java.util.List;
  * permission and adds no library.
  */
 public final class SafTreeStager {
+
+    private static final String TAG = "ZH.SafTreeStager";
 
     private SafTreeStager() {
     }
@@ -84,7 +87,11 @@ public final class SafTreeStager {
     public static Scan scan(ContentResolver resolver, Uri treeUri) throws IOException {
         List<GameDataStaging.FileState> files = new ArrayList<>();
         List<Uri> uris = new ArrayList<>();
-        walk(resolver, treeUri, "", files, uris);
+        // The picked URI is a tree, not a document: resolve its root document before walking. Walking
+        // the bare tree URI threw IllegalArgumentException in getDocumentId, which the walker swallowed
+        // as an unreadable directory, so staging copied nothing.
+        walk(resolver, rootDocumentUri(treeUri), "", files, uris);
+        Log.i(TAG, "scanned the tree: " + files.size() + " file(s)");
         return new Scan(files, uris);
     }
 
@@ -116,6 +123,27 @@ public final class SafTreeStager {
             this.size = size;
             this.lastModified = lastModified;
         }
+    }
+
+    /**
+     * The document URI of a tree's root. A tree URI the picker returns
+     * ({@code content://.../tree/<treeId>}) is not itself a document URI: neither
+     * {@link DocumentsContract#getDocumentId(Uri)} nor a provider's {@code query} accepts it. A
+     * provider resolves the root through {@code .../tree/<treeId>/document/<treeId>} - the document
+     * id of a tree's root is the tree id itself, which is exactly what {@code DocumentFile}'s
+     * {@code fromTreeUri} builds - so this turns the picked URI into one the provider answers.
+     *
+     * <p>The shape is computed by {@link SafTreeUri} (pure, unit-tested), the same rule a provider's
+     * URI matcher enforces, and assembled the way {@code DocumentsContract} does.
+     */
+    public static Uri rootDocumentUri(Uri treeUri) {
+        Uri.Builder builder = new Uri.Builder()
+                .scheme(treeUri.getScheme())
+                .authority(treeUri.getAuthority());
+        for (String segment : SafTreeUri.rootDocumentSegments(treeUri.getPathSegments())) {
+            builder.appendPath(segment);
+        }
+        return builder.build();
     }
 
     private static List<Document> listChildren(ContentResolver resolver, Uri directory) throws IOException {
@@ -156,10 +184,12 @@ public final class SafTreeStager {
                         DocumentsContract.buildDocumentUriUsingTree(directory, id),
                         name, isDirectory, size, modified));
             }
-        } catch (IllegalArgumentException | SecurityException e) {
-            // The provider refused this directory (a permission revoked mid-walk, or an exotic
-            // provider): the files under it are simply absent from the scan, which the validator
-            // and the engine both treat as missing data.
+        } catch (RuntimeException e) {
+            // The provider refused this directory (a permission revoked mid-walk, an exotic provider,
+            // or one that does not answer this URI): the files under it are simply absent from the
+            // scan, which the validator and the engine both treat as missing data. Logged so the
+            // refusal is not invisible.
+            Log.w(TAG, "the provider refused a directory during the walk", e);
         }
         return documents;
     }
@@ -315,12 +345,24 @@ public final class SafTreeStager {
     /** The picked tree's display name, for the setup screen; null when the provider does not say. */
     public static String displayName(ContentResolver resolver, Uri treeUri) {
         String[] columns = { DocumentsContract.Document.COLUMN_DISPLAY_NAME };
-        try (Cursor cursor = resolver.query(treeUri, columns, null, null, null)) {
+        // Query the tree's ROOT DOCUMENT, not the tree URI itself. A provider's query() rejects a bare
+        // tree URI with UnsupportedOperationException ("Unsupported Uri"), which previously escaped
+        // here and killed the app on the UI thread the instant the player pressed "Use this folder".
+        try (Cursor cursor = resolver.query(rootDocumentUri(treeUri), columns, null, null, null)) {
             if (cursor != null && cursor.moveToFirst()) {
-                return cursor.getString(0);
+                int at = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+                if (at >= 0) {
+                    String name = cursor.getString(at);
+                    if (name != null && !name.isEmpty()) {
+                        return name;
+                    }
+                }
             }
-        } catch (IllegalArgumentException | SecurityException ignored) {
-            // fall through to the URI's own last segment
+        } catch (RuntimeException e) {
+            // A provider that cannot answer (revoked mid-flight, an exotic provider, or an old one
+            // that rejects the root-document URI): fall back to the URI's own last segment. Never let
+            // this reach the Activity: a name is cosmetic and must not abort the pick.
+            Log.w(TAG, "could not read the tree's display name; using the URI's last segment", e);
         }
         return treeUri.getLastPathSegment();
     }

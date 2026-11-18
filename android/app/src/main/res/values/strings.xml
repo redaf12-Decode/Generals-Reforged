@@ -11,6 +11,7 @@
     <string name="setup_problem_title">Cannot use this folder</string>
     <string name="setup_no_picker">This device has no folder picker. Install a file manager that provides one, then try again.</string>
     <string name="setup_staging_failed">Copying the game data did not finish.</string>
+    <string name="setup_folder_unreadable">The folder you picked could not be read. Choose it again.</string>
 
     <string name="setup_status_none">No game folder chosen yet.</string>
     <string name="setup_detail_none">Tap \"Choose game folder\" and pick the folder Zero Hour is installed in.</string>

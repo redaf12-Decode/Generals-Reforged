@@ -22,6 +22,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.util.Log;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -42,6 +43,7 @@ import java.util.List;
  */
 public final class GameFolderStore {
 
+    private static final String TAG = "ZH.GameFolderStore";
     private static final String PREFERENCES = "game_folder";
     private static final String KEY_TREE_URI = "tree_uri";
     private static final String KEY_SOURCE_NAME = "source_name";
@@ -61,6 +63,11 @@ public final class GameFolderStore {
         } catch (SecurityException e) {
             // The grant was not persistable (an older provider): the permission still holds for this
             // run, and the next launch will ask again. Not fatal.
+            Log.w(TAG, "the picked tree's read grant is not persistable", e);
+        } catch (RuntimeException e) {
+            // A provider that rejects the persist request must not abort the pick: the run still has
+            // the grant, and the next launch asks again. Recorded, not swallowed silently.
+            Log.w(TAG, "could not persist the picked tree's read grant", e);
         }
         preferences(context).edit()
                 .putString(KEY_TREE_URI, treeUri.toString())
