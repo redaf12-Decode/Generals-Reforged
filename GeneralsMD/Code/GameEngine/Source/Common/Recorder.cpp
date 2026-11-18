@@ -466,6 +466,13 @@ void RecorderClass::updatePlayback() {
 		// This is reached if there are no more commands to be executed.
 		return;
 	}
+	if (m_file == NULL) {
+		// whatever left playback without a file (a refused header, a stopped playback), it has nothing
+		// to read: fread on no file is the CRT's fast-fail, not an error code
+		DEBUG_LOG(("RecorderClass::updatePlayback - in playback with no replay file open, nothing more is read\n"));
+		m_nextFrame = -1;
+		return;
+	}
 	UnsignedInt curFrame = TheGameLogic->getFrame();
 	if (m_doingAnalysis)
 		curFrame = m_nextFrame;
@@ -1161,7 +1168,9 @@ Bool RecorderClass::playbackFile(AsciiString filename)
 RecorderClass::PlaybackCursor RecorderClass::getPlaybackCursor( void )
 {
 	PlaybackCursor cursor;
-	cursor.filePosition = ftell(m_file);
+	// a replay played to its end has closed its file, and ftell on none is the CRT's fast-fail; the
+	// cursor then says nothing is left (nextFrame -1) and resumePlayback reads nothing past it
+	cursor.filePosition = m_file != NULL ? ftell(m_file) : 0;
 	cursor.nextFrame = m_nextFrame;
 	cursor.crcInfo = *m_crcInfo;
 	return cursor;
@@ -1193,6 +1202,7 @@ void RecorderClass::resumePlayback(AsciiString filename, const PlaybackCursor &c
  */
 Bool RecorderClass::openPlayback(AsciiString filename, Int &difficulty, Int &rankPoints, Int &maxFPS)
 {
+	const RecorderModeType modeBefore = m_mode;
 	m_mode = RECORDERMODETYPE_PLAYBACK;
 
 	ReplayHeader header;
@@ -1201,6 +1211,9 @@ Bool RecorderClass::openPlayback(AsciiString filename, Int &difficulty, Int &ran
 	Bool success = readReplayHeader( header );
 	if (!success)
 	{
+		// a refused header has closed the file: left in playback, the next frame read from no file at
+		// all, and the CRT ended the process for it (an old replay with no HZ= or GS= did that)
+		m_mode = modeBefore;
 		return FALSE;
 	}
 	m_playbackFrameDuration = header.frameDuration;
