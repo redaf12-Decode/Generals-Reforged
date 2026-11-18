@@ -597,8 +597,8 @@ jobs:
           grep -q "native-code: 'arm64-v8a'" <<<"$badging" \
             || fail "the packaged native-code ABI is not arm64-v8a alone"
           # aapt2's badging line is spelled "sdkVersion:" in some build-tools releases and
-          # "minSdkVersion:" in others, so accept either.
-          grep -qE "(min)?sdkVersion:'28'" <<<"$badging" \
+          # "minSdkVersion:" in others, so match the suffix case-insensitively.
+          grep -qiE "sdkVersion:'28'" <<<"$badging" \
             || fail "the packaged minSdkVersion is not 28 (the native engine's floor)"
           grep -q "targetSdkVersion:'35'" <<<"$badging" \
             || fail "the packaged targetSdkVersion is not 35"
