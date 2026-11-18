@@ -20,6 +20,7 @@ package io.github.olcayseygan.zerohourreforged;
 
 import android.app.ActivityManager;
 import android.content.Context;
+import android.content.pm.FeatureInfo;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.util.Log;
@@ -61,13 +62,13 @@ final class DeviceCapabilitiesReader {
     private static void readVulkan(Context context, DeviceCapabilities device) {
         try {
             PackageManager packages = context.getPackageManager();
-            PackageManager.FeatureInfo[] features = packages.getSystemAvailableFeatures();
+            FeatureInfo[] features = packages.getSystemAvailableFeatures();
             if (features == null) {
                 device.vulkanSupported = DeviceCapabilities.FieldState.UNKNOWN;
                 return;
             }
             boolean sawLevel = false;
-            for (PackageManager.FeatureInfo feature : features) {
+            for (FeatureInfo feature : features) {
                 if (feature == null || feature.name == null) {
                     continue;
                 }
