@@ -119,3 +119,22 @@ has no such code), and the `commit-messages.yml` history allowlist.
 ## Dependency changes
 
 None.
+
+## CI validation
+
+Commit `6fecf3c`, pushed to `agent/android-arm64-application-port`:
+
+- **CI Android Test** (`44326606243`): **success**. Configured for `arm64-v8a`,
+  API 28, `c++_shared`, and compiled a bounded target set under the NDK Clang.
+- **CI Android App** (`44326484631`): **success**. Built `libmain.so`, audited
+  its ELF dependencies, assembled the APK and inspected its structure, ABI and
+  manifest, and ran the game-folder unit tests.
+
+Both workflows compiled the changed sources; the new `glyphrasteriser.cpp`
+Android branch and the ported `Recorder.cpp`/`W3DDisplay.cpp` code are on the
+paths the App workflow built. The engine fixes inside `_DEBUG`/`DUMP_PERF_STATS`
+are not compiled by the Release CI, so they are covered by the host `g++`
+reproductions in §2-§6 rather than by CI.
+
+Not validated: a device run. The font branch is only exercised on Android at
+runtime, and no APK build proves the game starts or draws.

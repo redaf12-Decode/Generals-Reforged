@@ -339,7 +339,18 @@ compile-level defect; the Android CI workflows were run on the pushed branch.
 
 ### CI workflow results
 
-Recorded in `REFERENCE-PORT-CHANGELOG.md` after the push.
+Commit `6fecf3c`, pushed to `agent/android-arm64-application-port`:
+
+| Workflow | Run | Result |
+| --- | --- | --- |
+| CI Android Test | `44326606243` | **success** (18m36s) — configured and compiled a bounded target set with the NDK; ABI/API/STL and dependency-graph assertions passed |
+| CI Android App | `44326484631` | **success** (26m57s) — built the engine as `libmain.so`, audited its ELF, assembled and inspected the APK, ran the game-folder unit tests |
+
+The "Build the native engine as `libmain.so` for arm64-v8a" step compiled every
+changed translation unit (including the new `glyphrasteriser.cpp` Android branch)
+with the NDK Clang, and the "Inspect the packaged APK" step confirmed the ABI and
+native dependencies. This proves the changes **build**; it does not prove the game
+runs (see below).
 
 ### Remaining issues
 
