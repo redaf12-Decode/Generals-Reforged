@@ -69,11 +69,12 @@ Files modified:
 
 - `.github/workflows/ci-android-app.yml`
 - `.github/workflows/ci-android-test.yml`
+- `scripts/build/android/assert-cache-policy.sh` (new)
 
 (plus the earlier ccache wiring in `scripts/build/android/build-android.sh` from the preceding
-commit, and the two new audit docs).
+commit, and the audit docs).
 
-Changes in this commit:
+Changes:
 
 1. **ccache restore/save pair.** The ccache directory is restored with `actions/cache/restore`
    (unique per-run key + prefix `restore-keys`) and saved with `actions/cache/save` under
@@ -82,6 +83,13 @@ Changes in this commit:
    checkouts of a cross-compile (the reference sets it for the same reason).
 3. **`actions/cache/restore@v6.1.0` and `actions/cache/save@v6.1.0`**, pinned to the same commit SHA
    as the existing `actions/cache@v6.1.0` uses.
+4. **Cache-policy guard.** `scripts/build/android/assert-cache-policy.sh` runs as an early step in
+   both workflows and fails the run if any `actions/cache*` step targets a path outside the
+   infrastructure allow-list (SDK/NDK, `zhr-vendor`, ccache) or uses a multi-path block scalar. See
+   the policy section in `ANDROID-CI-CACHE-ARCHITECTURE.md`.
+5. **Fresh-link guarantee.** Each engine build step deletes any existing `libmain.so` before the
+   build and asserts the produced file is newer than the step's own start, so the artifact is always
+   linked from the current source and can never be a restored or leftover binary.
 
 Why the restore/save pair: with plain `actions/cache`, the automatic post-step save runs only when
 the job succeeds. A push run on this branch was cancelled at ~97% of the native build
@@ -96,15 +104,17 @@ Both workflows restore in the same order, before the build tools run:
 
 1. Checkout.
 2. Prepare runner; `apt-get install … ccache`.
-3. Restore the Android SDK/NDK cache; install only on miss.
-4. (App only) `gradle/actions/setup-gradle`.
-5. Restore the vendor-download cache.
-6. **Restore the ccache cache.**
-7. **Report/configure ccache** (`max_size`, `compression`, `compiler_check=content`, `--zero-stats`).
-8. Fetch code dependencies; configure CMake (with `CMAKE_<LANG>_COMPILER_LAUNCHER=ccache`).
-9. Build native; print ccache statistics; audit the ELF; package the APK; run unit tests.
-10. Upload artifacts.
-11. **Save the ccache cache** (`if: always()`).
+3. **Assert the cache policy** (no `actions/cache*` step targets an application output).
+4. Restore the Android SDK/NDK cache; install only on miss.
+5. (App only) `gradle/actions/setup-gradle`.
+6. Restore the vendor-download cache.
+7. **Restore the ccache cache.**
+8. **Report/configure ccache** (`max_size`, `compression`, `compiler_check=content`, `--zero-stats`).
+9. Fetch code dependencies; configure CMake (with `CMAKE_<LANG>_COMPILER_LAUNCHER=ccache`).
+10. Build native (**delete any stale `libmain.so`, then link afresh and assert it is new**); print
+    ccache statistics; audit the ELF; package the APK; run unit tests.
+11. Upload artifacts.
+12. **Save the ccache cache** (`if: always()`).
 
 ## Static configuration review
 
@@ -116,6 +126,9 @@ Both workflows restore in the same order, before the build tools run:
 - `CCACHE_DIR` (`/home/runner/.ccache`) is under `$HOME`, so `actions/cache` reads and writes it
   without `sudo`.
 - No source hash is in the ccache key; no secret, signing key or APK is cached.
+- `scripts/build/android/assert-cache-policy.sh` passes against both workflows (8 cache paths, all
+  infrastructure) and rejects, in unit checks, a cached `libmain.so`, a broad `build-android-arm64`
+  path, a `path: |` multi-path block, and any unrecognised path.
 
 ## Proven (from actual runs)
 

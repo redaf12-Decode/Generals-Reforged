@@ -121,6 +121,15 @@ jobs:
           java -version
           df -h "$RUNNER_TEMP"
 
+      - name: Assert the cache policy excludes application outputs
+        run: |
+          set -euo pipefail
+          # A cache may hold only build infrastructure (SDK/NDK, vendored downloads, ccache); never
+          # libmain.so, the CMake/Ninja build tree or an APK, so the engine is always linked from the
+          # current source. This reads the workflow file itself, so a future cache step pointed at an
+          # output fails here instead of silently shipping a stale binary.
+          scripts/build/android/assert-cache-policy.sh .github/workflows/ci-android-test.yml
+
       - name: Restore the Android SDK and NDK cache
         id: sdk-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -472,7 +481,18 @@ jobs:
           # and every dependency in the graph - GameSpy, FFmpeg (cross-built for aarch64 here),
           # FreeType, mbedTLS, SDL3 GPU, the SdlDevice/W3DDevice layers - so a link failure names a
           # real Phase-2 problem rather than being hidden behind a configure that passed.
+          #
+          # The build tree is not cached; remove any stale engine first so the file below is always
+          # produced by this run's link, from the current source.
+          rm -f "$BUILD/libmain.so"
+          started=$(date +%s)
           cmake --build "$BUILD" --parallel "$(nproc)" --target generals
+          test -f "$BUILD/libmain.so" || { echo "::error::the engine did not produce $BUILD/libmain.so"; exit 1; }
+          # Prove the engine was linked afresh this run, not restored from a cache: ccache reuses
+          # object files (a content match), but the final link always runs, so the artifact is current.
+          linked=$(stat -c %Y "$BUILD/libmain.so")
+          [ "$linked" -ge "$started" ] \
+            || { echo "::error::$BUILD/libmain.so predates this build step: it was not linked from the current source"; exit 1; }
           echo "linked the engine for aarch64-linux-android: $BUILD/libmain.so"
 
       - name: Print the ccache statistics

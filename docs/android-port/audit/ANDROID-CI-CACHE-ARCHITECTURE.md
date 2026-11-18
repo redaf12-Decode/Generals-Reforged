@@ -90,3 +90,65 @@ is a compiler cache, which is ccache (category 4).
 - **The FFmpeg and glslang build directories** — they live inside the (uncached) build tree; their
   object files are captured by ccache, and their outputs are cheap relative to the engine.
 - **Any APK or game data** — artifacts and user data, not caches.
+
+## Cache policy: infrastructure only, never an application output
+
+The rule the two workflows enforce, stated once:
+
+> A cache may hold only build infrastructure that is reusable independently of the application's
+> changing source. It must never hold an application output.
+
+Cached (the complete allow-list):
+
+| Cache | Path | Key | Saved by |
+|:--|:--|:--|:--|
+| SDK + NDK | `${{ env.ANDROID_SDK_ROOT }}` | `android-sdk-cmdline…-ndk…-p…-n…` | `actions/cache` post-step (success) |
+| Vendored downloads | `${{ runner.temp }}/zhr-vendor` | `android-vendor-v1-<hash>` | `actions/cache` post-step (success) |
+| Compiler objects | `${{ env.CCACHE_DIR }}` (`/home/runner/.ccache`) | `android-ccache-…-<run_id>-<run_attempt>` | `actions/cache/save` with `if: always()` |
+| Gradle deps | (owned by `gradle/actions/setup-gradle`) | (the action's own) | `gradle/actions/setup-gradle` |
+
+Explicitly excluded — nothing may store, restore or reuse these:
+
+- `libmain.so` and any other application-built native shared library.
+- The CMake/Ninja build tree (`build-android-arm64`, `$RUNNER_TEMP/build-android-arm64`) — including
+  the FFmpeg/glslang sub-builds and every object file under it.
+- Application object files outside the dedicated ccache storage.
+- Intermediate native linking outputs.
+- Generated APKs and AABs (`android/app/build/outputs/**`).
+- Staged `android/app/src/main/jniLibs/**` and `android/java-sdl/**`.
+
+### Why `libmain.so` must be rebuilt every run
+
+`libmain.so` is the application. If a cache could restore it, a later run could package a binary
+built from older source — the code would not match the checkout, and the APK would ship stale
+behaviour with no build error to show for it. So the engine is always configured from the current
+source, compiled (ccache may reuse a valid object) and **linked afresh**. The build tree is not
+cached, and each engine build step deletes any existing `libmain.so` first and asserts the file it
+finds is newer than the step's own start, so "the engine exists" can never be satisfied by an older
+artifact.
+
+### ccache objects vs the final linked binary — the distinction
+
+This is the crux, and it is why the policy does not sacrifice the warm-build win:
+
+- **ccache objects** are *per-translation-unit* compiler outputs, stored and restored **only inside
+  `$CCACHE_DIR`**. A hit is a *content match*: ccache re-runs the compiler and compares the
+  preprocessed source, flags and compiler identity (with `compiler_check=content`), and returns the
+  cached object only when they are identical. A changed source file is a miss and recompiles.
+- **The final `libmain.so`** is a *link* output. It is never stored in any cache. The link runs in
+  every build, consuming the (possibly cached) objects and the current build tree, and produces the
+  binary that is staged and packaged.
+
+So reusing ccache objects is safe — they are inputs whose validity ccache re-establishes — while the
+linked application binary is always produced from the current source. Removing ccache would only
+make the build slower, not more correct.
+
+### How a future developer avoids introducing output caching
+
+1. The workflows run `scripts/build/android/assert-cache-policy.sh <workflow>` as an early step. It
+   reads the workflow file and fails the run if any `actions/cache*` step targets a path outside the
+   allow-list, or uses a multi-path block scalar (`path: |`) that could hide an output directory.
+2. To cache a new *infrastructure* directory, add it to the script's `allowed_paths` array **and**
+   justify it in this document — deliberately, not by adding a `path:` line alone.
+3. Never add `build-android-arm64`, `jniLibs`, `java-sdl`, `outputs/`, `*.apk` or `*.aab` to any
+   cache `path:`; the guard rejects them.
