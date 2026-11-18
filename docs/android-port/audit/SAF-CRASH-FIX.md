@@ -121,7 +121,19 @@ device-only path.
 
 ## Validation
 
-GitHub Actions only (no local build). See the PR/commit for run links.
+GitHub Actions only (no local build), on commit `043d04c`:
+
+| Workflow | Run | Result |
+|:--|:--|:--|
+| CI Android App | [44349510505](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44349510505) | success |
+| CI Android Test | [44349584568](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44349584568) | success |
+
+CI Android App ran the JVM unit tests: `SafTreeUriTest` 7/7, `SafPickerResultTest`
+5/5, `GameDataStagingTest` 10/10, `GameFolderValidatorTest` 11/11 — 0 failures —
+and its manifest/APK assertions (identity, launcher `SetupActivity`, no storage
+permission, `libmain.so` + `libc++_shared.so` for arm64-v8a only) all passed.
+CI Android Test configured and compiled the engine for arm64-v8a. Neither build
+touches a device.
 
 ## Not claimed
 
