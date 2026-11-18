@@ -190,6 +190,37 @@ and hit it:
 So the design is proven on the app workflow itself: restore → hit → build → save, with the warm
 native build reduced from ~22 min to under 3 min.
 
+## Cache-policy enforcement proven (18/11/2026)
+
+The policy guard and the fresh-link assertion were exercised by the runs of commit `9dc2db3`:
+
+- **CI Android App, run
+  [44377707692](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44377707692)** —
+  `success`, 6m18s:
+  - "Assert the cache policy excludes application outputs" → `cache policy OK: … 4 cache path(s),
+    every one build infrastructure`.
+  - ccache restored `…-44373840476-1`; the build step logged
+    `libmain.so linked this run at 2026-11-18T19:15:50Z`, i.e. the engine was linked in this run
+    (the assertion `linked >= started` passed); hit rate `1374 / 1376 (99%)`; the save step ran
+    (`…-44377707692-1`).
+  - "Inspect the packaged APK" passed, so the APK carries the freshly linked engine (the step
+    compares the packaged `libmain.so`'s DT_NEEDED set against the built one).
+- **CI Android Test, run
+  [44377720183](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44377720183)** —
+  `success`, 24m36s: policy guard OK; "Build the engine as libmain.so" logged the link; "Assert
+  libmain.so is an AArch64 shared object exporting SDL_main" passed; save ran
+  (`…-44377720183-1`).
+
+One observation from the logs, noted for honesty rather than acted on: the two workflows use
+**different build-tree paths** (`$GITHUB_WORKSPACE/build-android-arm64` in the app workflow,
+`$RUNNER_TEMP/build-android-arm64` in the test workflow) and share the same ccache key prefix, so a
+workflow can restore the *other* workflow's newer entry. In run `44377720183` the test workflow
+restored the app run's entry (`…-44373840476-1`) and hit only `1 / 1384 (0%)`, because the
+preprocessed sources embed the differing build-directory paths. This is a pre-existing
+characteristic of the shared key (not introduced here); each workflow still hits its **own** cache
+at ~99% (the warm app and test runs above). Changing the key to separate the two was deliberately
+**not** done, to preserve the key design the task asked to keep.
+
 ## Implemented but not yet empirically verified
 
 - **`compiler_check=content`** — set, but its effect (reliable hits across checkouts) is not
