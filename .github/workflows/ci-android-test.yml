@@ -74,10 +74,22 @@ env:
   CMDLINE_TOOLS_SHA1: '5fdcc763663eefb86a5b8879697aa6088b041e70'
   NDK_VERSION: '27.2.12479018'
   ANDROID_API: '28'
+  # The native build's ABI and configuration, named once here and used in the ccache key so an
+  # incompatible cache cannot be restored.
+  NATIVE_ABI: 'arm64-v8a'
+  NATIVE_BUILD_TYPE: 'Release'
   # Under the runner user's home, so actions/cache can write it without root (a path under /opt
   # would need sudo for the cache restore, not just the install).
   ANDROID_SDK_ROOT: /home/runner/android-sdk
   ANDROID_HOME: /home/runner/android-sdk
+  # ccache: a persistent compiler cache for the native half, restored and saved by the cache step
+  # below and picked up by scripts/build/android/build-android.sh (it is handed to CMake as
+  # CMAKE_<LANG>_COMPILER_LAUNCHER). 5 GB, compressed; the key pins the NDK, the ABI and the build
+  # script so an incompatible cache cannot be restored.
+  CCACHE_DIR: /home/runner/.ccache
+  CCACHE_MAXSIZE: 5G
+  CCACHE_COMPRESS: 'true'
+  CCACHE_BASEDIR: /home/runner
 
 jobs:
   android-arm64:
@@ -97,7 +109,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build git curl unzip xz-utils python3 ca-certificates
+            cmake ninja-build git curl unzip xz-utils python3 ca-certificates ccache
           # sdkmanager is a Java tool; the hosted image ships a JDK, but do not assume it.
           if ! command -v java >/dev/null 2>&1; then
             sudo apt-get install -y --no-install-recommends openjdk-17-jre-headless
@@ -105,6 +117,7 @@ jobs:
           sudo apt-get clean
           cmake --version
           ninja --version
+          ccache --version | head -n 1
           java -version
           df -h "$RUNNER_TEMP"
 
@@ -156,6 +169,32 @@ jobs:
         with:
           path: ${{ runner.temp }}/zhr-vendor
           key: android-vendor-v1-${{ hashFiles('GeneralsMD/Code/Tools/vendor.sh', 'GeneralsMD/Code/Libraries/Source/**/*.patch') }}
+
+      - name: Restore the ccache compiler cache
+        id: ccache-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          # The key pins everything a cached object depends on: the runner image, the NDK, the ABI,
+          # the build type and the build script (its flags). The source is deliberately NOT in the key:
+          # a ccache entry is a content match, so editing one file recompiles one translation unit and
+          # hits the rest. restore-keys falls back to an older entry for the same toolchain.
+          key: android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-${{ env.NATIVE_BUILD_TYPE }}-${{ hashFiles('scripts/build/android/build-android.sh', 'scripts/build/android/android.toolchain.cmake') }}
+          restore-keys: |
+            android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-${{ env.NATIVE_BUILD_TYPE }}-
+            android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-
+
+      - name: Report the restored ccache state
+        run: |
+          set -euo pipefail
+          mkdir -p "${CCACHE_DIR}"
+          ccache --set-config=max_size="${CCACHE_MAXSIZE}"
+          ccache --set-config=compression=true
+          ccache --zero-stats >/dev/null
+          echo "ccache version: $(ccache --version | head -n 1)"
+          echo "ccache dir:     ${CCACHE_DIR}"
+          echo "ccache maxsize: ${CCACHE_MAXSIZE}"
+          ccache -s || true
 
       - name: Fetch the code dependencies
         env:
@@ -428,6 +467,23 @@ jobs:
           # real Phase-2 problem rather than being hidden behind a configure that passed.
           cmake --build "$BUILD" --parallel "$(nproc)" --target generals
           echo "linked the engine for aarch64-linux-android: $BUILD/libmain.so"
+
+      - name: Print the ccache statistics
+        run: |
+          set -euo pipefail
+          # The compiler cache the configure step launcher-wrapped the build with: the hit rate is the
+          # evidence that the restored cache was used. A first run is ~0% (all compile, all stored); a
+          # later run with unchanged sources approaches 100%.
+          ccache -s -v
+          # Read the summary counters (a missing counter coerces to 0). The hit rate is the number the
+          # report cites: ~0% on a cold cache, near 100% on a warm one with unchanged sources.
+          read -r hits misses < <(ccache -s | awk '/^[[:space:]]*Hits:/ {h=$2} /^[[:space:]]*Misses:/ {m=$2} END {print h+0, m+0}')
+          total=$(( hits + misses ))
+          if [ "$total" -gt 0 ]; then
+            echo "ccache hit rate: $hits / $total ($(( 100 * hits / total ))%)"
+          else
+            echo "ccache reported no cacheable compiles this run"
+          fi
 
       - name: Assert libmain.so is an AArch64 shared object exporting SDL_main
         env:

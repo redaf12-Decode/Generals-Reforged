@@ -191,6 +191,20 @@ echo "[android] target: abi=$ABI api=$API stl=c++_shared c++17"
 echo "[android] config: $CONFIG, generator Ninja"
 echo "[android] tree:   $BUILD"
 
+# --- the compiler cache (optional) ---------------------------------------------------------------
+# ccache, when it is on PATH, is handed to CMake as the compiler launcher for C and C++ (CMake's own
+# CMAKE_<LANG>_COMPILER_LAUNCHER, which the NDK's Clang honours). It is optional: a machine without
+# ccache configures exactly as before. The directory, the size cap and the compression come from the
+# environment (CCACHE_DIR, CCACHE_MAXSIZE, CCACHE_COMPRESS), which CI sets and restores with
+# actions/cache; locally, ccache's own defaults apply. A ccache hit is a content match - compiler,
+# flags and preprocessed source - so it never returns a stale object for changed code.
+CCACHE_LAUNCHER=$(command -v ccache 2>/dev/null || true)
+if [ -n "$CCACHE_LAUNCHER" ]; then
+  echo "[android] ccache: $CCACHE_LAUNCHER (dir: ${CCACHE_DIR:-<ccache default>})"
+else
+  echo "[android] ccache: not found; compiling without a compiler cache"
+fi
+
 if [ -n "$CLEAN" ]; then
   echo "[android] removing $BUILD"
   rm -rf "$BUILD"
@@ -201,10 +215,15 @@ mkdir -p "$BUILD"
 # Ninja is single-config: the configuration is baked in at configure time, so a change to --config has
 # to configure again rather than silently keep the tree's old one.
 cached_config=
+cached_launcher=
 if [ -e "$BUILD/CMakeCache.txt" ]; then
   cached_config=$(sed -n 's/^CMAKE_BUILD_TYPE:[^=]*=\(.*\)$/\1/p' "$BUILD/CMakeCache.txt" | head -n 1)
+  # The launcher is compared too, so installing or removing ccache between runs re-configures rather
+  # than leaving the tree with a launcher it no longer has (or a stale one it gained).
+  cached_launcher=$(sed -n 's/^CMAKE_CXX_COMPILER_LAUNCHER:[^=]*=\(.*\)$/\1/p' "$BUILD/CMakeCache.txt" | head -n 1)
 fi
-if [ ! -e "$BUILD/CMakeCache.txt" ] || [ ! -e "$BUILD/build.ninja" ] || [ "$cached_config" != "$CONFIG" ]; then
+if [ ! -e "$BUILD/CMakeCache.txt" ] || [ ! -e "$BUILD/build.ninja" ] || [ "$cached_config" != "$CONFIG" ] \
+   || [ "$cached_launcher" != "$CCACHE_LAUNCHER" ]; then
   echo "[android] configuring $SRC -> $BUILD"
   cfg_log="$BUILD/android-configure.log"
   cfg_args=(-S "$SRC" -B "$BUILD" -G Ninja
@@ -216,6 +235,8 @@ if [ ! -e "$BUILD/CMakeCache.txt" ] || [ ! -e "$BUILD/build.ninja" ] || [ "$cach
     -DANDROID_STL=c++_shared
     -DCMAKE_CXX_STANDARD=17
     -DCMAKE_CXX_STANDARD_REQUIRED=ON)
+  [ -n "$CCACHE_LAUNCHER" ] && cfg_args+=(-DCMAKE_C_COMPILER_LAUNCHER="$CCACHE_LAUNCHER"
+                                          -DCMAKE_CXX_COMPILER_LAUNCHER="$CCACHE_LAUNCHER")
   if [ -n "$VERBOSE" ]; then
     "$CMAKE" "${cfg_args[@]}" || fail "configure failed (see the output above)."
   elif "$CMAKE" "${cfg_args[@]}" >"$cfg_log" 2>&1; then
@@ -240,6 +261,9 @@ build_args=(--build "$BUILD")
 [ -n "$TARGET" ] && build_args+=(--target "$TARGET")
 [ -n "$JOBS" ] && build_args+=(--parallel "$JOBS")
 echo "[android] building${TARGET:+ target $TARGET}"
+# ccache statistics before the build, so the delta this run produced is visible next to the after
+# numbers below (and in the CI log).
+[ -n "$CCACHE_LAUNCHER" ] && { echo "[android] ccache stats before:"; "$CCACHE_LAUNCHER" -s; }
 build_log="$BUILD/android-build.log"
 if [ -n "$VERBOSE" ]; then
   "$CMAKE" "${build_args[@]}" || fail "build failed (see the output above)."
@@ -251,4 +275,5 @@ else
   echo "[android] full build log: $build_log" >&2
   fail "the Android build failed. The error above is the cause; the log has it in full."
 fi
+[ -n "$CCACHE_LAUNCHER" ] && { echo "[android] ccache stats after:"; "$CCACHE_LAUNCHER" -s; }
 echo "[android] done: $BUILD${TARGET:+/$TARGET}"

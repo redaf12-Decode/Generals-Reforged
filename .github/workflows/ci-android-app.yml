@@ -69,10 +69,23 @@ env:
   # port's floor - build-android.sh --api). Both platforms are installed.
   ANDROID_API: '35'
   NATIVE_API: '28'
+  # The native build's ABI and configuration, named once here and used in the ccache key so an
+  # incompatible cache cannot be restored.
+  NATIVE_ABI: 'arm64-v8a'
+  NATIVE_BUILD_TYPE: 'Release'
   ANDROID_SDK_ROOT: /home/runner/android-sdk
   ANDROID_HOME: /home/runner/android-sdk
   # The native engine's build tree, shared by the native build and the packaging step.
   NATIVE_BUILD: ${{ github.workspace }}/build-android-arm64
+  # ccache: a persistent compiler cache for the native half, restored and saved by the cache step
+  # below and picked up by scripts/build/android/build-android.sh (it is handed to CMake as
+  # CMAKE_<LANG>_COMPILER_LAUNCHER). Under the runner user's home so actions/cache writes it without
+  # root, the same reason the SDK lives there. 5 GB, compressed; a key that pins the NDK, the ABI and
+  # the toolchain keeps an incompatible cache from being restored.
+  CCACHE_DIR: /home/runner/.ccache
+  CCACHE_MAXSIZE: 5G
+  CCACHE_COMPRESS: 'true'
+  CCACHE_BASEDIR: /home/runner
 
 jobs:
   android-app:
@@ -93,12 +106,14 @@ jobs:
           sudo apt-get update
           # cmake and ninja are needed by the native half (build-android.sh builds the real engine
           # here); git/curl/unzip/xz-utils/python3 are what vendor.sh and the FFmpeg cross-build
-          # need. The same set ci-android-test.yml uses for the identical build.
+          # need; ccache is the compiler cache the native build is launcher-wrapped with. The same set
+          # ci-android-test.yml uses for the identical build.
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build git curl unzip xz-utils python3 ca-certificates
+            cmake ninja-build git curl unzip xz-utils python3 ca-certificates ccache
           sudo apt-get clean
           cmake --version
           ninja --version
+          ccache --version | head -n 1
           df -h "$RUNNER_TEMP"
 
       - name: Set up JDK 17
@@ -142,6 +157,13 @@ jobs:
         uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.4.4
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
+          # setup-gradle defaults cache-read-only to true on any branch that is not the repository's
+          # default branch (here, main), so on this branch it restored the Gradle User Home but never
+          # wrote it back - the previous run's log says "Cache is read-only: will not save state", and
+          # every run re-downloaded Gradle 8.12 and every dependency. Turn it off so the Gradle User
+          # Home (the dependency caches under ~/.gradle/caches) is saved at the end of a successful job
+          # and restored by the next one. It stays an optimization: a miss just downloads as before.
+          cache-read-only: false
 
       - name: Export the Android environment
         run: |
@@ -160,6 +182,34 @@ jobs:
         with:
           path: ${{ runner.temp }}/zhr-vendor
           key: android-vendor-v1-${{ hashFiles('GeneralsMD/Code/Tools/vendor.sh', 'GeneralsMD/Code/Libraries/Source/**/*.patch') }}
+
+      - name: Restore the ccache compiler cache
+        id: ccache-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          # The key pins everything a cached object depends on: the runner image (a different libc or
+          # Clang would change codegen), the NDK (the compiler and sysroot), the ABI, the build type
+          # and the build script (its flags). The source is deliberately NOT in the key: a ccache entry
+          # is a content match, so editing one file recompiles one translation unit and hits the rest.
+          # restore-keys falls back to an older entry for the same toolchain, so a change that only
+          # affects the key's tail still warms the cache.
+          key: android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-${{ env.NATIVE_BUILD_TYPE }}-${{ hashFiles('scripts/build/android/build-android.sh', 'scripts/build/android/android.toolchain.cmake') }}
+          restore-keys: |
+            android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-${{ env.NATIVE_BUILD_TYPE }}-
+            android-ccache-${{ runner.os }}-${{ runner.arch }}-ndk${{ env.NDK_VERSION }}-${{ env.NATIVE_ABI }}-
+
+      - name: Report the restored ccache state
+        run: |
+          set -euo pipefail
+          mkdir -p "${CCACHE_DIR}"
+          ccache --set-config=max_size="${CCACHE_MAXSIZE}"
+          ccache --set-config=compression=true
+          ccache --zero-stats >/dev/null
+          echo "ccache version: $(ccache --version | head -n 1)"
+          echo "ccache dir:     ${CCACHE_DIR}"
+          echo "ccache maxsize: ${CCACHE_MAXSIZE}"
+          ccache -s || true
 
       - name: Fetch the code dependencies (the engine's vendored sources and SDL3's Java glue)
         env:
@@ -200,6 +250,23 @@ jobs:
           test -f "$NATIVE_BUILD/libmain.so" \
             || { echo "::error::the engine did not produce $NATIVE_BUILD/libmain.so"; exit 1; }
           ls -la "$NATIVE_BUILD/libmain.so"
+
+      - name: Print the ccache statistics
+        run: |
+          set -euo pipefail
+          # The compiler cache this build is launcher-wrapped with: the hit rate is the evidence that
+          # the restored cache was actually used. On a first run the rate is ~0 (everything compiles
+          # and is stored); on a later run with unchanged sources it approaches 100%.
+          ccache -s -v
+          # Read the summary counters (a missing counter coerces to 0). The hit rate is the number the
+          # report cites: ~0% on a cold cache, near 100% on a warm one with unchanged sources.
+          read -r hits misses < <(ccache -s | awk '/^[[:space:]]*Hits:/ {h=$2} /^[[:space:]]*Misses:/ {m=$2} END {print h+0, m+0}')
+          total=$(( hits + misses ))
+          if [ "$total" -gt 0 ]; then
+            echo "ccache hit rate: $hits / $total ($(( 100 * hits / total ))%)"
+          else
+            echo "ccache reported no cacheable compiles this run"
+          fi
 
       - name: Audit the native dependencies from the ELF (Phase 4)
         run: |
