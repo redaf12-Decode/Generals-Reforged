@@ -20,21 +20,18 @@ package io.github.olcayseygan.zerohourreforged.ui.theme
 
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-// A muted military palette: olive and khaki surfaces, a brass accent for actions, and
-// green/amber/red reserved for the compatibility verdict so the three states read at a glance.
-
+// A muted military palette: olive and khaki surfaces and a brass accent for actions. The
+// compatibility verdict has its own per-scheme tones further down.
 private val Brass = Color(0xFFC8A24A)
 private val BrassLight = Color(0xFFE6C77A)
 private val Olive = Color(0xFF4A5D3A)
 private val OliveDeep = Color(0xFF232B1C)
 private val Khaki = Color(0xFFB8AE93)
 
-private val Success = Color(0xFF6FA84B)
-private val Warning = Color(0xFFD79B3C)
 private val Failure = Color(0xFFC4553F)
-private val Unknown = Color(0xFF8C8677)
 
 internal val ZeroHourDarkColors = darkColorScheme(
     primary = BrassLight,
@@ -76,9 +73,34 @@ internal val ZeroHourLightColors = lightColorScheme(
     onError = Color.White,
 )
 
-// A compatibility verdict is a semantic state, not a themed accent, so these are shared by both
-// schemes rather than derived from the primary colour.
-internal val VerdictSatisfied = Success
-internal val VerdictFailed = Failure
-internal val VerdictUnverified = Warning
-internal val VerdictUnknown = Unknown
+/**
+ * The colours of a compatibility verdict, one set per scheme.
+ *
+ * <p>A verdict is a semantic state, not a themed accent, so these are not derived from the primary
+ * colour. They do have to differ per scheme: the verdict is drawn as a glyph and as a tinted
+ * container, and a single set of tones cannot reach the 4.5:1 contrast minimum against both a near
+ * black and a near white surface. Each value below meets it against its own scheme's surface.
+ */
+internal data class VerdictColors(
+    val satisfied: Color,
+    val failed: Color,
+    val unverified: Color,
+    val unknown: Color,
+)
+
+internal val ZeroHourDarkVerdicts = VerdictColors(
+    satisfied = Color(0xFF9BD97A),
+    failed = Color(0xFFEC8E78),
+    unverified = Color(0xFFF0C46E),
+    unknown = Color(0xFFB5AFA3),
+)
+
+internal val ZeroHourLightVerdicts = VerdictColors(
+    satisfied = Color(0xFF3E6B22),
+    failed = Color(0xFF9C2F1C),
+    unverified = Color(0xFF8A5A0E),
+    unknown = Color(0xFF5E5B4E),
+)
+
+/** The verdict colours of the enclosing [ZeroHourTheme], so the screens never re-derive them. */
+internal val LocalVerdictColors = staticCompositionLocalOf { ZeroHourDarkVerdicts }

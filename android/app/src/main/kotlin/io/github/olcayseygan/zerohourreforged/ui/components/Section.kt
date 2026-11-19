@@ -33,12 +33,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import io.github.olcayseygan.zerohourreforged.ui.theme.VerdictFailed
-import io.github.olcayseygan.zerohourreforged.ui.theme.VerdictSatisfied
-import io.github.olcayseygan.zerohourreforged.ui.theme.VerdictUnknown
-import io.github.olcayseygan.zerohourreforged.ui.theme.VerdictUnverified
+import io.github.olcayseygan.zerohourreforged.ui.theme.LocalVerdictColors
 
-/** How a single requirement stands, matching {@code CompatibilityEvaluator.Check}'s three states. */
+/**
+ * How a single requirement stands: the evaluator's satisfied/failed/unverified, plus [UNKNOWN] for
+ * a device field the platform did not report.
+ */
 enum class CheckState { SATISFIED, FAILED, UNVERIFIED, UNKNOWN }
 
 /**
@@ -70,11 +70,12 @@ fun CheckRow(
     detail: String,
     modifier: Modifier = Modifier,
 ) {
+    val verdicts = LocalVerdictColors.current
     val (mark, color, label) = when (state) {
-        CheckState.SATISFIED -> Triple("✓", VerdictSatisfied, "satisfied")
-        CheckState.FAILED -> Triple("✗", VerdictFailed, "failed")
-        CheckState.UNVERIFIED -> Triple("?", VerdictUnverified, "could not be verified")
-        CheckState.UNKNOWN -> Triple("?", VerdictUnknown, "not reported")
+        CheckState.SATISFIED -> Triple("✓", verdicts.satisfied, "satisfied")
+        CheckState.FAILED -> Triple("✗", verdicts.failed, "failed")
+        CheckState.UNVERIFIED -> Triple("?", verdicts.unverified, "could not be verified")
+        CheckState.UNKNOWN -> Triple("?", verdicts.unknown, "not reported")
     }
     Row(
         modifier = modifier
@@ -131,11 +132,12 @@ fun NoteText(text: String, modifier: Modifier = Modifier) {
  */
 @Composable
 fun VerdictBanner(text: String, state: CheckState, modifier: Modifier = Modifier) {
+    val verdicts = LocalVerdictColors.current
     val color: Color = when (state) {
-        CheckState.SATISFIED -> VerdictSatisfied
-        CheckState.FAILED -> VerdictFailed
-        CheckState.UNVERIFIED -> VerdictUnverified
-        CheckState.UNKNOWN -> VerdictUnknown
+        CheckState.SATISFIED -> verdicts.satisfied
+        CheckState.FAILED -> verdicts.failed
+        CheckState.UNVERIFIED -> verdicts.unverified
+        CheckState.UNKNOWN -> verdicts.unknown
     }
     Surface(
         modifier = modifier.fillMaxWidth(),

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 
 /**
@@ -46,10 +47,14 @@ fun ZeroHourTheme(
         typography = ZeroHourTypography,
         shapes = ZeroHourShapes,
     ) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background,
-            content = content,
-        )
+        CompositionLocalProvider(
+            LocalVerdictColors provides if (darkTheme) ZeroHourDarkVerdicts else ZeroHourLightVerdicts,
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+                content = content,
+            )
+        }
     }
 }
