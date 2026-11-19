@@ -18,20 +18,17 @@
 
 package io.github.olcayseygan.zerohourreforged;
 
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.View;
-import android.widget.Button;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.ScrollView;
-import android.widget.TextView;
+
+import androidx.activity.ComponentActivity;
 
 import java.io.File;
+
+import io.github.olcayseygan.zerohourreforged.ui.LauncherHost;
 
 /**
  * The launcher screen: pick the folder Zero Hour is installed in, stage it into a real path, start
@@ -48,18 +45,25 @@ import java.io.File;
  * <p>The game Activity is started only when the staged copy validates, so an incomplete or wrong
  * folder never reaches the engine. The reason it did not is shown here, in words, rather than
  * letting the engine fail with a missing-archive message.
+ *
+ * <p>The screen itself is Compose ({@code LauncherScreen}), reached through {@link LauncherHost}.
+ * The screen is stateless: it renders the state published here. Every decision - the picker, the
+ * staging thread, the validation, the launch - stays in this class, unchanged.
  */
-public class SetupActivity extends Activity {
+public class SetupActivity extends ComponentActivity implements LauncherHost.Callbacks {
 
     private static final String TAG = "ZH.SetupActivity";
     private static final int REQUEST_PICK_FOLDER = 1;
 
-    private TextView status;
-    private TextView detail;
-    private Button selectButton;
-    private Button launchButton;
-    private Button clearButton;
-    private ProgressBar progress;
+    private LauncherHost host;
+
+    // The state the Compose screen renders. Written on the UI thread only.
+    private String statusText = "";
+    private String detailText = "";
+    private long progressCopied;
+    private long progressTotal;
+    private boolean canLaunch;
+    private boolean canClear;
 
     private volatile boolean staging;
     private volatile boolean destroyed;
@@ -67,7 +71,8 @@ public class SetupActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(buildUi());
+        host = new LauncherHost(this, this);
+        host.install();
         Log.i(TAG, "created");
         refreshStatus();
     }
@@ -83,97 +88,54 @@ public class SetupActivity extends Activity {
     @Override
     protected void onDestroy() {
         // The staging thread runs for minutes on a first copy; its completion callback must not touch
-        // this Activity's views after the system has destroyed them.
+        // this Activity's state after the system has destroyed it.
         destroyed = true;
         super.onDestroy();
         Log.i(TAG, "destroyed");
     }
 
-    private View buildUi() {
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int) (16 * getResources().getDisplayMetrics().density);
-        root.setPadding(pad, pad, pad, pad);
-        scroll.addView(root);
-
-        TextView title = new TextView(this);
-        title.setText(R.string.setup_title);
-        title.setTextSize(22);
-        root.addView(title);
-
-        TextView explanation = new TextView(this);
-        explanation.setText(R.string.setup_explanation);
-        explanation.setPadding(0, pad / 2, 0, pad / 2);
-        root.addView(explanation);
-
-        status = new TextView(this);
-        status.setPadding(0, pad / 2, 0, pad / 4);
-        root.addView(status);
-
-        detail = new TextView(this);
-        detail.setPadding(0, 0, 0, pad / 2);
-        root.addView(detail);
-
-        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progress.setVisibility(View.GONE);
-        root.addView(progress);
-
-        selectButton = new Button(this);
-        selectButton.setText(R.string.setup_select_folder);
-        selectButton.setOnClickListener(v -> pickFolder());
-        root.addView(selectButton);
-
-        launchButton = new Button(this);
-        launchButton.setText(R.string.setup_launch);
-        launchButton.setOnClickListener(v -> launchGame());
-        root.addView(launchButton);
-
-        clearButton = new Button(this);
-        clearButton.setText(R.string.setup_clear_folder);
-        clearButton.setOnClickListener(v -> clearFolder());
-        root.addView(clearButton);
-
-        // Always available: the requirements and this device's compatibility, independent of whether
-        // a game folder has been chosen. See CompatibilityActivity.
-        Button compatButton = new Button(this);
-        compatButton.setText(R.string.compat_button);
-        compatButton.setOnClickListener(v -> startActivity(
-                new Intent(this, CompatibilityActivity.class)));
-        root.addView(compatButton);
-        return scroll;
+    /** Publishes the current state to the Compose tree. */
+    private void publish() {
+        if (destroyed) {
+            return;
+        }
+        host.render(statusText, detailText, staging, progressCopied, progressTotal, canLaunch, canClear);
     }
 
     private void refreshStatus() {
         Uri tree = GameFolderStore.treeUri(this);
         if (tree == null) {
-            status.setText(R.string.setup_status_none);
-            detail.setText(R.string.setup_detail_none);
-            launchButton.setEnabled(false);
-            clearButton.setEnabled(false);
+            statusText = getString(R.string.setup_status_none);
+            detailText = getString(R.string.setup_detail_none);
+            canLaunch = false;
+            canClear = false;
+            publish();
             return;
         }
         String name = GameFolderStore.sourceName(this);
         if (!GameFolderStore.hasPersistedRead(this)) {
-            status.setText(getString(R.string.setup_status_permission_lost, name));
-            detail.setText(R.string.setup_detail_permission_lost);
-            launchButton.setEnabled(false);
-            clearButton.setEnabled(true);
+            statusText = getString(R.string.setup_status_permission_lost, name);
+            detailText = getString(R.string.setup_detail_permission_lost);
+            canLaunch = false;
+            canClear = true;
+            publish();
             return;
         }
         GameFolderValidator.Verdict verdict = GameFolderStore.stagedValidation(this);
         if (!verdict.isOk()) {
-            status.setText(getString(R.string.setup_status_incomplete, name));
-            detail.setText(messageFor(verdict.result));
-            launchButton.setEnabled(false);
-            clearButton.setEnabled(true);
+            statusText = getString(R.string.setup_status_incomplete, name);
+            detailText = messageFor(verdict.result);
+            canLaunch = false;
+            canClear = true;
+            publish();
             return;
         }
-        status.setText(getString(R.string.setup_status_ready, name));
-        detail.setText(getString(R.string.setup_detail_staging,
-                GameFolderStore.engineRoot(this).getAbsolutePath()));
-        launchButton.setEnabled(true);
-        clearButton.setEnabled(true);
+        statusText = getString(R.string.setup_status_ready, name);
+        detailText = getString(R.string.setup_detail_staging,
+                GameFolderStore.engineRoot(this).getAbsolutePath());
+        canLaunch = true;
+        canClear = true;
+        publish();
     }
 
     private String messageFor(GameFolderValidator.Result result) {
@@ -185,6 +147,26 @@ public class SetupActivity extends Activity {
             default:
                 return "";
         }
+    }
+
+    @Override
+    public void onSelectFolder() {
+        pickFolder();
+    }
+
+    @Override
+    public void onLaunchGame() {
+        launchGame();
+    }
+
+    @Override
+    public void onClearFolder() {
+        clearFolder();
+    }
+
+    @Override
+    public void onShowRequirements() {
+        startActivity(new Intent(this, CompatibilityActivity.class));
     }
 
     private void pickFolder() {
@@ -242,11 +224,13 @@ public class SetupActivity extends Activity {
      */
     private void stage(Uri tree) {
         staging = true;
-        status.setText(R.string.setup_status_staging);
-        detail.setText("");
-        progress.setVisibility(View.VISIBLE);
-        progress.setIndeterminate(true);
-        setButtonsEnabled(false);
+        statusText = getString(R.string.setup_status_staging);
+        detailText = "";
+        progressCopied = 0;
+        progressTotal = 0;
+        canLaunch = false;
+        canClear = false;
+        publish();
 
         final File stagingRoot = GameFolderStore.stagingRoot(this);
         Log.i(TAG, "staging started");
@@ -257,11 +241,9 @@ public class SetupActivity extends Activity {
                             if (destroyed) {
                                 return;
                             }
-                            if (total > 0) {
-                                progress.setIndeterminate(false);
-                                progress.setMax((int) Math.min(total, Integer.MAX_VALUE));
-                                progress.setProgress((int) Math.min(copied, Integer.MAX_VALUE));
-                            }
+                            progressCopied = copied;
+                            progressTotal = total;
+                            publish();
                         }));
                 Log.i(TAG, "staging finished");
                 runOnUiThread(() -> onStagingFinished(null));
@@ -283,8 +265,9 @@ public class SetupActivity extends Activity {
             // launch re-reads them. There is no view to update.
             return;
         }
-        progress.setVisibility(View.GONE);
-        setButtonsEnabled(true);
+        progressCopied = 0;
+        progressTotal = 0;
+        // refreshStatus publishes the post-staging state, including whether the game can start.
         refreshStatus();
         if (failure != null) {
             showProblem(failure);
@@ -294,14 +277,6 @@ public class SetupActivity extends Activity {
         if (!verdict.isOk()) {
             showProblem(messageFor(verdict.result));
         }
-    }
-
-    private void setButtonsEnabled(boolean enabled) {
-        selectButton.setEnabled(enabled);
-        clearButton.setEnabled(enabled);
-        // The launch button is set only by refreshStatus, from the staged verdict, so the staged tree
-        // is walked on the UI thread once per state change rather than on every button update.
-        launchButton.setEnabled(false);
     }
 
     private void launchGame() {

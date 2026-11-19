@@ -19,7 +19,8 @@
     (docs/android-port/architecture/17-game-folder-access.md). Writes (saves, Options.ini, logs) go
     to the app's private storage, not the install root.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature
         android:name="android.hardware.vulkan.version"
@@ -32,6 +33,21 @@
 
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+        androidx.core 1.13.1 (pulled in by Compose) declares a signature-level
+        ${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION and requests it. It exists so
+        ContextCompat.registerReceiver can guard a runtime-registered, not-exported receiver on
+        API 33+. Nothing in this app or its dependency set registers such a receiver, so the
+        permission is dead weight - and the app declares only the two the native code uses. The
+        declaration is therefore dropped from the merge; the app never calls the guarded path.
+    -->
+    <uses-permission
+        android:name="${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        tools:node="remove" />
+    <permission
+        android:name="${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        tools:node="remove" />
 
     <application
         android:label="@string/app_name"

@@ -7,6 +7,8 @@
 // are gitignored.
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
 }
 
 android {
@@ -67,6 +69,37 @@ android {
         }
     }
 
+    buildFeatures {
+        // Enables the Compose compiler for this module; the compiler itself is applied by the
+        // org.jetbrains.kotlin.plugin.compose plugin above (Kotlin 2.x has no separate
+        // composeOptions block).
+        compose = true
+    }
+
+    packaging {
+        jniLibs {
+            // androidx.graphics:graphics-path (a runtime dependency of Compose's ui-graphics) ships
+            // libandroidx.graphics.path.so, a JNI library that PathIteratorImpl's static initializer
+            // loads with System.loadLibrary - no fallback, so a call into it throws
+            // UnsatisfiedLinkError when the library is absent.
+            //
+            // It is excluded because the APK must carry exactly the engine's two libraries
+            // (libmain.so, libc++_shared.so) - CI asserts nothing else is under lib/. The library is
+            // reached only through Compose's Path.iterator(); this app iterates no Path, and the one
+            // artifact that can reach it (animation-core's PathEasing) is never instantiated here.
+            // Any future screen that iterates a Path, or uses PathEasing, must remove this exclusion
+            // and relax that CI assertion.
+            excludes.add '**/libandroidx.graphics.path.so'
+        }
+    }
+
+    // The Kotlin jvmTarget below is 17; the Kotlin Gradle plugin fails the build when the Java
+    // compile target disagrees, so both halves target the JDK 17 CI installs.
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
     lint {
         // The staged SDL3 Java glue is upstream code this project does not own;
         // a lint finding in it is not this project's to fix. Its own manifest
@@ -75,10 +108,36 @@ android {
     }
 }
 
+// Both halves of the shell are compiled for the JDK 17 CI sets up, so the Java and Kotlin
+// bytecode targets agree. Nothing here needs desugaring above minSdk 28.
+//
+// `jvmTarget` is a Property<JvmTarget>, so it is set through the setter rather than assigned a
+// String: Groovy's property assignment would try to coerce the String and bypass the enum.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 dependencies {
+    // Jetpack Compose, pinned by the BOM so every Compose artifact resolves to one tested set
+    // (material3 1.3.2, ui/foundation/runtime 1.8.3). The Compose compiler itself comes from the
+    // org.jetbrains.kotlin.plugin.compose plugin, not from a dependency.
+    implementation platform('androidx.compose:compose-bom:2025.06.01')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-graphics'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    implementation 'androidx.compose.material3:material3'
+    // Activity hosts the Compose tree: ComponentActivity plus setContent, which is what lets the
+    // existing Java Activities keep their own logic and hand only their content view to Compose.
+    implementation 'androidx.activity:activity-compose:1.10.1'
+
+    // Compose's own tooling, debug-only: the @Preview annotation and the layout inspector support
+    // are not part of the shipped app.
+    debugImplementation 'androidx.compose.ui:ui-tooling'
+
     // The only test dependency: the host-side unit tests for the folder validator and the staging
     // plan (GameFolderValidatorTest, GameDataStagingTest). Both are pure Java with no Android types,
-    // so they run as JVM unit tests on CI's `:app:testDebugUnitTest`. The app itself has no runtime
-    // dependency beyond the Android platform.
+    // so they run as JVM unit tests on CI's `:app:testDebugUnitTest`.
     testImplementation 'junit:junit:4.13.2'
 }
