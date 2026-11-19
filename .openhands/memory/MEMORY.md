@@ -596,3 +596,25 @@ the fuller option). Consequences to remember:
   assertions; `ci-android-test.yml` only triggers on push to branch `android-arm64-port` (not
   `agent/android-arm64-application-port`) or on PR paths, so dispatch it by hand
   (`gh workflow run`) for this branch. Use `GH_TOKEN="$GITHUB_TOKEN" gh …`.
+- **Compose + Material 3 in the Android shell (19/11/2026, `agent/material3-ui-redesign` @
+  `b029894f`).** Detail in `2026-11-19.md`. Kotlin **2.2.0** is the first KGP supporting AGP
+  8.7.3 (2.1.x stops at 8.7.2); from Kotlin 2.0 the Compose compiler is the
+  `org.jetbrains.kotlin.plugin.compose` plugin at the *same version* —
+  `composeOptions.kotlinCompilerExtensionVersion` is gone. BOM 2025.06.01 → material3 1.3.2.
+  **Compose silently breaks two `ci-android-app.yml` assertions**, both fixed in-manifest/DSL
+  rather than relaxed: (1) `androidx.core` 1.13.1 adds a `<permission>` + `<uses-permission>`
+  for `${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, pushing the merged manifest
+  past the `<= 2` cap → `tools:node="remove"` both (safe: no not-exported runtime receiver
+  here); (2) `androidx.graphics:graphics-path` ships `jni/*/libandroidx.graphics.path.so` and
+  CI demands only `libmain`+`libc++_shared` → `packaging { jniLibs { excludes.add
+  '**/libandroidx.graphics.path.so' } }` (only reached by Compose `Path.iterator()`).
+- **Standalone `kotlinc` type-checking of Android/Compose code works and is the best local
+  gate, but stop at the frontend.** Classpath = `classes.jar` unzipped from each cached AAR +
+  `org.robolectric:android-all` (API 35) as `android.jar` + a stub `R`. The Compose plugin's
+  *bytecode generation* then crashes even on a trivial `@Composable` (`ERROR_EXPR 'Default
+  Stub'` on `Modifier.Companion`) — a harness artifact, not app breakage. Read the count of
+  `: error:` lines, ignore the exit code. Java must be compiled first (Kotlin imports it).
+  Pure-logic tests can be run for real: `kotlinc` + `java org.junit.runner.JUnitCore`.
+- **Kotlin↔Java, verified by compiling, not assumed:** an exhaustive `when` over a **Java**
+  enum needs **no `else`** (adding one is only a "redundant else" warning), and
+  **package-private Java constructors are callable from Kotlin in the same package**.
