@@ -618,3 +618,16 @@ the fuller option). Consequences to remember:
 - **Kotlin↔Java, verified by compiling, not assumed:** an exhaustive `when` over a **Java**
   enum needs **no `else`** (adding one is only a "redundant else" warning), and
   **package-private Java constructors are callable from Kotlin in the same package**.
+- **Material 3 phase 1 is CI-verified green** (`agent/material3-ui-redesign`; run 44620945167 @
+  `44a5e17`, re-run 44627851527 @ `b6a5717`): native engine + `assembleDebug` + 53 unit tests
+  + APK/manifest assertions all pass. Detail in `2026-11-19.md`. Additions since the entry
+  above: (a) **a `darkColorScheme`/`lightColorScheme` pair is not automatically accessible** —
+  the shared verdict tones were 1.3–2.8:1, so verdicts now come from a per-scheme
+  `VerdictColors` via `LocalVerdictColors` (body text was always ≥6.4:1); (b) `ui-tooling`
+  adds no manifest entry and nothing pulls `ui-test-manifest`; (c) material3 1.3.2 exposes
+  `foundation`/`foundation-layout`/`ui` as **api** deps, so `androidx.compose.foundation.*` is
+  importable without declaring it; (d) KGP 2.2.0 checks only a **minimum** AGP (7.3.1) — no
+  upper bound, so 8.7.3 is fine; (e) `jvmTarget` is `Property<JvmTarget>`, so use
+  `compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }`. **Dispatch this branch's CI by hand**
+  (`gh workflow run ci-android-app.yml --ref <branch>`): its `push` trigger lists only the
+  older port branch, so a plain push runs nothing.
