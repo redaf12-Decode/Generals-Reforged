@@ -18,7 +18,7 @@
 
 package io.github.olcayseygan.zerohourreforged
 
-import io.github.olcayseygan.zerohourreforged.ui.components.CheckState
+import io.github.olcayseygan.zerohourreforged.ui.components.StatusTone
 import io.github.olcayseygan.zerohourreforged.ui.screens.compatibility.CompatibilityPresentation
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -26,7 +26,7 @@ import org.junit.Test
 /**
  * Host tests for [CompatibilityPresentation]: how a verdict and a check are drawn.
  *
- * <p>The rule worth pinning is the precedence in [CompatibilityPresentation.checkState]. The
+ * <p>The rule worth pinning is the precedence in [CompatibilityPresentation.checkTone]. The
  * evaluator can report a check as failed, unverified or satisfied, and a hard failure must never be
  * drawn as merely "unverified" - that would tell the player a missing requirement might be fine.
  */
@@ -38,48 +38,48 @@ class CompatibilityPresentationTest {
     @Test
     fun failedWinsOverUnverifiedAndSatisfied() {
         assertEquals(
-            CheckState.FAILED,
-            CompatibilityPresentation.checkState(check(satisfied = false, failed = true, unverified = true)),
+            StatusTone.DANGER,
+            CompatibilityPresentation.checkTone(check(satisfied = false, failed = true, unverified = true)),
         )
         assertEquals(
-            CheckState.FAILED,
-            CompatibilityPresentation.checkState(check(satisfied = false, failed = true, unverified = false)),
+            StatusTone.DANGER,
+            CompatibilityPresentation.checkTone(check(satisfied = false, failed = true, unverified = false)),
         )
     }
 
     @Test
     fun unverifiedIsNotSatisfied() {
         assertEquals(
-            CheckState.UNVERIFIED,
-            CompatibilityPresentation.checkState(check(satisfied = false, failed = false, unverified = true)),
+            StatusTone.WARNING,
+            CompatibilityPresentation.checkTone(check(satisfied = false, failed = false, unverified = true)),
         )
     }
 
     @Test
     fun satisfiedCheckReadsAsSatisfied() {
         assertEquals(
-            CheckState.SATISFIED,
-            CompatibilityPresentation.checkState(check(satisfied = true, failed = false, unverified = false)),
+            StatusTone.SUCCESS,
+            CompatibilityPresentation.checkTone(check(satisfied = true, failed = false, unverified = false)),
         )
     }
 
     @Test
-    fun everyVerdictHasADistinctState() {
+    fun everyVerdictHasADistinctTone() {
         assertEquals(
-            CheckState.SATISFIED,
-            CompatibilityPresentation.resultState(CompatibilityEvaluator.Result.COMPATIBLE),
+            StatusTone.SUCCESS,
+            CompatibilityPresentation.resultTone(CompatibilityEvaluator.Result.COMPATIBLE),
         )
         assertEquals(
-            CheckState.FAILED,
-            CompatibilityPresentation.resultState(CompatibilityEvaluator.Result.UNSUPPORTED),
+            StatusTone.DANGER,
+            CompatibilityPresentation.resultTone(CompatibilityEvaluator.Result.UNSUPPORTED),
         )
         assertEquals(
-            CheckState.UNVERIFIED,
-            CompatibilityPresentation.resultState(CompatibilityEvaluator.Result.PARTIALLY_COMPATIBLE),
+            StatusTone.WARNING,
+            CompatibilityPresentation.resultTone(CompatibilityEvaluator.Result.PARTIALLY_COMPATIBLE),
         )
         assertEquals(
-            CheckState.UNKNOWN,
-            CompatibilityPresentation.resultState(CompatibilityEvaluator.Result.UNABLE_TO_VERIFY),
+            StatusTone.NEUTRAL,
+            CompatibilityPresentation.resultTone(CompatibilityEvaluator.Result.UNABLE_TO_VERIFY),
         )
     }
 

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The window colours the platform paints before Compose draws anything, and behind it afterwards.
+
+    These duplicate the Compose palette in `ui/theme/BrandPalette.kt` on purpose: the platform needs
+    an ARGB resource, not a Kotlin constant, for the window background and the system bars. Only the
+    handful of roles the window itself uses are mirrored here - not the whole scheme - so there is
+    little to keep in step, and each is annotated with the Compose role it matches.
+-->
+<resources>
+    <!-- Matches BrandPalette.LightBackground. -->
+    <color name="window_background">#FFF4F1E9</color>
+    <!-- Matches BrandPalette.LightSurface, used for the app bar strip behind the status bar. -->
+    <color name="window_surface">#FFFBF9F4</color>
+    <!-- Matches BrandPalette.LightPrimary, for the splash screen's icon backdrop tint. -->
+    <color name="window_splash_background">#FFF4F1E9</color>
+</resources>

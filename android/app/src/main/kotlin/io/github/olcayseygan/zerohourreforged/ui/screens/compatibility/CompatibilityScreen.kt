@@ -18,86 +18,100 @@
 
 package io.github.olcayseygan.zerohourreforged.ui.screens.compatibility
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
 import io.github.olcayseygan.zerohourreforged.AndroidRequirements
 import io.github.olcayseygan.zerohourreforged.CompatibilityEvaluator
 import io.github.olcayseygan.zerohourreforged.DeviceCapabilities
 import io.github.olcayseygan.zerohourreforged.R
-import io.github.olcayseygan.zerohourreforged.ui.components.CheckRow
-import io.github.olcayseygan.zerohourreforged.ui.components.FactRow
-import io.github.olcayseygan.zerohourreforged.ui.components.NoteText
-import io.github.olcayseygan.zerohourreforged.ui.components.SectionHeader
-import io.github.olcayseygan.zerohourreforged.ui.components.VerdictBanner
+import io.github.olcayseygan.zerohourreforged.ui.components.ApplicationTopBar
+import io.github.olcayseygan.zerohourreforged.ui.components.CompatibilityResultCard
+import io.github.olcayseygan.zerohourreforged.ui.components.InformationRow
+import io.github.olcayseygan.zerohourreforged.ui.components.ResultRow
+import io.github.olcayseygan.zerohourreforged.ui.components.SectionContainer
 import io.github.olcayseygan.zerohourreforged.ui.theme.ZeroHourTheme
+import io.github.olcayseygan.zerohourreforged.ui.theme.spacing
 
 /**
- * The System Requirements & Device Compatibility screen as Compose.
+ * The System Requirements & Device Compatibility screen.
  *
  * <p>It renders the three pure classes it is given - [AndroidRequirements],
  * [DeviceCapabilities] and [CompatibilityEvaluator] - and evaluates nothing itself. The verdict and
  * every check come from [CompatibilityEvaluator.evaluate], so this screen and the documentation
  * cannot disagree.
+ *
+ * <p>Layout is the verdict card followed by two [SectionContainer]s: the application's requirements
+ * and what the platform reported. Each container is one tonal step above the screen background, so
+ * the grouping reads in both schemes without any shadow.
+ *
+ * @param onNavigateBack when non-null, the top bar shows a back arrow that calls this.
  */
 @Composable
 fun CompatibilityScreen(
     device: DeviceCapabilities,
     report: CompatibilityEvaluator.Report,
     modifier: Modifier = Modifier,
+    onNavigateBack: (() -> Unit)? = null,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 20.dp),
-    ) {
-        Text(
-            text = stringResource(R.string.compat_title),
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Spacer(Modifier.height(16.dp))
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        topBar = {
+            ApplicationTopBar(
+                title = stringResource(R.string.compat_title),
+                onNavigateBack = onNavigateBack,
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(
+                    horizontal = MaterialTheme.spacing.screenEdge,
+                    vertical = MaterialTheme.spacing.screenVertical,
+                ),
+            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.sectionGap),
+        ) {
+            CompatibilityResultCard(
+                tone = CompatibilityPresentation.resultTone(report.result),
+                headline = verdictText(report.result),
+                summary = stringResource(R.string.compat_result_summary),
+                rows = report.checks.map { check ->
+                    ResultRow(
+                        tone = CompatibilityPresentation.checkTone(check),
+                        title = check.name,
+                        detail = check.detail,
+                    )
+                },
+            )
 
-        SectionHeader(stringResource(R.string.compat_group_result))
-        Spacer(Modifier.height(8.dp))
-        VerdictBanner(
-            text = verdictText(report.result),
-            state = CompatibilityPresentation.resultState(report.result),
-        )
-        Spacer(Modifier.height(4.dp))
-        report.checks.forEach { check ->
-            CheckRow(
-                state = CompatibilityPresentation.checkState(check),
-                title = check.name,
-                detail = check.detail,
+            SectionContainer(title = stringResource(R.string.compat_group_app)) {
+                RequirementsGroup()
+            }
+
+            SectionContainer(title = stringResource(R.string.compat_group_device)) {
+                DeviceGroup(device)
+            }
+
+            Text(
+                text = stringResource(R.string.compat_performance_note),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-
-        Spacer(Modifier.height(20.dp))
-        SectionHeader(stringResource(R.string.compat_group_app))
-        Spacer(Modifier.height(8.dp))
-        RequirementsGroup()
-
-        Spacer(Modifier.height(20.dp))
-        SectionHeader(stringResource(R.string.compat_group_device))
-        Spacer(Modifier.height(8.dp))
-        DeviceGroup(device)
-
-        Spacer(Modifier.height(16.dp))
-        NoteText(stringResource(R.string.compat_performance_note))
-        Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -114,87 +128,146 @@ private fun verdictText(result: CompatibilityEvaluator.Result): String = stringR
 /** The application's fixed requirements, read from [AndroidRequirements] so they cannot drift. */
 @Composable
 private fun RequirementsGroup() {
-    Column {
-        FactRow("Android", "${AndroidRequirements.MIN_ANDROID_NAME} or newer.")
-        FactRow("CPU", "${AndroidRequirements.SUPPORTED_ABI} (64-bit ARM) only.")
-        FactRow(
-            "Graphics",
-            "${AndroidRequirements.REQUIRED_VULKAN_NAME} with " +
-                "${CompatibilityPresentation.join(AndroidRequirements.REQUIRED_EXTENSIONS)} and the " +
-                "features ${CompatibilityPresentation.join(AndroidRequirements.REQUIRED_FEATURES)}. " +
-                "No OpenGL ES fallback.",
+    Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
+        InformationRow(
+            label = stringResource(R.string.compat_label_android),
+            value = stringResource(R.string.compat_value_android, AndroidRequirements.MIN_ANDROID_NAME),
+            stacked = true,
         )
-        FactRow(
-            "Optional Vulkan features",
-            "Dropped if absent: " +
-                CompatibilityPresentation.join(AndroidRequirements.OPTIONAL_FEATURES) + ".",
+        InformationRow(
+            label = stringResource(R.string.compat_label_cpu),
+            value = stringResource(R.string.compat_value_cpu, AndroidRequirements.SUPPORTED_ABI),
+            stacked = true,
         )
-        FactRow("GPUs", AndroidRequirements.GPU_FAMILIES)
-        FactRow(
-            "RAM",
-            "${CompatibilityPresentation.gb(AndroidRequirements.MIN_RAM_BYTES)} GB recommended as a " +
-                "floor, ${CompatibilityPresentation.gb(AndroidRequirements.RECOMMENDED_RAM_BYTES)} GB " +
-                "recommended (provisional; no verified figure).",
+        InformationRow(
+            label = stringResource(R.string.compat_label_graphics),
+            value = stringResource(
+                R.string.compat_value_graphics,
+                AndroidRequirements.REQUIRED_VULKAN_NAME,
+                CompatibilityPresentation.join(AndroidRequirements.REQUIRED_EXTENSIONS),
+                CompatibilityPresentation.join(AndroidRequirements.REQUIRED_FEATURES),
+            ),
+            stacked = true,
         )
-        FactRow("Storage", AndroidRequirements.STORAGE_NOTE)
-        FactRow("Minimum processor", AndroidRequirements.MIN_SOC_PROVISIONAL)
-        FactRow("Recommended processor", AndroidRequirements.RECOMMENDED_SOC_PROVISIONAL)
+        InformationRow(
+            label = stringResource(R.string.compat_label_optional_vulkan),
+            value = stringResource(
+                R.string.compat_value_optional_vulkan,
+                CompatibilityPresentation.join(AndroidRequirements.OPTIONAL_FEATURES),
+            ),
+            stacked = true,
+        )
+        InformationRow(
+            label = stringResource(R.string.compat_label_gpus),
+            value = AndroidRequirements.GPU_FAMILIES,
+            stacked = true,
+        )
+        InformationRow(
+            label = stringResource(R.string.compat_label_ram),
+            value = stringResource(
+                R.string.compat_value_ram,
+                CompatibilityPresentation.gb(AndroidRequirements.MIN_RAM_BYTES),
+                CompatibilityPresentation.gb(AndroidRequirements.RECOMMENDED_RAM_BYTES),
+            ),
+            stacked = true,
+        )
+        InformationRow(
+            label = stringResource(R.string.compat_label_storage),
+            value = AndroidRequirements.STORAGE_NOTE,
+            stacked = true,
+        )
+        InformationRow(
+            label = stringResource(R.string.compat_label_min_processor),
+            value = AndroidRequirements.MIN_SOC_PROVISIONAL,
+            stacked = true,
+        )
+        InformationRow(
+            label = stringResource(R.string.compat_label_recommended_processor),
+            value = AndroidRequirements.RECOMMENDED_SOC_PROVISIONAL,
+            stacked = true,
+        )
     }
 }
 
 /** What the platform reported about this device, with unverified values shown as such. */
 @Composable
 private fun DeviceGroup(device: DeviceCapabilities) {
-    Column {
-        FactRow("Manufacturer", CompatibilityPresentation.orUnknown(device.manufacturer))
-        FactRow("Model", CompatibilityPresentation.orUnknown(device.model))
-        FactRow(
-            "Android version",
-            (if (device.androidRelease.isNullOrEmpty()) "unknown" else device.androidRelease) +
-                (if (device.sdkInt > 0) " (API ${device.sdkInt})" else ""),
+    Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
+        InformationRow(
+            label = stringResource(R.string.compat_label_manufacturer),
+            value = CompatibilityPresentation.orUnknown(device.manufacturer),
         )
-        FactRow(
-            "CPU ABIs",
-            device.supportedAbis?.takeIf { it.isNotEmpty() }?.let {
+        InformationRow(
+            label = stringResource(R.string.compat_label_model),
+            value = CompatibilityPresentation.orUnknown(device.model),
+        )
+        InformationRow(
+            label = stringResource(R.string.compat_label_android_version),
+            value = androidVersion(device),
+        )
+        InformationRow(
+            label = stringResource(R.string.compat_label_abis),
+            value = device.supportedAbis?.takeIf { it.isNotEmpty() }?.let {
                 CompatibilityPresentation.join(it)
             } ?: CompatibilityPresentation.orUnknown(null),
         )
-        FactRow(
-            "Total RAM",
-            if (device.totalRamBytes > 0) {
-                "${CompatibilityPresentation.gb(device.totalRamBytes)} GB"
+        InformationRow(
+            label = stringResource(R.string.compat_label_total_ram),
+            value = if (device.totalRamBytes > 0) {
+                stringResource(R.string.compat_value_gb, CompatibilityPresentation.gb(device.totalRamBytes))
             } else {
-                "not reported"
+                stringResource(R.string.compat_value_not_reported)
             },
         )
-        FactRow("Vulkan", vulkanSummary(device))
-        NoteText(
-            "Vulkan physical-device name, vendor/device IDs and per-extension/per-feature support: " +
-                "unable to verify - the Android platform API does not expose them; the engine checks " +
-                "the mandatory features when it creates the device.",
+        InformationRow(
+            label = stringResource(R.string.compat_label_vulkan),
+            value = vulkanSummary(device),
+            stacked = true,
         )
+        Text(
+            text = stringResource(R.string.compat_vulkan_unverified_note),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun androidVersion(device: DeviceCapabilities): String {
+    val release = if (device.androidRelease.isNullOrEmpty()) {
+        stringResource(R.string.compat_value_unknown)
+    } else {
+        device.androidRelease
+    }
+    return if (device.sdkInt > 0) {
+        stringResource(R.string.compat_value_android_version, release, device.sdkInt)
+    } else {
+        release
     }
 }
 
 @Composable
 private fun vulkanSummary(device: DeviceCapabilities): String = when (device.vulkanSupported) {
     DeviceCapabilities.FieldState.PRESENT -> buildString {
-        append("Vulkan hardware reported.")
+        append(stringResource(R.string.compat_vulkan_present))
+        append(' ')
         if (device.vulkanHardwareVersion > 0) {
-            append(" Advertised API version: ")
-            append(AndroidRequirements.formatVulkanVersion(device.vulkanHardwareVersion))
-            append('.')
+            append(
+                stringResource(
+                    R.string.compat_vulkan_api_version,
+                    AndroidRequirements.formatVulkanVersion(device.vulkanHardwareVersion),
+                ),
+            )
         } else {
-            append(" Advertised API version: not exposed by the platform API.")
+            append(stringResource(R.string.compat_vulkan_api_version_unknown))
         }
         if (device.vulkanHardwareLevel >= 0) {
-            append(" Hardware level: ")
-            append(device.vulkanHardwareLevel)
-            append('.')
+            append(' ')
+            append(stringResource(R.string.compat_vulkan_hardware_level, device.vulkanHardwareLevel))
         }
     }
-    DeviceCapabilities.FieldState.ABSENT -> "No Vulkan hardware reported."
-    DeviceCapabilities.FieldState.UNKNOWN -> "Not reported."
+    DeviceCapabilities.FieldState.ABSENT -> stringResource(R.string.compat_vulkan_absent)
+    DeviceCapabilities.FieldState.UNKNOWN -> stringResource(R.string.compat_value_not_reported)
 }
 
 @Preview(showBackground = true)

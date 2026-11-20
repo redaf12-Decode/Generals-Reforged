@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The dark window theme. The colours come from values-night/colors.xml, so this only has to
+    re-parent to the dark platform theme and flip the bar icons to light.
+
+    Parented from the same Theme.Material family rather than DayNight so the theme does not depend on
+    AppCompat, which this application does not use.
+-->
+<resources>
+    <style name="Theme.ZeroHour.Base" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@color/window_surface</item>
+        <item name="android:navigationBarColor">@color/window_background</item>
+        <!-- Light icons on the dark window. -->
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+    </style>
+</resources>

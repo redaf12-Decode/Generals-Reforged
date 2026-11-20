@@ -20,135 +20,64 @@ package io.github.olcayseygan.zerohourreforged.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.dp
-import io.github.olcayseygan.zerohourreforged.ui.theme.LocalVerdictColors
+import io.github.olcayseygan.zerohourreforged.ui.theme.spacing
 
 /**
- * How a single requirement stands: the evaluator's satisfied/failed/unverified, plus [UNKNOWN] for
- * a device field the platform did not report.
- */
-enum class CheckState { SATISFIED, FAILED, UNVERIFIED, UNKNOWN }
-
-/**
- * A heading for one group on the compatibility screen, so the sections are separated the same way
- * throughout.
- */
-@Composable
-fun SectionHeader(text: String, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
-        )
-    }
-}
-
-/**
- * One requirement or device fact: a status mark, the name, and the detail beneath it.
+ * A section of a screen: a heading and the content it introduces, grouped so every screen is
+ * divided the same way.
  *
- * <p>The mark is textual (✓ / ✗ / ?) rather than a coloured dot alone, so the state survives a
- * monochrome display and a screen reader; [state] only colours it. The colour is never the sole
- * carrier of meaning.
+ * <p>The container is a filled surface at `surfaceContainerLow` with a [MaterialTheme.shapes.large]
+ * corner, so it separates from the background by tone rather than by a shadow - the only separation
+ * that survives a dark scheme, where shadows are invisible. The palette defines the whole surface
+ * ramp for the same reason: a card nested inside a section steps again, by tone.
+ *
+ * <p>The heading is inside the container rather than above it, so a long section that scrolls is
+ * still identifiable when its heading scrolls off.
  */
 @Composable
-fun CheckRow(
-    state: CheckState,
+internal fun SectionContainer(
     title: String,
-    detail: String,
     modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
-    val verdicts = LocalVerdictColors.current
-    val (mark, color, label) = when (state) {
-        CheckState.SATISFIED -> Triple("✓", verdicts.satisfied, "satisfied")
-        CheckState.FAILED -> Triple("✗", verdicts.failed, "failed")
-        CheckState.UNVERIFIED -> Triple("?", verdicts.unverified, "could not be verified")
-        CheckState.UNKNOWN -> Triple("?", verdicts.unknown, "not reported")
-    }
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .semantics { contentDescription = "$title: $label" },
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.Top,
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        Text(text = mark, color = color, style = MaterialTheme.typography.bodyLarge)
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = MaterialTheme.typography.bodyLarge)
-            if (detail.isNotEmpty()) {
-                Text(
-                    text = detail,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        Column(
+            modifier = Modifier.padding(MaterialTheme.spacing.large),
+            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
+        ) {
+            SectionHeading(title)
+            content()
         }
     }
 }
 
 /**
- * A plain labelled fact, for the device group: these are reported values, not pass/fail checks, so
- * they carry no status mark.
+ * A section heading: the title of the group below it.
+ *
+ * <p>Gold (the primary colour) and `titleMedium`, with a heading semantic so a screen reader can
+ * jump between sections. Not a larger type size than the body: at 200% font scale a heading two
+ * steps larger than the body overflows a narrow phone, and weight plus colour already separate it.
  */
 @Composable
-fun FactRow(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(text = value, style = MaterialTheme.typography.bodyLarge)
-    }
-}
-
-/** A short inline note, for statements that apply to a whole group rather than one check. */
-@Composable
-fun NoteText(text: String, modifier: Modifier = Modifier) {
+internal fun SectionHeading(title: String, modifier: Modifier = Modifier) {
     Text(
-        text = text,
-        modifier = modifier.fillMaxWidth().padding(top = 4.dp),
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        text = title,
+        modifier = modifier.semantics { heading() },
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.primary,
     )
-}
-
-/**
- * The verdict banner: the one element on the compatibility screen that states the overall result,
- * so it is given the result's colour as a container rather than as text.
- */
-@Composable
-fun VerdictBanner(text: String, state: CheckState, modifier: Modifier = Modifier) {
-    val verdicts = LocalVerdictColors.current
-    val color: Color = when (state) {
-        CheckState.SATISFIED -> verdicts.satisfied
-        CheckState.FAILED -> verdicts.failed
-        CheckState.UNVERIFIED -> verdicts.unverified
-        CheckState.UNKNOWN -> verdicts.unknown
-    }
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = color.copy(alpha = 0.16f),
-        shape = MaterialTheme.shapes.medium,
-    ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-    }
 }

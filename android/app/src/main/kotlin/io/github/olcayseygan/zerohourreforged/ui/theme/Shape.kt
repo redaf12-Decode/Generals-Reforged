@@ -22,12 +22,28 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Shapes
 import androidx.compose.ui.unit.dp
 
-// Material 3's shape scale, slightly tightened: the setup and compatibility screens are dense
-// lists of text, so cards and buttons use a modest radius rather than the pill defaults.
+/**
+ * The Material 3 shape scale, tightened for a dense, information-heavy layout.
+ *
+ * <p>The library defaults (16dp on large, 28dp on extra-large) read as playful at the size of a
+ * full-width card on a phone. These radii are smaller and increase monotonically, so a container
+ * always nests inside a larger one without its corners poking out:
+ *
+ * <ul>
+ *   <li>extraSmall - a 6dp chip radius;</li>
+ *   <li>small - 8dp, for the inline pieces inside a card;</li>
+ *   <li>medium - 12dp, the card and dialog default;</li>
+ *   <li>large - 16dp, the section container;</li>
+ *   <li>extraLarge - 24dp, reserved for full-bleed sheets.</li>
+ * </ul>
+ *
+ * <p>Buttons take [Shapes.medium] from the theme rather than the M3 pill, which keeps an action the
+ * same shape as the card it sits under.
+ */
 internal val ZeroHourShapes = Shapes(
-    extraSmall = RoundedCornerShape(4.dp),
-    small = RoundedCornerShape(6.dp),
-    medium = RoundedCornerShape(10.dp),
-    large = RoundedCornerShape(14.dp),
-    extraLarge = RoundedCornerShape(20.dp),
+    extraSmall = RoundedCornerShape(6.dp),
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(16.dp),
+    extraLarge = RoundedCornerShape(24.dp),
 )

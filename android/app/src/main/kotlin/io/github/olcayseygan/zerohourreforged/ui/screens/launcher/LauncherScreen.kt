@@ -20,38 +20,54 @@ package io.github.olcayseygan.zerohourreforged.ui.screens.launcher
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
 import io.github.olcayseygan.zerohourreforged.R
+import io.github.olcayseygan.zerohourreforged.ui.components.ApplicationTopBar
+import io.github.olcayseygan.zerohourreforged.ui.components.DeterminateProgress
+import io.github.olcayseygan.zerohourreforged.ui.components.ErrorDialog
+import io.github.olcayseygan.zerohourreforged.ui.components.IndeterminateProgress
+import io.github.olcayseygan.zerohourreforged.ui.components.PrimaryActionButton
+import io.github.olcayseygan.zerohourreforged.ui.components.SecondaryActionButton
+import io.github.olcayseygan.zerohourreforged.ui.components.SectionContainer
+import io.github.olcayseygan.zerohourreforged.ui.components.StatusCard
+import io.github.olcayseygan.zerohourreforged.ui.theme.AppearanceMode
 import io.github.olcayseygan.zerohourreforged.ui.theme.ZeroHourTheme
+import io.github.olcayseygan.zerohourreforged.ui.theme.spacing
 
 /**
- * The launcher screen as Compose: pick the folder Zero Hour is installed in, stage it, start the
- * game.
+ * The launcher: pick the folder Zero Hour is installed in, stage it, start the game.
  *
  * <p>Stateless by design. [state] says what to draw and the callbacks say what a tap means; the
- * Activity owns the picker, the staging thread, the validator and the game launch. This composable
- * therefore cannot change any of that behaviour - it can only ask for it.
+ * Activity owns the picker, the staging thread, the validator and the game launch, so this
+ * composable cannot change any of that behaviour - it can only ask for it.
+ *
+ * <p>Order is deliberate: the status card first, because it is the answer to the question the
+ * screen poses; then the single primary action, then the supporting ones. "Choose game folder"
+ * is the primary action even after a folder is remembered, because re-choosing is how a player
+ * recovers from a folder that went away.
+ *
+ * @param state everything the screen draws; the Activity derives it.
+ * @param onSelectFolder opens the system folder picker.
+ * @param onLaunchGame starts the engine with the folder already validated.
+ * @param onClearFolder forgets the remembered folder.
+ * @param onShowRequirements opens the compatibility screen.
+ * @param appearance the scheme to draw, and the current value of the appearance control.
+ * @param dynamicColor whether wallpaper colours are in use, and the current value of that switch.
+ * @param onAppearanceChange called with the new pair when the player changes either control. When
+ *   null the appearance section is not shown at all, which is what a host that does not persist a
+ *   preference passes.
+ * @param error a failure to report over the screen, or null for none.
+ * @param onDismissError acknowledges [error] and clears it.
  */
 @Composable
 fun LauncherScreen(
@@ -61,105 +77,87 @@ fun LauncherScreen(
     onClearFolder: () -> Unit,
     onShowRequirements: () -> Unit,
     modifier: Modifier = Modifier,
+    appearance: AppearanceMode = AppearanceMode.DEFAULT,
+    dynamicColor: Boolean = false,
+    onAppearanceChange: ((AppearanceMode, Boolean) -> Unit)? = null,
+    error: String? = null,
+    onDismissError: () -> Unit = {},
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 24.dp),
-    ) {
-        Text(
-            text = stringResource(R.string.setup_title),
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.semantics { heading() },
+    if (error != null) {
+        ErrorDialog(
+            title = stringResource(R.string.setup_problem_title),
+            message = error,
+            onDismiss = onDismissError,
         )
-        Spacer(Modifier.height(12.dp))
-        Text(
-            text = stringResource(R.string.setup_explanation),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        Spacer(Modifier.height(20.dp))
-        StatusCard(state)
-
-        Spacer(Modifier.height(20.dp))
-        Button(
-            onClick = onSelectFolder,
-            enabled = !state.staging,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.setup_select_folder))
-        }
-
-        Spacer(Modifier.height(10.dp))
-        Button(
-            onClick = onLaunchGame,
-            enabled = state.canLaunch && !state.staging,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.setup_launch))
-        }
-
-        Spacer(Modifier.height(10.dp))
-        OutlinedButton(
-            onClick = onClearFolder,
-            enabled = state.canClear && !state.staging,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.setup_clear_folder))
-        }
-
-        Spacer(Modifier.height(4.dp))
-        // Always available: the requirements and this device's compatibility, independent of
-        // whether a game folder has been chosen.
-        TextButton(
-            onClick = onShowRequirements,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.compat_button))
-        }
     }
-}
-
-@Composable
-private fun StatusCard(state: LauncherUiState) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
-    ) {
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        topBar = { ApplicationTopBar(title = stringResource(R.string.setup_title)) },
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { innerPadding ->
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(
+                    horizontal = MaterialTheme.spacing.screenEdge,
+                    vertical = MaterialTheme.spacing.screenVertical,
+                ),
+            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.sectionGap),
         ) {
             Text(
-                text = state.status,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                text = stringResource(R.string.setup_explanation),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (state.detail.isNotEmpty()) {
-                Text(
-                    text = state.detail,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+
+            StatusCard(
+                tone = state.tone,
+                title = state.status,
+                detail = state.detail.takeIf { it.isNotEmpty() },
+            )
+
+            // No label: the status card directly above already says what is being copied, and a bar
+            // that repeats that sentence reads as a rendering bug.
+            if (state.staging) {
+                if (state.hasProgressTotal) {
+                    DeterminateProgress(progress = state.progressFraction)
+                } else {
+                    IndeterminateProgress()
+                }
+            }
+
+            SectionContainer(title = stringResource(R.string.setup_group_actions)) {
+                PrimaryActionButton(
+                    text = stringResource(R.string.setup_select_folder),
+                    onClick = onSelectFolder,
+                    enabled = !state.staging,
+                )
+                PrimaryActionButton(
+                    text = stringResource(R.string.setup_launch),
+                    onClick = onLaunchGame,
+                    enabled = state.canLaunch,
+                    busy = state.staging,
+                )
+                SecondaryActionButton(
+                    text = stringResource(R.string.setup_clear_folder),
+                    onClick = onClearFolder,
+                    enabled = state.canClear && !state.staging,
+                )
+                SecondaryActionButton(
+                    text = stringResource(R.string.compat_button),
+                    onClick = onShowRequirements,
                 )
             }
-            if (state.staging) {
-                Spacer(Modifier.height(4.dp))
-                if (state.progressTotal > 0) {
-                    LinearProgressIndicator(
-                        progress = {
-                            (state.progressCopied.toDouble() / state.progressTotal.toDouble())
-                                .toFloat()
-                                .coerceIn(0f, 1f)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
+
+            if (onAppearanceChange != null) {
+                SectionContainer(title = stringResource(R.string.appearance_title)) {
+                    AppearanceSection(
+                        appearance = appearance,
+                        dynamicColor = dynamicColor,
+                        onAppearanceChange = onAppearanceChange,
                     )
-                } else {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
             }
         }
@@ -168,11 +166,11 @@ private fun StatusCard(state: LauncherUiState) {
 
 @Preview(showBackground = true)
 @Composable
-private fun LauncherScreenPreview() {
+private fun LauncherReadyPreview() {
     ZeroHourTheme {
         LauncherScreen(
             state = LauncherUiState(
-                status = "Ready: \"Zero Hour\".",
+                status = "Ready: Zero Hour.",
                 detail = "The game reads its data from /storage/emulated/0/Android/data/.../files/game",
                 canLaunch = true,
                 canClear = true,
@@ -181,6 +179,28 @@ private fun LauncherScreenPreview() {
             onLaunchGame = {},
             onClearFolder = {},
             onShowRequirements = {},
+            onAppearanceChange = { _, _ -> },
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun LauncherStagingPreview() {
+    ZeroHourTheme(appearance = AppearanceMode.DARK) {
+        LauncherScreen(
+            state = LauncherUiState(
+                status = "Copying the game data...",
+                detail = "",
+                staging = true,
+                progressCopied = 3_400_000_000L,
+                progressTotal = 8_100_000_000L,
+            ),
+            onSelectFolder = {},
+            onLaunchGame = {},
+            onClearFolder = {},
+            onShowRequirements = {},
+            onAppearanceChange = { _, _ -> },
         )
     }
 }

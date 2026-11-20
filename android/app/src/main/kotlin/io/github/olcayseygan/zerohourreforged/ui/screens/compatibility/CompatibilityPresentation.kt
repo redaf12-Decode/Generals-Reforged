@@ -19,7 +19,7 @@
 package io.github.olcayseygan.zerohourreforged.ui.screens.compatibility
 
 import io.github.olcayseygan.zerohourreforged.CompatibilityEvaluator
-import io.github.olcayseygan.zerohourreforged.ui.components.CheckState
+import io.github.olcayseygan.zerohourreforged.ui.components.StatusTone
 import java.util.Locale
 
 /**
@@ -28,24 +28,25 @@ import java.util.Locale
  * CompatibilityEvaluator and DeviceCapabilities already use.
  *
  * <p>Nothing here evaluates compatibility: [CompatibilityEvaluator.evaluate] remains the only
- * source of the verdict. This object only decides how a verdict or a device field is displayed.
+ * source of the verdict. This object only decides how a verdict or a device field is displayed, and
+ * which shared [StatusTone] carries it.
  */
 internal object CompatibilityPresentation {
 
-    /** The verdict as a state, so the banner and the marks agree on the colour. */
-    fun resultState(result: CompatibilityEvaluator.Result): CheckState = when (result) {
-        CompatibilityEvaluator.Result.COMPATIBLE -> CheckState.SATISFIED
-        CompatibilityEvaluator.Result.UNSUPPORTED -> CheckState.FAILED
-        CompatibilityEvaluator.Result.PARTIALLY_COMPATIBLE -> CheckState.UNVERIFIED
-        CompatibilityEvaluator.Result.UNABLE_TO_VERIFY -> CheckState.UNKNOWN
+    /** The verdict as a tone, so the banner and the individual marks agree on the state. */
+    fun resultTone(result: CompatibilityEvaluator.Result): StatusTone = when (result) {
+        CompatibilityEvaluator.Result.COMPATIBLE -> StatusTone.SUCCESS
+        CompatibilityEvaluator.Result.UNSUPPORTED -> StatusTone.DANGER
+        CompatibilityEvaluator.Result.PARTIALLY_COMPATIBLE -> StatusTone.WARNING
+        CompatibilityEvaluator.Result.UNABLE_TO_VERIFY -> StatusTone.NEUTRAL
     }
 
-    /** A single check's mark: failed wins over unverified, so a hard failure is never hidden. */
-    fun checkState(check: CompatibilityEvaluator.Check): CheckState = when {
-        check.failed -> CheckState.FAILED
-        check.unverified -> CheckState.UNVERIFIED
-        check.satisfied -> CheckState.SATISFIED
-        else -> CheckState.UNKNOWN
+    /** A single check's tone: failed wins over unverified, so a hard failure is never hidden. */
+    fun checkTone(check: CompatibilityEvaluator.Check): StatusTone = when {
+        check.failed -> StatusTone.DANGER
+        check.unverified -> StatusTone.WARNING
+        check.satisfied -> StatusTone.SUCCESS
+        else -> StatusTone.NEUTRAL
     }
 
     /** "unknown" rather than an empty value, so a missing field reads as missing. */

@@ -18,6 +18,8 @@
 
 package io.github.olcayseygan.zerohourreforged.ui.screens.launcher
 
+import io.github.olcayseygan.zerohourreforged.ui.components.StatusTone
+
 /**
  * Everything the launcher screen draws, as plain values.
  *
@@ -39,4 +41,32 @@ data class LauncherUiState(
     val canLaunch: Boolean = false,
     /** There is a remembered folder, so it can be forgotten. */
     val canClear: Boolean = false,
-)
+) {
+    /**
+     * The state of the game folder, as the shared status vocabulary.
+     *
+     * <p>Derived from the flags rather than passed in, so it cannot disagree with the buttons: if
+     * the screen offers "Start game", the card is a success. The order matters - staging outranks
+     * everything (nothing else is true while it runs), and a remembered-but-unusable folder is a
+     * warning rather than a failure, because the player can still fix it by choosing again.
+     */
+    internal val tone: StatusTone
+        get() = when {
+            staging -> StatusTone.INFO
+            canLaunch -> StatusTone.SUCCESS
+            canClear -> StatusTone.WARNING
+            else -> StatusTone.NEUTRAL
+        }
+
+    /** Whether the copy reported a total, so progress can be shown as a fraction. */
+    internal val hasProgressTotal: Boolean
+        get() = progressTotal > 0
+
+    /** Copied fraction, coerced, for the determinate bar. Zero when there is no total. */
+    internal val progressFraction: Float
+        get() = if (hasProgressTotal) {
+            (progressCopied.toDouble() / progressTotal.toDouble()).toFloat().coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+}

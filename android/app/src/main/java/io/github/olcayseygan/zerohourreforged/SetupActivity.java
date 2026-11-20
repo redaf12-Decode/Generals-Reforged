@@ -18,7 +18,6 @@
 
 package io.github.olcayseygan.zerohourreforged;
 
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -292,11 +291,15 @@ public class SetupActivity extends ComponentActivity implements LauncherHost.Cal
         refreshStatus();
     }
 
+    /**
+     * Reports a failure the player has to acknowledge.
+     *
+     * <p>Drawn by the design system's own dialog through the host, so it matches the screen behind it
+     * and is owned by the Compose tree. Every caller is already on the UI thread - the picker result
+     * and the staging thread's completion both arrive there - which is where Compose state may be
+     * written.
+     */
     private void showProblem(String message) {
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.setup_problem_title)
-                .setMessage(message)
-                .setPositiveButton(android.R.string.ok, null)
-                .show();
+        host.showError(message);
     }
 }

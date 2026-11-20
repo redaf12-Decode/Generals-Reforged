@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The platform themes. Two jobs:
+
+      1. AppTheme - the game surface. SDLActivity draws its own surface and the game draws through
+         SDL3's GPU API, so there are no widgets to theme; it stays a bare fullscreen theme.
+
+      2. Theme.ZeroHour - the window behind the Compose launcher and compatibility screens. Compose
+         paints the content, but the platform still owns the window before Compose's first frame and
+         the system bars after it, and without a theme matching the palette that window would be the
+         platform's default (near-white in light mode, near-black in dark) and flash the wrong
+         colour. This is the Android 9-11 fallback the Compose theme cannot provide: those releases
+         have no Material You and no Compose-managed window, so the window colours come from here.
+
+    The Base style holds the colours so values-night can swap them without repeating the parent, and
+    values-v31 can add the splash attributes on top. Nothing here draws a widget: every surface is
+    Compose.
+-->
+<resources>
+    <style name="AppTheme" parent="android:Theme.NoTitleBar.Fullscreen" />
+
+    <style name="Theme.ZeroHour.Base" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- The colour of the window before Compose draws. Matches the light scheme's background,
+             so there is no flash between the window and the first frame. -->
+        <item name="android:windowBackground">@color/window_background</item>
+        <!-- The app bar is @color/window_surface; tint the status bar with it so the strip behind
+             the clock matches the bar below it. -->
+        <item name="android:statusBarColor">@color/window_surface</item>
+        <item name="android:navigationBarColor">@color/window_background</item>
+        <!-- Dark icons on the light window. windowLightNavigationBar is API 27+; minSdk is 28. -->
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <!-- No title, no action bar: the app bar is Compose's. -->
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+    </style>
+
+    <style name="Theme.ZeroHour" parent="Theme.ZeroHour.Base" />
+</resources>

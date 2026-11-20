@@ -30,11 +30,69 @@
 
     <string name="compat_group_app">Application requirements</string>
     <string name="compat_group_device">Your device</string>
-    <string name="compat_group_result">Compatibility</string>
 
     <string name="compat_result_compatible">Compatible: all mandatory requirements were verified.</string>
     <string name="compat_result_partial">Partially compatible: no mandatory requirement is known to be missing, but some could not be verified.</string>
     <string name="compat_result_unsupported">Unsupported: a mandatory requirement is missing.</string>
     <string name="compat_result_unable">Unable to verify: the device did not report enough information.</string>
     <string name="compat_performance_note">Technical compatibility is not a promise of performance. Meeting the requirements means the renderer can start; frame rate depends on the device and the map.</string>
+
+    <!-- Shared design-system strings: the status vocabulary and the generic action labels. These
+         are read by components, so they must stay independent of any one screen's wording. -->
+    <string name="status_success">Success</string>
+    <string name="status_warning">Warning</string>
+    <string name="status_danger">Error</string>
+    <string name="status_info">Information</string>
+    <string name="status_neutral">Not reported</string>
+
+    <string name="action_back">Back</string>
+    <string name="action_dismiss">Dismiss</string>
+    <string name="action_in_progress">In progress</string>
+
+    <!-- The launcher's action group heading. -->
+    <string name="setup_group_actions">Game folder</string>
+
+    <!-- The appearance preference: light, dark, or follow the device. -->
+    <string name="appearance_title">Appearance</string>
+    <string name="appearance_system">Follow system</string>
+    <string name="appearance_light">Light</string>
+    <string name="appearance_dark">Dark</string>
+    <string name="appearance_dynamic_color">Use wallpaper colours</string>
+    <string name="appearance_dynamic_color_unavailable">Wallpaper colours need Android 12 or newer.</string>
+
+    <!-- The compatibility screen's field labels and formatted values, so the screen itself holds no
+         user-visible English. The technical values come from AndroidRequirements. -->
+    <string name="compat_result_summary">Every mandatory requirement is listed below with its result.</string>
+    <string name="compat_label_android">Android</string>
+    <string name="compat_value_android">%1$s or newer.</string>
+    <string name="compat_label_cpu">CPU</string>
+    <string name="compat_value_cpu">%1$s (64-bit ARM) only.</string>
+    <string name="compat_label_graphics">Graphics</string>
+    <string name="compat_value_graphics">%1$s with %2$s and the features %3$s. No OpenGL ES fallback.</string>
+    <string name="compat_label_optional_vulkan">Optional Vulkan features</string>
+    <string name="compat_value_optional_vulkan">Dropped if absent: %1$s.</string>
+    <string name="compat_label_gpus">GPUs</string>
+    <string name="compat_label_ram">RAM</string>
+    <string name="compat_value_ram">%1$s GB minimum, %2$s GB recommended (provisional; no verified figure).</string>
+    <string name="compat_label_storage">Storage</string>
+    <string name="compat_label_min_processor">Minimum processor</string>
+    <string name="compat_label_recommended_processor">Recommended processor</string>
+
+    <string name="compat_label_manufacturer">Manufacturer</string>
+    <string name="compat_label_model">Model</string>
+    <string name="compat_label_android_version">Android version</string>
+    <string name="compat_label_abis">CPU ABIs</string>
+    <string name="compat_label_total_ram">Total RAM</string>
+    <string name="compat_value_gb">%1$s GB</string>
+    <string name="compat_value_android_version">%1$s (API %2$d)</string>
+    <string name="compat_value_unknown">unknown</string>
+    <string name="compat_value_not_reported">not reported</string>
+
+    <string name="compat_label_vulkan">Vulkan</string>
+    <string name="compat_vulkan_present">Vulkan hardware reported.</string>
+    <string name="compat_vulkan_api_version">Advertised API version: %1$s.</string>
+    <string name="compat_vulkan_api_version_unknown">Advertised API version: not exposed by the platform API.</string>
+    <string name="compat_vulkan_hardware_level">Hardware level: %1$d.</string>
+    <string name="compat_vulkan_absent">No Vulkan hardware reported.</string>
+    <string name="compat_vulkan_unverified_note">Vulkan physical-device name, vendor/device IDs and per-extension/per-feature support: unable to verify - the Android platform API does not expose them; the engine checks the mandatory features when it creates the device.</string>
 </resources>

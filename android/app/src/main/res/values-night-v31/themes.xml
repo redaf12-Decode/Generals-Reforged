@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The dark Android 12+ splash.
+
+    A separate directory from values-v31 because night mode outranks platform version in Android's
+    resource-qualifier precedence: on a dark-mode API 31+ device values-night would win over
+    values-v31, and the splash attributes would be missing. This variant carries both.
+-->
+<resources>
+    <style name="Theme.ZeroHour" parent="Theme.ZeroHour.Base">
+        <item name="android:windowSplashScreenBackground">@color/window_splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    </style>
+</resources>

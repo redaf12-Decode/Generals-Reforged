@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The dark counterparts of the window colours. Android 9-11 (API 28-30) and the platform's
+    pre-Compose window use these through the -night qualifier; Compose reads its own scheme.
+
+    The values are BrandPalette's dark roles: the platform cannot read a Kotlin constant, so the
+    window background and bar colours are mirrored here. Only the three roles the window uses are
+    duplicated - each annotated with the Compose role it matches - so there is little to keep in
+    step.
+-->
+<resources>
+    <!-- Matches BrandPalette.DarkBackground. -->
+    <color name="window_background">#FF101215</color>
+    <!-- Matches BrandPalette.DarkSurface, used for the app bar strip behind the status bar. -->
+    <color name="window_surface">#FF16181C</color>
+    <!-- Matches BrandPalette.DarkBackground, the splash screen's backdrop. -->
+    <color name="window_splash_background">#FF101215</color>
+</resources>
