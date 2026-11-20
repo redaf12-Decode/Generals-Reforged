@@ -66,9 +66,11 @@ repository.
 
 ## 4. SDL3 Activity integration
 
-> **Superseded (Phase 1, 2026-11-20).** SDL3 is no longer linked statically: the Android build now
-> produces a standalone `libSDL3.so` and the override returns `{"SDL3", "main"}`. See
-> [`../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md`](../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md).
+> **Updated (Phase 1, 2026-11-20; Phase 2, 2026-11-20).** SDL3 is no longer linked statically: the
+> Android build produces a standalone `libSDL3.so` and the override returns `{"SDL3", "main"}`. See
+> [`../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md`](../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md)
+> and, for the packaging and verification of the pair,
+> [`../implementation/ANDROID_SDL3_APPLICATION_PACKAGING.md`](../implementation/ANDROID_SDL3_APPLICATION_PACKAGING.md).
 
 `ZeroHourActivity` extends `org.libsdl.app.SDLActivity` (staged from the vendored SDL3 3.4.16 tree)
 and overrides exactly one method.
@@ -78,12 +80,13 @@ The engine is built as `libmain.so` (`add_library(generals SHARED ...)` with `OU
 `SDLActivity`'s defaults already resolve to `libmain.so` (`getMainSharedObject`) and `SDL_main`
 (`getMainFunction`), so the entry point is not overridden and no second native entry point exists.
 
-The one override is `getLibraries()`. SDL3's default returns `{"SDL3", "main"}`, which would ask the
-loader for a `libSDL3.so` the APK does not carry — SDL3 is linked **statically** into `libmain.so`
-(the build forces `SDL_STATIC` on and `SDL_SHARED` off). `libmain.so` therefore already contains SDL3
-and exports its `JNI_OnLoad`, which registers `SDLActivity`'s JNI bindings when the library loads
-(SDL3's CMake keeps `JNI_OnLoad` alive for a static build with `-Wl,-u,JNI_OnLoad`). The override
-returns `{"main"}` only.
+The one override is `getLibraries()`. SDL3's own default is `{"SDL3", ..., "main"}` as well, but
+this app states it rather than inheriting it: `libSDL3.so` must be loaded before `libmain.so`, because
+SDL3's `JNI_OnLoad` - which registers `SDLActivity`'s native methods - lives in `libSDL3.so`, and the
+engine imports every `SDL_*` it calls from it. `libmain.so`'s own `DT_NEEDED` names `libSDL3.so`, so
+the loader would resolve it even if the order were reversed, but the JNI registration has to happen
+first. The override returns `{"SDL3", "main"}`, and the last entry is what `getMainSharedObject()`
+turns into `libmain.so`.
 
 Nothing else is overridden: lifecycle (`onPause`/`onResume`/`onDestroy`), the surface, input dispatch
 and the start-up sequence are inherited unchanged. No custom lifecycle logic was added, so nothing
@@ -95,17 +98,23 @@ The packaging script stages into `android/app/src/main/jniLibs/arm64-v8a/`:
 
 - `libmain.so`, copied from the native build tree (default `build-android-arm64/`, overridable with
   `--build-dir`); a missing library is a failure that names it;
+- `libSDL3.so`, from the same build tree - SDL3 is built shared on Android (`SDL_SHARED ON`,
+  `SDL_STATIC OFF`), so the engine's link produces it beside `libmain.so`;
 - `libc++_shared.so`, from the NDK sysroot of the same NDK the engine was built with
   (`ANDROID_STL=c++_shared`), located under
   `toolchains/llvm/prebuilt/<host>/sysroot/usr/lib/aarch64-linux-android/`.
 
-The script does not build or replace `libmain.so`; it copies the artifact the native build already
-produced.
+The staging directory is wiped and re-copied on every run, the staged set is audited with
+`scripts/build/android/verify-android-native-libs.sh` before Gradle runs, and the APK's own libraries
+are audited again afterwards. The script does not build or replace `libmain.so` or `libSDL3.so`; it
+copies the artifacts the native build already produced.
 
 SDL3's Java glue is staged into `android/app/src/main/java-sdl/org/libsdl/app/` from
 `GeneralsMD/Code/Libraries/Source/SDL3/android-project/app/src/main/java/org/libsdl/app/`, so the glue
 always matches the SDL3 the engine linked. The script fails if that tree is absent (it is fetched by
-`Tools/vendor.sh`, not committed).
+`Tools/vendor.sh`, not committed), compares the staged copy with it byte for byte, and checks that
+every native method the glue declares is registered in `libSDL3.so` - the runtime half of the same
+contract.
 
 ## 6. Manifest and resources
 

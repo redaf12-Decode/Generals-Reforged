@@ -77,6 +77,20 @@ workflow or dependency file was touched. Only this document was written.**
 > reports them as unverified rather than inventing them; the mandatory Vulkan *features* are checked
 > only by the engine when it creates the device. No file under `GeneralsMD/Code/` was changed.
 
+> **Phase 2 of the SDL3 application work is now implemented** on branch
+> `agent/android-sdl3-android-completion`: SDL3's Java glue is integrated from the vendored 3.4.16
+> tree (staged, compared byte for byte with the source, and checked against the JNI methods
+> `libSDL3.so` actually registers), the load order (`libSDL3.so` before `libmain.so`) is stated in
+> `ZeroHourActivity` and asserted, and the three libraries the APK carries are staged into
+> `android/app/src/main/jniLibs/arm64-v8a/` by a script that wipes the directory, verifies the ELF
+> objects (`scripts/build/android/verify-android-native-libs.sh`), drops AGP's stale native-lib
+> intermediates, and re-verifies the APK's own payload against the staged one. Missing, unused,
+> desktop, x86/x86_64, duplicate-SDL3 and unresolved libraries are packaging failures, not warnings.
+> The design, the exact files and the static validation are recorded in
+> [`implementation/ANDROID_SDL3_APPLICATION_PACKAGING.md`](implementation/ANDROID_SDL3_APPLICATION_PACKAGING.md).
+> Nothing was built or run locally, no file under `GeneralsMD/Code/` was changed, and no device has
+> loaded the pair yet.
+
 ---
 
 ## 1. Repository and branch information

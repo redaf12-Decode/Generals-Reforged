@@ -108,6 +108,31 @@ android {
     }
 }
 
+// The native payload is staged outside Gradle (scripts/build/android/package-android.sh): libmain.so
+// and libSDL3.so from the native build tree, libc++_shared.so from the NDK. Gradle is the last place
+// that can notice the payload is absent - without this, `gradle assembleDebug` on an unstaged tree
+// produces an APK with no native libraries that installs and then dies at System.loadLibrary.
+def requiredNativeLibs = ['libmain.so', 'libSDL3.so', 'libc++_shared.so']
+def nativeLibsDir = file('src/main/jniLibs/arm64-v8a')
+
+tasks.register('verifyNativeLibraries') {
+    description = 'Fails when a native library the APK must carry is missing from jniLibs.'
+    doLast {
+        def missing = requiredNativeLibs.findAll { !new File(nativeLibsDir, it).isFile() }
+        if (!missing.isEmpty()) {
+            throw new GradleException(
+                "jniLibs/arm64-v8a is missing ${missing.join(', ')}. Stage the payload with " +
+                "scripts/build/android/package-android.sh before packaging (it also runs the ELF " +
+                "verification this task cannot do).")
+        }
+    }
+}
+
+// Wired to the task that consumes jniLibs, not to preBuild: the manifest and unit-test tasks run
+// before the payload is staged in CI and must not require it.
+tasks.matching { it.name == 'mergeDebugNativeLibs' || it.name == 'mergeReleaseNativeLibs' }
+    .configureEach { dependsOn 'verifyNativeLibraries' }
+
 // Both halves of the shell are compiled for the JDK 17 CI sets up, so the Java and Kotlin
 // bytecode targets agree. Nothing here needs desugaring above minSdk 28.
 //

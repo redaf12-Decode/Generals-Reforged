@@ -54,7 +54,13 @@ class ThemeIsolationTest {
         val start = manifest.indexOf("android:name=\".$name\"")
         assertTrue("no <activity> for $name", start >= 0)
         val open = manifest.lastIndexOf("<activity", start)
-        val close = manifest.indexOf("/>", start)
+        val tagEnd = manifest.indexOf(">", start)
+        assertTrue("unterminated <activity> for $name", tagEnd >= 0)
+        // A self-closing element ends at its own '>'; one with children (the game Activity has an
+        // <intent-filter>) runs to its closing tag, and the whole body is part of the contract.
+        val close =
+            if (manifest[tagEnd - 1] == '/') tagEnd + 1
+            else manifest.indexOf("</activity>", tagEnd)
         return manifest.substring(open, close)
     }
 
@@ -159,6 +165,36 @@ class ThemeIsolationTest {
         for (hook in listOf("onPause", "onResume", "onStart", "onStop")) {
             assertFalse("must not override $hook", game.contains("void $hook("))
         }
+    }
+
+    @Test
+    fun theGameActivityIsDeclaredForSdl() {
+        // The manifest half of the same contract: SDL3 handles these configuration changes itself, so
+        // the Activity must not be recreated underneath the native surface. The set is SDL3 3.4.16's
+        // own android-project list, verbatim; a missing entry means a recreated Activity and a lost
+        // Vulkan surface at runtime, and nothing fails to compile.
+        val sdlConfigChanges = "layoutDirection|locale|grammaticalGender|fontScale|" +
+            "fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|" +
+            "keyboard|keyboardHidden|navigation"
+        val game = activity("ZeroHourActivity")
+        assertTrue(
+            "ZeroHourActivity must declare SDL3's full configChanges set, found: $game",
+            game.contains("android:configChanges=\"$sdlConfigChanges\""),
+        )
+        assertTrue(
+            "ZeroHourActivity must stay landscape",
+            game.contains("android:screenOrientation=\"landscape\""),
+        )
+        assertTrue(
+            "ZeroHourActivity must be a singleInstance surface",
+            game.contains("android:launchMode=\"singleInstance\""),
+        )
+        // The engine is started from the setup screen, after the staged folder validated, so the game
+        // Activity is not the home-screen entry point.
+        assertFalse(
+            "ZeroHourActivity must not be the LAUNCHER activity",
+            game.contains("android.intent.category.LAUNCHER"),
+        )
     }
 
     @Test

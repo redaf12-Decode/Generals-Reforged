@@ -40,6 +40,15 @@
 # libSDL3.so and libmain.so are the two libraries SDLActivity loads, in that order
 # (ZeroHourActivity.getLibraries). SDL3's JNI_OnLoad lives in libSDL3.so, so it is not optional.
 #
+# Every stage is checked, not assumed (verify-android-native-libs.sh does the ELF half):
+#   1. the staged set is wiped and re-copied, so a library from an earlier run cannot survive;
+#   2. the staged Java glue must be byte-identical to the vendored SDL3 tree, and every native
+#      method it declares must be registered in libSDL3.so (same SDL3 on both sides);
+#   3. the staged libraries must be ELF64/AArch64/DYN with the right SONAMEs, symbols and no
+#      unresolved or duplicate dependency - a failure here is a packaging failure, not a warning;
+#   4. AGP's native-lib intermediates are removed so Gradle cannot reuse a previous run's payload;
+#   5. the APK is unpacked again and its libraries must be the staged objects (same build ids).
+#
 # Nothing is worked around: a missing library is a failure with its name, not a flag that hides it.
 
 set -euo pipefail
@@ -140,7 +149,11 @@ echo "[package] sdk:     $SDK (platform android-$SDK_PLATFORM)"
 echo "[package] gradle:  $GRADLE"
 echo "[package] variant: $VARIANT"
 
+command -v unzip >/dev/null 2>&1 || fail "unzip not found on PATH: it is needed to inspect the packaged APK"
+
 # --- 1. stage the native libraries ---------------------------------------------------------------
+# The staging directory is removed rather than overwritten: a library that is no longer produced
+# must not survive in it and reach the APK.
 rm -rf "$JNILIBS"
 mkdir -p "$JNILIBS"
 cp "$ENGINE" "$JNILIBS/libmain.so"
@@ -150,17 +163,47 @@ echo "[package] staged native libraries:"
 ls -la "$JNILIBS"
 
 # --- 2. stage SDL3's Java glue -------------------------------------------------------------------
+# Re-staged from the vendored tree every run, then compared with it: the glue that is compiled and
+# the libSDL3.so that registers its native methods must come from the same SDL3 checkout.
 rm -rf "$JAVA_SDL"
 mkdir -p "$JAVA_SDL/org/libsdl/app"
 cp "$SDL3_JAVA"/*.java "$JAVA_SDL/org/libsdl/app/"
-echo "[package] staged SDL3 Java glue ($(ls "$JAVA_SDL/org/libsdl/app" | wc -l | tr -d ' ') files)"
+diff -r "$SDL3_JAVA" "$JAVA_SDL/org/libsdl/app" >/dev/null \
+  || fail "the staged SDL3 Java glue differs from $SDL3_JAVA"
+echo "[package] staged SDL3 Java glue ($(ls "$JAVA_SDL/org/libsdl/app" | wc -l | tr -d ' ') files, identical to the vendored tree)"
 
-# --- 3. package ----------------------------------------------------------------------------------
+# --- 3. verify the staged payload before Gradle sees it ------------------------------------------
+# ELF class/machine/SONAME/DT_NEEDED/exports, one SDL3, the JNI contract with the staged glue. A
+# library that is missing, of the wrong architecture or not the SDL3 the glue expects fails here.
+VERIFY="$ROOT/scripts/build/android/verify-android-native-libs.sh"
+[ -x "$VERIFY" ] || fail "the native verification script is missing: $VERIFY"
+"$VERIFY" --libs "$JNILIBS" --ndk "$NDK" --glue "$JAVA_SDL"
+
+# --- 4. drop AGP's previous native-lib intermediates ---------------------------------------------
+# jniLibs was re-staged, but Gradle's merged/stripped native-lib outputs belong to the previous run.
+# Removing them makes the packaged payload provably this run's staging, not a cached copy of it.
+rm -rf "$ANDROID_DIR/app/build/intermediates/merged_native_libs" \
+       "$ANDROID_DIR/app/build/intermediates/stripped_native_libs"
+
+# --- 5. package ----------------------------------------------------------------------------------
 ( cd "$ANDROID_DIR" && "$GRADLE" --no-daemon "assemble$VARIANT" )
 
 APK="$ANDROID_DIR/app/build/outputs/apk/$(printf '%s' "$VARIANT" | tr '[:upper:]' '[:lower:]')/app-$(printf '%s' "$VARIANT" | tr '[:upper:]' '[:lower:]').apk"
 [ -f "$APK" ] || fail "the build did not produce $APK"
 echo "[package] APK: $APK"
+
+# --- 6. verify what the APK actually carries -----------------------------------------------------
+# AGP strips symbols, so the packaged objects are not byte-identical to the staged ones; their
+# build ids are, and that is what identifies them. A library from another build, a second ABI or a
+# duplicate SDL3 fails here rather than on the device.
+UNPACKED=$(mktemp -d)
+trap 'rm -rf "$UNPACKED"' EXIT
+unzip -o -q "$APK" 'lib/*' -d "$UNPACKED"
+[ -d "$UNPACKED/lib/arm64-v8a" ] || fail "the APK carries no lib/arm64-v8a directory"
+other_abis=$(unzip -Z1 "$APK" | grep -E '^lib/' | grep -v '/$' | grep -vE '^lib/arm64-v8a/' || true)
+[ -z "$other_abis" ] || fail "the APK carries native libraries for another ABI: $other_abis"
+"$VERIFY" --libs "$UNPACKED/lib/arm64-v8a" --ndk "$NDK" --reference "$JNILIBS"
+echo "[package] the packaged libraries are the staged ones"
 
 if [ "$DO_INSTALL" = 1 ]; then
   command -v adb >/dev/null 2>&1 || fail "adb not found on PATH"

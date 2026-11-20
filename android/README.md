@@ -190,6 +190,13 @@ ANDROID_SDK_ROOT=/path/to/sdk ANDROID_NDK_HOME=/path/to/ndk \
 `android/` (both staged directories are gitignored), then runs Gradle. The SDK must hold platform
 `android-35`; the NDK must be named so `libc++_shared.so` can be found.
 
+Staging is not trusted: the script wipes the staging directory, compares the staged glue with the
+vendored SDL3 tree, runs `scripts/build/android/verify-android-native-libs.sh` on the staged
+libraries (ELF class and machine, SONAME, every `DT_NEEDED`, the required exports and JNI entry
+points, one SDL3, no unused library), and after Gradle unpacks the APK and checks that its libraries
+are the staged ones. A missing, stale, duplicate or wrong-architecture library fails the packaging
+instead of reaching a device.
+
 ## Verification and limitations
 
 A green CI run proves the engine cross-compiles for `aarch64-linux-android`, links as `libmain.so`,

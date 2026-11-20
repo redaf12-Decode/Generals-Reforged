@@ -25,11 +25,15 @@
 #   5. the game-folder logic is unit-tested on the host: the engine's own install-folder rule
 #      (INIZH.big plus the base game's Textures.big) and the incremental staging plan (copy
 #      once, then only what changed) - see GameFolderValidatorTest, GameDataStagingTest;
-#   6. the packaging script is syntactically valid and finds the libraries it stages;
+#   6. the packaging script and the static verifier are syntactically valid, and the packaging script
+#      finds the libraries it stages;
 #   7. an APK is actually assembled and its contents inspected - libmain.so, libSDL3.so and
 #      libc++_shared.so under lib/arm64-v8a, no other ABI, exactly one SDL3 shared object, every
 #      non-system DT_NEEDED of libmain.so present in the APK, no proprietary game data,
-#      SetupActivity as the home-screen entry point, and no storage permission.
+#      SetupActivity as the home-screen entry point, and no storage permission;
+#   8. the static verifier (scripts/build/android/verify-android-native-libs.sh) re-audits both the
+#      staged payload and the APK's: ELF class/machine, SONAME, DT_NEEDED resolution, the required
+#      exports and JNI entry points, one SDL3, and that the packaged objects are the staged ones.
 #
 # Reuse: the engine is built here rather than downloaded because no compatible native output
 # exists to reuse - ci-android-test.yml publishes only logs (no libmain.so artifact) and does not
@@ -46,6 +50,7 @@ on:
   push:
     branches:
       - agent/android-arm64-application-port
+      - agent/android-sdl3-android-completion
   pull_request:
     paths:
       - 'android/**'
@@ -114,12 +119,15 @@ jobs:
           # an output fails here instead of silently shipping a stale binary.
           scripts/build/android/assert-cache-policy.sh .github/workflows/ci-android-app.yml
 
-      - name: Validate the packaging script
+      - name: Validate the packaging and verification scripts
         run: |
           set -euo pipefail
           bash -n scripts/build/android/package-android.sh
           scripts/build/android/package-android.sh --help >/dev/null
           echo "package-android.sh is syntactically valid and answers --help"
+          bash -n scripts/build/android/verify-android-native-libs.sh
+          scripts/build/android/verify-android-native-libs.sh --help >/dev/null
+          echo "verify-android-native-libs.sh is syntactically valid and answers --help"
 
   # Stages 2-6: dependency preparation, the pre-compilation Gradle/manifest check, the native and
   # Android build, the post-build tests and the artifact upload.
@@ -686,6 +694,27 @@ jobs:
 
           echo "the APK: valid archive; libmain.so + libSDL3.so + libc++_shared.so for arm64-v8a only, no duplicates,"
           echo "        no game data, every DT_NEEDED satisfied, SetupActivity the launcher, minSdk 28/target 35"
+
+      - name: Verify the native payload with the static verifier (Phase 2)
+        run: |
+          set -euo pipefail
+          # The same verifier package-android.sh runs at staging time and again after packaging, run
+          # here directly so the CI log carries the verdict independently of the script's own flow.
+          # It rejects: a missing or unused library, a non-ELF64/non-AArch64/x86 object, a wrong
+          # SONAME, a DT_NEEDED that is neither a system library nor packaged, a missing export
+          # (SDL_main, JNI_OnLoad, the SDL3 entry points), a second SDL3, and an APK library that is
+          # not the staged object (build id) - i.e. a stale one.
+          VERIFY=scripts/build/android/verify-android-native-libs.sh
+          STAGED=android/app/src/main/jniLibs/arm64-v8a
+          APK="$PWD/android/app/build/outputs/apk/debug/app-debug.apk"
+          [ -f "$APK" ] || { echo "::error::the APK is missing"; exit 1; }
+          rm -rf "$RUNNER_TEMP/apk-native-verify"
+          mkdir -p "$RUNNER_TEMP/apk-native-verify"
+          unzip -o -q "$APK" 'lib/*' -d "$RUNNER_TEMP/apk-native-verify"
+
+          "$VERIFY" --libs "$STAGED" --ndk "$ANDROID_NDK_HOME" --glue android/app/src/main/java-sdl
+          "$VERIFY" --libs "$RUNNER_TEMP/apk-native-verify/lib/arm64-v8a" --ndk "$ANDROID_NDK_HOME" \
+            --reference "$STAGED"
 
       - name: Upload the APK, the engine and the diagnostics
         if: always()

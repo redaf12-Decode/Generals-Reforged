@@ -45,6 +45,7 @@ on:
   push:
     branches:
       - android-arm64-port
+      - agent/android-sdl3-android-completion
   pull_request:
     paths:
       - 'GeneralsMD/Code/CMakeLists.txt'

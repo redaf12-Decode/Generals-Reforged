@@ -19,9 +19,12 @@ The engine is `libmain.so` (`PosixMain.cpp` built as the `generals` target, `add
 SHARED)`, `OUTPUT_NAME main` — `CMakeLists.txt:2288-2290`). Built for arm64-v8a, its `DT_NEEDED` is
 the ground truth for what the APK must carry. Read from the object with the NDK's `llvm-readelf -d`:
 
-> **Superseded (Phase 1, 2026-11-20).** SDL3 is now a standalone shared library, so `libSDL3.so` is
-> the second packaged dependency and the APK's native payload is three files. See
-> [`../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md`](../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md).
+> **Updated (Phase 1, 2026-11-20; Phase 2, 2026-11-20).** SDL3 is now a standalone shared library,
+> so `libSDL3.so` is the second packaged dependency and the APK's native payload is three files. The
+> two-library model is designed in
+> [`../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md`](../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md)
+> and packaged and verified as described in
+> [`../implementation/ANDROID_SDL3_APPLICATION_PACKAGING.md`](../implementation/ANDROID_SDL3_APPLICATION_PACKAGING.md).
 
 | `DT_NEEDED` | Class | Provided by | In the APK? |
 |:--|:--|:--|:--|
@@ -30,12 +33,15 @@ the ground truth for what the APK must carry. Read from the object with the NDK'
 | `libdl.so` | Android system | bionic | no (device) |
 | `liblog.so` | Android system | bionic | no (device) |
 | `libandroid.so` | Android system | bionic (ANativeWindow, etc.) | no (device) |
+| `libSDL3.so` | required in the APK | the vendored SDL3 3.4.16, built `SDL_SHARED` on | **yes** |
 | `libc++_shared.so` | required in the APK | the NDK sysroot (`ANDROID_STL=c++_shared`) | **yes** |
 
-Every other dependency — SDL3 3.4.16, miniaudio, FreeType, glslang, SPIRV-Cross, SDL_shadercross,
-mbedTLS, zlib, LZH-Light, GameSpy, FFmpeg — is a **static archive linked into `libmain.so`**
-(`BUILD_SHARED_LIBS OFF`; `SDL_STATIC ON`, `CMakeLists.txt:953`). None appears in `DT_NEEDED` and
-none needs a second `.so` in the APK. This is why the APK's native payload is two files.
+Every other dependency — miniaudio, FreeType, glslang, SPIRV-Cross, SDL_shadercross, mbedTLS, zlib,
+LZH-Light, GameSpy, FFmpeg — is a **static archive linked into `libmain.so`** (`BUILD_SHARED_LIBS
+OFF`). None appears in `DT_NEEDED` and none needs a second `.so` in the APK. SDL3 is the one
+exception: on Android it is built shared (`SDL_SHARED ON`, `SDL_STATIC OFF`) because SDL3's Java glue
+owns the process entry and its `JNI_OnLoad` lives in the library, so the APK's native payload is
+three files.
 
 The classification is not inferred from the CMake declarations: it is read back from the linked
 object, so a dependency that silently became shared (the failure mode the reference port hit — a
@@ -64,13 +70,14 @@ In order, in `ci-android-app.yml`:
 3. **the ELF audit** reads the dependency set back from the object: `Class: ELF64`,
    `Machine: AArch64`, `Type: DYN`, `SONAME libmain.so`, the exported `SDL_main`, the `DT_NEEDED`
    set classified into system vs packaged (a library from neither class fails), no desktop or
-   duplicate library, **zero undefined `SDL_*` symbols** (proving SDL3 is static), the
-   `ANDROID_PLATFORM=android-28` build record and the NDK's Android ident note;
+   duplicate library, `SDL_*` **imported** from `libSDL3.so` and **none defined** but the app's own
+   `SDL_main` (proving one SDL3 implementation), the `ANDROID_PLATFORM=android-28` build record and
+   the NDK's Android ident note;
 4. the Gradle project configures and the packaged manifest is the merged one AGP produces (the
    Phase-2/3 assertions, unchanged);
 5. the folder logic is unit-tested on the host (`GameFolderValidatorTest`, `GameDataStagingTest`);
-6. `package-android.sh` stages `libmain.so` and `libc++_shared.so` into `jniLibs/arm64-v8a` and runs
-   Gradle;
+6. `package-android.sh` stages `libmain.so`, `libSDL3.so` and `libc++_shared.so` into
+   `jniLibs/arm64-v8a`, runs the static verifier on the staged set, and runs Gradle;
 7. **the APK is inspected**: valid zip; exactly `lib/arm64-v8a/libmain.so` and
    `lib/arm64-v8a/libc++_shared.so` and nothing else under `lib/`; no other ABI; no duplicate
    library; no game data and no `assets/` directory; the packaged `libmain.so` is ELF64/AArch64/DYN
