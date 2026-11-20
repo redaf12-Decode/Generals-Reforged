@@ -69,10 +69,14 @@ repository; treat that part as reference-only when working here.
 
 Index of durable facts learned about this repository. Detail lives in the daily logs.
 
-> **Note (2026-11-16):** the workspace at that date was `redaf12-Decode/Generals-Reforged`
-> (the Zero Hour *Reforged* macOS/Linux port), a different codebase from the
-> `Generals-Android-Port` entries below. Its audit facts live in
-> `2026-11-16.md` (target architecture, `#error` guards, renderer chain, no touch input).
+> **Note (2026-11-19, superseding 2026-11-16):** the workspace is now
+> `redaf12-Decode/Generals-Reforged` and the `android/` Gradle app **does exist here** — the
+> Compose/Material 3 work on `agent/material3-ui-redesign` targets it, and `ci-android-app.yml`
+> runs it. So the Android-shell entries further down (`SAF`, `SafTreeUri`, `kotlinc`, Compose,
+> `ci-android-app.yml`) are current, not reference-only. What is still reference-only is the
+> **`Generals-Android-Port` launcher** material (`UpdateChecker`, `ApkInstaller`, its gradle
+> files); those paths do not exist in this repository. Older audit facts for the port live in
+> `2026-11-16.md`.
 
 ## Repository topology (verified 2026-11-04)
 
@@ -659,3 +663,15 @@ the fuller option). Consequences to remember:
   there is no edge-to-edge in this app, so `Scaffold`'s `innerPadding` suffices without an app bar.
   A scripted rewrite ending at `s.rindex("}\n")` keeps the old trailing brace — check the file tail
   (that stray `}` was the only CI failure; the APK task passing localised it to the test source set).
+- **Phase 4 compatibility screen is CI-green** (`agent/material3-ui-redesign`, run 44687651846). The
+  phase's whole point: the old screen mapped everything that was not a pass to "Warning", which is
+  false for Vulkan features no Android API can read. Five-word vocabulary in
+  `CompatibilityPresentation.Evidence` — `VERIFIED / UNSUPPORTED / UNABLE_TO_VERIFY / NOT_REPORTED /
+  NOT_AVAILABLE`, tones SUCCESS/DANGER/WARNING/NEUTRAL/NEUTRAL — with a test that the three unknowns
+  stay distinct. Detail in `2026-11-19.md`.
+- **Kotlin↔Java: a Kotlin `(() -> Unit)?` parameter is NOT assignable from a Java `void` lambda**
+  ("void cannot be converted to Unit", broke CI). Type Java-called single callbacks in the `@JvmName`
+  host objects as `Runnable?` and adapt at the Compose boundary. Also: **large `cat >> f <<'EOF'`
+  heredocs silently no-op here** (exit 0, echoes text, file unchanged; once injected stray Cyrillic
+  into an import) — use `file_editor`/Python and re-read the file to confirm. `/tmp/hdr.txt` does not
+  survive between sessions; rebuild it with `sed -n 1,18p` of any existing source.
