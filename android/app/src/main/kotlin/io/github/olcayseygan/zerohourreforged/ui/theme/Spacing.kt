@@ -52,6 +52,8 @@ internal data class Spacing(
     val sectionGap: Dp = 24.dp,
     /** 28dp: the vertical breathing room at the top and bottom of a scrolling screen. */
     val screenVertical: Dp = 28.dp,
+    /** 12dp: the same breathing room on a short window, such as a landscape phone. */
+    val screenVerticalCompact: Dp = 12.dp,
     /** 48dp: the Material minimum touch target, and the height of a standalone control's row. */
     val touchTarget: Dp = 48.dp,
 )

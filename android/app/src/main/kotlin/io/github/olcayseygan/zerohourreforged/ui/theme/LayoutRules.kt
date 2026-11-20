@@ -48,7 +48,7 @@ internal object LayoutRules {
     const val WIDE_READABLE_WIDTH_DP = 640f
 
     /**
-     * Below this window height the vertical padding shrinks to [COMPACT_VERTICAL_PADDING_DP].
+     * Below this window height [isCompactHeight] asks for the compact vertical padding.
      *
      * <p>480dp is a landscape phone: a 360x800 phone turned on its side has about 360dp of height
      * before the system bars. The 28dp of breathing room that reads as generous in portrait is 8% of
@@ -56,12 +56,6 @@ internal object LayoutRules {
      * scroll anyway.
      */
     const val COMPACT_HEIGHT_DP = 480f
-
-    /** The vertical padding for a window with room to spare. */
-    const val COMFORTABLE_VERTICAL_PADDING_DP = 28f
-
-    /** The vertical padding for a landscape phone or a split-screen window. */
-    const val COMPACT_VERTICAL_PADDING_DP = 12f
 
     /**
      * The horizontal padding a segment spends on its own inset, in dp.
@@ -129,16 +123,16 @@ internal object LayoutRules {
     }
 
     /**
-     * The vertical padding for a window of the given height.
+     * Whether a window of the given height is short enough to need the compact vertical padding.
+     *
+     * <p>Returns a decision, not a measurement: the two padding values live in [Spacing] with every
+     * other dimension, so there is one place to change a spacing token and one place to change when
+     * it applies. A rule that also carried the values would drift from the design system the first
+     * time either was retuned.
      *
      * @param windowHeightDp the height available to the content, after the system bars.
      */
-    fun verticalPaddingDp(windowHeightDp: Float): Float =
-        if (windowHeightDp < COMPACT_HEIGHT_DP) {
-            COMPACT_VERTICAL_PADDING_DP
-        } else {
-            COMFORTABLE_VERTICAL_PADDING_DP
-        }
+    fun isCompactHeight(windowHeightDp: Float): Boolean = windowHeightDp < COMPACT_HEIGHT_DP
 
     /**
      * The completion percentage worth announcing, rounded down to a step.

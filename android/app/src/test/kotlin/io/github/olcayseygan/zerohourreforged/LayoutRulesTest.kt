@@ -89,35 +89,19 @@ class LayoutRulesTest {
     }
 
     @Test
-    fun shortWindowsGetLessVerticalPadding() {
+    fun shortWindowsAreCompact() {
         // A landscape phone: 360dp of height before the bars. 28dp of breathing room twice is a
-        // tenth of the visible area there.
-        assertEquals(
-            LayoutRules.COMPACT_VERTICAL_PADDING_DP,
-            LayoutRules.verticalPaddingDp(360f),
-            0.001f,
-        )
-        assertEquals(
-            LayoutRules.COMFORTABLE_VERTICAL_PADDING_DP,
-            LayoutRules.verticalPaddingDp(900f),
-            0.001f,
-        )
+        // tenth of the visible area there, so it drops to the compact padding.
+        assertTrue(LayoutRules.isCompactHeight(360f))
+        assertFalse(LayoutRules.isCompactHeight(900f))
     }
 
     @Test
     fun thePaddingBoundaryFavoursTheComfortableValue() {
         // At exactly the threshold the window is not "compact": the comparison is strict, so a
         // window of 480dp keeps the roomier padding rather than losing it to a rounding case.
-        assertEquals(
-            LayoutRules.COMFORTABLE_VERTICAL_PADDING_DP,
-            LayoutRules.verticalPaddingDp(LayoutRules.COMPACT_HEIGHT_DP),
-            0.001f,
-        )
-        assertEquals(
-            LayoutRules.COMPACT_VERTICAL_PADDING_DP,
-            LayoutRules.verticalPaddingDp(LayoutRules.COMPACT_HEIGHT_DP - 1f),
-            0.001f,
-        )
+        assertFalse(LayoutRules.isCompactHeight(LayoutRules.COMPACT_HEIGHT_DP))
+        assertTrue(LayoutRules.isCompactHeight(LayoutRules.COMPACT_HEIGHT_DP - 1f))
     }
 
     @Test

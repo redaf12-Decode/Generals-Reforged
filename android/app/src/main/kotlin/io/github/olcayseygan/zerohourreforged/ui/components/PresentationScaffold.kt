@@ -36,7 +36,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import io.github.olcayseygan.zerohourreforged.ui.theme.LayoutRules
 import io.github.olcayseygan.zerohourreforged.ui.theme.spacing
 
@@ -84,9 +83,13 @@ internal fun PresentationScaffold(
             contentAlignment = Alignment.TopCenter,
         ) {
             // The height the content actually has, after the bars and the app bar. A landscape
-            // phone reports about 360dp here, which is why the vertical padding is a function of it
-            // rather than a constant.
-            val verticalPadding = LayoutRules.verticalPaddingDp(maxHeight.value).dp
+            // phone reports about 360dp here, which is why the vertical padding is chosen from it
+            // rather than being a constant.
+            val verticalPadding = if (LayoutRules.isCompactHeight(maxHeight.value)) {
+                MaterialTheme.spacing.screenVerticalCompact
+            } else {
+                MaterialTheme.spacing.screenVertical
+            }
             Column(
                 modifier = Modifier
                     .widthIn(max = contentMaxWidth)
