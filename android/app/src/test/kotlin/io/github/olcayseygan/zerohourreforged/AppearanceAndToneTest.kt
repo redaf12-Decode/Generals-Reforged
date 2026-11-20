@@ -18,10 +18,10 @@
 
 package io.github.olcayseygan.zerohourreforged
 
+import io.github.olcayseygan.zerohourreforged.ui.components.StatusTone
 import io.github.olcayseygan.zerohourreforged.ui.screens.launcher.LauncherStatus
 import io.github.olcayseygan.zerohourreforged.ui.screens.launcher.LauncherUiState
 import io.github.olcayseygan.zerohourreforged.ui.screens.launcher.formatBytes
-import io.github.olcayseygan.zerohourreforged.ui.components.StatusTone
 import io.github.olcayseygan.zerohourreforged.ui.theme.AppearanceMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -30,10 +30,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Host tests for the two presentation rules the design system depends on: which scheme to draw
- * ([AppearanceMode]) and what state the launcher reports ([LauncherUiState.tone]).
+ * Host tests for the presentation rules the design system depends on: which scheme to draw
+ * ([AppearanceMode]), what state the launcher reports ([LauncherStatus], [LauncherUiState.tone],
+ * [LauncherStatus.needsFolder]) and how it says it ([LauncherUiState.progressBytes],
+ * [formatBytes]).
  *
- * <p>Both are pure Kotlin with no Android types, which is the point of keeping them out of the
+ * <p>All of it is pure Kotlin with no Android types, which is the point of keeping it out of the
  * composables: the rule is testable here, and the composable only renders the answer.
  */
 class AppearanceAndToneTest {
@@ -164,5 +166,4 @@ class AppearanceAndToneTest {
         assertEquals("3.4 GB", formatBytes((3.4 * 1024 * 1024 * 1024).toLong()))
         assertEquals("12 GB", formatBytes(12L * 1024 * 1024 * 1024))
     }
-}
 }
