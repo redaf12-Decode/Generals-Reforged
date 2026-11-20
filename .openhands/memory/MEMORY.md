@@ -686,3 +686,18 @@ the fuller option). Consequences to remember:
   `LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES` fills the notch, it does not protect content from it.
   `enableEdgeToEdge` must run before `setContent` (it re-lays out the window) and never for an SDL
   surface. `ThemeIsolationTest` pins all of it against the real manifest/XML/Java files.
+- **Responsive/a11y phase 6 green** (`agent/material3-ui-redesign`, CI run 44695615538, **98 tests**).
+  The Phase-4/5 `maxLines = 2` on the appearance segmented control was a *vertical* clip: M3
+  `SegmentedButton` is a non-negotiable 40dp tall, so two lines fit at 1.0x and clip at ~1.3x.
+  Fix = change the control (`LayoutRules.stackSegmentControls` -> stacked `RadioButton` rows), never
+  wrap inside a fixed-height control. Rule folds font scale into **glyph width only** (M3 segment
+  padding 12dp/side does not scale); phone stacks at 1.3x, tablet 600/800 keeps segments until 2.0x.
+  Both screens now share `PresentationScaffold` (safeDrawing + centred `widthIn` + scroll, vertical
+  padding 28dp -> **12dp under 480dp** height). Detail in `2026-11-19.md`.
+- **When a source-text test fails after a refactor, upgrade the assertion, don't relax it.**
+  `ThemeIsolationTest.thePresentationScreensReserveTheCutout` grep'd each screen for
+  `WindowInsets.safeDrawing`; moving the inset into the shared scaffold failed it. Rewritten to assert
+  the guarantee (scaffold consumes safeDrawing AND both screens call `PresentationScaffold(`), which is
+  stronger than the original. `gh run watch` exceeds the 1080s foreground cap — poll
+  `gh run view <id> --json status,conclusion`; a `cancelled` "Prepare the ephemeral runner" is infra,
+  `gh run rerun <id>`.
