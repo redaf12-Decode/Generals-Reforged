@@ -675,3 +675,14 @@ the fuller option). Consequences to remember:
   heredocs silently no-op here** (exit 0, echoes text, file unchanged; once injected stray Cyrillic
   into an import) — use `file_editor`/Python and re-read the file to confirm. `/tmp/hdr.txt` does not
   survive between sessions; rebuild it with `sed -n 1,18p` of any existing source.
+- **Phase 5 theme isolation is CI-green** (run 44690660914). `ZeroHourActivity` used to inherit
+  `AppTheme` from `<application>` *by omission*; each Activity now names its own theme
+  (`Theme.ZeroHour.Setup/.Compatibility/.Game`), with `.Game` parenting `AppTheme` and adding
+  nothing. Detail in `2026-11-19.md`. Transferable: **targetSdk 35 forces edge-to-edge and ignores
+  `statusBarColor`**, so tint bars transparent and compute the icon tint from
+  `minOf(background, surface).luminance()` (the status bar sits over the background on a screen with
+  a header but over the surface under a TopAppBar). **M3 `Scaffold`/`TopAppBar` default to
+  `systemBars`, which omits the display cutout** — use `WindowInsets.safeDrawing`; and
+  `LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES` fills the notch, it does not protect content from it.
+  `enableEdgeToEdge` must run before `setContent` (it re-lays out the window) and never for an SDL
+  surface. `ThemeIsolationTest` pins all of it against the real manifest/XML/Java files.
