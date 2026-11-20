@@ -287,6 +287,27 @@ class WcagContrastTest {
         )
     }
 
+    /**
+     * The compatibility summary card's outline must be visible on the surface it sits on.
+     *
+     * <p>It uses `outline` rather than `outlineVariant` for the same reason the installation
+     * divider does: this is the border of the verdict itself, the one element a player looks for,
+     * and a decorative 1.7:1 hairline would not separate it from the page.
+     */
+    @Test
+    fun compatibilitySummaryOutlineIsVisible() {
+        assertBoundaryPair(
+            "summaryOutline/dark",
+            BrandPalette.DarkOutline,
+            BrandPalette.DarkSurfaceContainerLowest,
+        )
+        assertBoundaryPair(
+            "summaryOutline/light",
+            BrandPalette.LightOutline,
+            BrandPalette.LightSurfaceContainerLowest,
+        )
+    }
+
     /** Outlines and dividers must be visible against the surfaces they separate. */
     @Test
     fun outlinesClearTheNonTextMinimum() {

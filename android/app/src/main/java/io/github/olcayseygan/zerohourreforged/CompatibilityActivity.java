@@ -53,6 +53,9 @@ public class CompatibilityActivity extends ComponentActivity {
         super.onCreate(savedInstanceState);
         DeviceCapabilities device = DeviceCapabilitiesReader.read(this);
         CompatibilityEvaluator.Report report = CompatibilityEvaluator.evaluate(device);
-        CompatibilityUi.installCompatibilityContent(this, device, report);
+        // The back arrow dispatches through the same callback the system back gesture uses, so the
+        // two cannot diverge - and neither calls the deprecated Activity.onBackPressed().
+        CompatibilityUi.installCompatibilityContent(
+                this, device, report, () -> getOnBackPressedDispatcher().onBackPressed());
     }
 }

@@ -84,7 +84,7 @@
     <string name="compat_label_cpu">CPU</string>
     <string name="compat_value_cpu">%1$s (64-bit ARM) only.</string>
     <string name="compat_label_graphics">Graphics</string>
-    <string name="compat_value_graphics">%1$s with %2$s and the features %3$s. No OpenGL ES fallback.</string>
+    <string name="compat_value_vulkan_floor">%1$s or newer. There is no OpenGL ES fallback.</string>
     <string name="compat_label_optional_vulkan">Optional Vulkan features</string>
     <string name="compat_value_optional_vulkan">Dropped if absent: %1$s.</string>
     <string name="compat_label_gpus">GPUs</string>
@@ -100,15 +100,36 @@
     <string name="compat_label_abis">CPU ABIs</string>
     <string name="compat_label_total_ram">Total RAM</string>
     <string name="compat_value_gb">%1$s GB</string>
-    <string name="compat_value_android_version">%1$s (API %2$d)</string>
-    <string name="compat_value_unknown">unknown</string>
     <string name="compat_value_not_reported">not reported</string>
 
     <string name="compat_label_vulkan">Vulkan</string>
     <string name="compat_vulkan_present">Vulkan hardware reported.</string>
     <string name="compat_vulkan_api_version">Advertised API version: %1$s.</string>
     <string name="compat_vulkan_api_version_unknown">Advertised API version: not exposed by the platform API.</string>
-    <string name="compat_vulkan_hardware_level">Hardware level: %1$d.</string>
     <string name="compat_vulkan_absent">No Vulkan hardware reported.</string>
-    <string name="compat_vulkan_unverified_note">Vulkan physical-device name, vendor/device IDs and per-extension/per-feature support: unable to verify - the Android platform API does not expose them; the engine checks the mandatory features when it creates the device.</string>
+
+    <!-- The five words the screen uses for how much is known about one fact. Each is a status
+         chip on its own row, so the difference between them is read, not inferred from a colour. -->
+    <string name="evidence_verified">Verified</string>
+    <string name="evidence_unsupported">Unsupported</string>
+    <string name="evidence_unable_to_verify">Unable to verify</string>
+    <string name="evidence_not_reported">Not reported</string>
+    <string name="evidence_not_available">Not available</string>
+
+    <string name="compat_label_api_level">API level</string>
+    <string name="compat_label_vulkan_extensions">Required Vulkan extensions</string>
+    <string name="compat_label_vulkan_features">Required Vulkan features</string>
+
+    <string name="compat_group_unverified">Not verified</string>
+    <string name="compat_group_checks">Compatibility checks</string>
+
+    <string name="compat_label_gpu_model">GPU model and vendor</string>
+    <string name="compat_label_vulkan_ids">Vulkan vendor and device IDs</string>
+
+    <string name="compat_unverified_gpu">The Android platform API does not expose the Vulkan physical-device name, so this app never infers a GPU from a manufacturer, model or SoC family. The engine reads the real adapter name when it starts.</string>
+    <string name="compat_unverified_features">The mandatory Vulkan features cannot be read through the Android platform API on any device. The engine checks them when it creates the device, and stops with a message if one is missing.</string>
+    <string name="compat_unverified_extensions">Per-extension support cannot be read through the Android platform API. Only the Vulkan version and the optional-feature level are reported; whether a specific extension is present is checked by the engine at startup.</string>
+    <string name="compat_unverified_ids">The vendor ID, device ID and driver version are not exposed by the platform API.</string>
+    <string name="compat_vulkan_level_not_reported">Optional-feature level: not reported.</string>
+    <string name="compat_vulkan_level">Optional-feature level: %1$d.</string>
 </resources>

@@ -21,6 +21,7 @@ package io.github.olcayseygan.zerohourreforged
 import io.github.olcayseygan.zerohourreforged.ui.components.StatusTone
 import io.github.olcayseygan.zerohourreforged.ui.screens.compatibility.CompatibilityPresentation
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 /**
@@ -88,5 +89,81 @@ class CompatibilityPresentationTest {
         assertEquals("unknown", CompatibilityPresentation.orUnknown(null))
         assertEquals("unknown", CompatibilityPresentation.orUnknown(""))
         assertEquals("Pixel", CompatibilityPresentation.orUnknown("Pixel"))
+    }
+
+    @Test
+    fun checkEvidenceUsesTheScreensOwnVocabulary() {
+        assertEquals(
+            CompatibilityPresentation.Evidence.VERIFIED,
+            CompatibilityPresentation.checkEvidence(check(satisfied = true, failed = false, unverified = false)),
+        )
+        assertEquals(
+            CompatibilityPresentation.Evidence.UNSUPPORTED,
+            CompatibilityPresentation.checkEvidence(check(satisfied = false, failed = true, unverified = false)),
+        )
+        assertEquals(
+            CompatibilityPresentation.Evidence.UNABLE_TO_VERIFY,
+            CompatibilityPresentation.checkEvidence(check(satisfied = false, failed = false, unverified = true)),
+        )
+    }
+
+    /**
+     * The three ways of not knowing stay distinct. This is the property the whole screen exists to
+     * keep: an API that cannot answer is not the same as a device that would not, and neither is the
+     * same as a requirement that is known to be missing.
+     */
+    @Test
+    fun theThreeUnknownsAreDistinctValues() {
+        val unknowns = listOf(
+            CompatibilityPresentation.Evidence.UNABLE_TO_VERIFY,
+            CompatibilityPresentation.Evidence.NOT_REPORTED,
+            CompatibilityPresentation.Evidence.NOT_AVAILABLE,
+        )
+        assertEquals(3, unknowns.toSet().size)
+        assertFalse(unknowns.contains(CompatibilityPresentation.Evidence.VERIFIED))
+        assertFalse(unknowns.contains(CompatibilityPresentation.Evidence.UNSUPPORTED))
+    }
+
+    @Test
+    fun onlyVerifiedAndUnsupportedEarnAnAssertiveTone() {
+        // A missing fact must not be drawn in the same colour as a passing one.
+        assertEquals(StatusTone.SUCCESS, CompatibilityPresentation.evidenceTone(CompatibilityPresentation.Evidence.VERIFIED))
+        assertEquals(StatusTone.DANGER, CompatibilityPresentation.evidenceTone(CompatibilityPresentation.Evidence.UNSUPPORTED))
+        assertEquals(StatusTone.WARNING, CompatibilityPresentation.evidenceTone(CompatibilityPresentation.Evidence.UNABLE_TO_VERIFY))
+        assertEquals(StatusTone.NEUTRAL, CompatibilityPresentation.evidenceTone(CompatibilityPresentation.Evidence.NOT_REPORTED))
+        assertEquals(StatusTone.NEUTRAL, CompatibilityPresentation.evidenceTone(CompatibilityPresentation.Evidence.NOT_AVAILABLE))
+    }
+
+    @Test
+    fun vulkanDistinguishesAbsentFromUnreported() {
+        val absent = DeviceCapabilities().apply {
+            vulkanSupported = DeviceCapabilities.FieldState.ABSENT
+        }
+        val unreported = DeviceCapabilities().apply {
+            vulkanSupported = DeviceCapabilities.FieldState.UNKNOWN
+        }
+        val presentNoVersion = DeviceCapabilities().apply {
+            vulkanSupported = DeviceCapabilities.FieldState.PRESENT
+        }
+        val presentWithVersion = DeviceCapabilities().apply {
+            vulkanSupported = DeviceCapabilities.FieldState.PRESENT
+            vulkanHardwareVersion = AndroidRequirements.packVulkanVersion(1, 0, 0)
+        }
+        assertEquals(CompatibilityPresentation.Evidence.NOT_AVAILABLE, CompatibilityPresentation.vulkanEvidence(absent))
+        assertEquals(CompatibilityPresentation.Evidence.NOT_REPORTED, CompatibilityPresentation.vulkanEvidence(unreported))
+        assertEquals(CompatibilityPresentation.Evidence.NOT_REPORTED, CompatibilityPresentation.vulkanEvidence(presentNoVersion))
+        assertEquals(CompatibilityPresentation.Evidence.VERIFIED, CompatibilityPresentation.vulkanEvidence(presentWithVersion))
+    }
+
+    /** A refused RAM query is "not reported", never 0 GB. */
+    @Test
+    fun ramIsNotReportedWhenTheQueryWasRefused() {
+        assertEquals(
+            CompatibilityPresentation.Evidence.NOT_REPORTED,
+            CompatibilityPresentation.ramEvidence(DeviceCapabilities()),
+        )
+        val device = DeviceCapabilities().apply { totalRamBytes = 6L * 1024 * 1024 * 1024 }
+        assertEquals(CompatibilityPresentation.Evidence.VERIFIED, CompatibilityPresentation.ramEvidence(device))
+        assertEquals("6", CompatibilityPresentation.gb(device.totalRamBytes))
     }
 }
