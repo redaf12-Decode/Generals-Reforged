@@ -88,8 +88,41 @@ env:
   CCACHE_BASEDIR: /home/runner
 
 jobs:
+  # Stage 1 -- Preliminary Validation. Every check here reads the repository as text: the workflow
+  # file's cache policy and the packaging script's syntax. None needs the JDK, the SDK, the NDK,
+  # Gradle, the vendored sources or a build output, so a typo fails here in seconds instead of after
+  # the multi-minute native build below. `android-app` needs this job, so a failure blocks the build.
+  preflight:
+    name: Preliminary validation (static checks, no build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Assert the cache policy excludes application outputs
+        run: |
+          set -euo pipefail
+          # A cache may hold only build infrastructure (SDK/NDK, vendored downloads, ccache); never
+          # libmain.so, the CMake/Ninja build tree or the APK, so the engine is always linked from the
+          # current source. This reads the workflow files themselves, so a future cache step pointed at
+          # an output fails here instead of silently shipping a stale binary.
+          scripts/build/android/assert-cache-policy.sh .github/workflows/ci-android-app.yml
+
+      - name: Validate the packaging script
+        run: |
+          set -euo pipefail
+          bash -n scripts/build/android/package-android.sh
+          scripts/build/android/package-android.sh --help >/dev/null
+          echo "package-android.sh is syntactically valid and answers --help"
+
+  # Stages 2-6: dependency preparation, the pre-compilation Gradle/manifest check, the native and
+  # Android build, the post-build tests and the artifact upload.
   android-app:
     name: Android application shell, native dependency packaging and APK inspection
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -115,15 +148,6 @@ jobs:
           ninja --version
           ccache --version | head -n 1
           df -h "$RUNNER_TEMP"
-
-      - name: Assert the cache policy excludes application outputs
-        run: |
-          set -euo pipefail
-          # A cache may hold only build infrastructure (SDK/NDK, vendored downloads, ccache); never
-          # libmain.so, the CMake/Ninja build tree or the APK, so the engine is always linked from the
-          # current source. This reads the workflow files themselves, so a future cache step pointed at
-          # an output fails here instead of silently shipping a stale binary.
-          scripts/build/android/assert-cache-policy.sh .github/workflows/ci-android-app.yml
 
       - name: Set up JDK 17
         uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.8.0
@@ -246,12 +270,72 @@ jobs:
             || { echo "::error::vendor.sh did not produce SDL3's Java glue"; exit 1; }
           echo "the vendored sources and SDL3's Java glue are present"
 
-      - name: Validate the packaging script
+      - name: Assert the Gradle configuration and the packaged manifest
         run: |
           set -euo pipefail
-          bash -n scripts/build/android/package-android.sh
-          scripts/build/android/package-android.sh --help >/dev/null
-          echo "package-android.sh is syntactically valid and answers --help"
+          fail() { echo "::error::$1"; exit 1; }
+          ANDROID_DIR="$PWD/android"
+
+          # 1. The Gradle configuration resolves: the debug variant's manifest task runs, which is
+          #    where the namespace, applicationId, SDK levels and the manifest merge are all checked
+          #    by AGP itself.
+          ( cd "$ANDROID_DIR" && gradle --no-daemon :app:processDebugMainManifest )
+          MANIFEST="$ANDROID_DIR/app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml"
+          [ -f "$MANIFEST" ] || MANIFEST=$(find "$ANDROID_DIR/app/build/intermediates" -name AndroidManifest.xml -path '*merged*' | head -n 1)
+          [ -f "$MANIFEST" ] || fail "the merged manifest was not produced"
+          echo "--- merged manifest ---"; cat "$MANIFEST"
+
+          # 2. Identity, from the merged manifest AGP actually packages.
+          grep -q 'package="io.github.olcayseygan.zerohourreforged"' "$MANIFEST" \
+            || fail "the applicationId is not the project's own id"
+          if grep -q 'com.generalsx.zerohour' "$MANIFEST"; then
+            fail "the reference port's package identity (com.generalsx.zerohour) leaked into the manifest"
+          fi
+          grep -q 'android:name="io.github.olcayseygan.zerohourreforged.ZeroHourActivity"' "$MANIFEST" \
+            || fail "the launcher Activity is not the project's own ZeroHourActivity"
+
+          # 2b. The Phase-3 launcher screen is present; the game Activity is still declared (a
+          #     shortcut placed before it still resolves). Which one is the home-screen entry point
+          #     is asserted from the packaged APK's badging below.
+          grep -q 'android:name="io.github.olcayseygan.zerohourreforged.SetupActivity"' "$MANIFEST" \
+            || fail "the setup Activity (the folder picker screen) is not declared"
+          if grep -q 'android.intent.category.LAUNCHER' "$MANIFEST" ; then
+            : # present; its owner is checked on the APK below
+          else
+            fail "no LAUNCHER entry point is declared"
+          fi
+
+          # 2c. The in-app System Requirements & Device Compatibility screen is declared and is not
+          #     exported (it is reached only from the setup screen).
+          grep -q 'android:name="io.github.olcayseygan.zerohourreforged.CompatibilityActivity"' "$MANIFEST" \
+            || fail "the compatibility screen (CompatibilityActivity) is not declared"
+          grep -A8 'android:name="io.github.olcayseygan.zerohourreforged.CompatibilityActivity"' "$MANIFEST" \
+            | grep -q 'android:exported="false"' \
+            || fail "CompatibilityActivity must not be exported"
+
+          # 3. Orientation and the configChanges set SDL3 3.4.16's android-project declares.
+          grep -q 'android:screenOrientation="landscape"' "$MANIFEST" \
+            || fail "the Activity is not landscape"
+          grep -q 'android:configChanges=' "$MANIFEST" || fail "the Activity declares no configChanges"
+          for c in orientation screenSize screenLayout keyboard keyboardHidden uiMode; do
+            grep -q "$c" "$MANIFEST" || fail "configChanges is missing $c"
+          done
+
+          # 4. Permissions: only the two the native code uses; no storage permission.
+          grep -q 'android.permission.CHANGE_WIFI_MULTICAST_STATE' "$MANIFEST" \
+            || fail "the multicast-lock permission the LAN lobby needs is not declared"
+          grep -q 'android.permission.INTERNET' "$MANIFEST" \
+            || fail "the INTERNET permission the LAN lobby's UDP sockets need is not declared"
+          for p in MANAGE_EXTERNAL_STORAGE READ_EXTERNAL_STORAGE WRITE_EXTERNAL_STORAGE \
+                   ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION; do
+            if grep -q "android.permission.$p" "$MANIFEST"; then
+              fail "an unnecessary permission ($p) was introduced"
+            fi
+          done
+          perms=$(grep -c 'uses-permission' "$MANIFEST" || true)
+          [ "$perms" -le 2 ] || fail "$perms permissions declared; only the two justified ones are allowed"
+
+          echo "the Gradle configuration and the packaged manifest are consistent"
 
       - name: Build the native engine as libmain.so for arm64-v8a
         run: |
@@ -412,73 +496,6 @@ jobs:
           APK="$PWD/android/app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK" || { echo "::error::the packaging script produced no APK"; exit 1; }
           ls -la "$APK"
-
-      - name: Assert the Gradle configuration and the packaged manifest
-        run: |
-          set -euo pipefail
-          fail() { echo "::error::$1"; exit 1; }
-          ANDROID_DIR="$PWD/android"
-
-          # 1. The Gradle configuration resolves: the debug variant's manifest task runs, which is
-          #    where the namespace, applicationId, SDK levels and the manifest merge are all checked
-          #    by AGP itself.
-          ( cd "$ANDROID_DIR" && gradle --no-daemon :app:processDebugMainManifest )
-          MANIFEST="$ANDROID_DIR/app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml"
-          [ -f "$MANIFEST" ] || MANIFEST=$(find "$ANDROID_DIR/app/build/intermediates" -name AndroidManifest.xml -path '*merged*' | head -n 1)
-          [ -f "$MANIFEST" ] || fail "the merged manifest was not produced"
-          echo "--- merged manifest ---"; cat "$MANIFEST"
-
-          # 2. Identity, from the merged manifest AGP actually packages.
-          grep -q 'package="io.github.olcayseygan.zerohourreforged"' "$MANIFEST" \
-            || fail "the applicationId is not the project's own id"
-          if grep -q 'com.generalsx.zerohour' "$MANIFEST"; then
-            fail "the reference port's package identity (com.generalsx.zerohour) leaked into the manifest"
-          fi
-          grep -q 'android:name="io.github.olcayseygan.zerohourreforged.ZeroHourActivity"' "$MANIFEST" \
-            || fail "the launcher Activity is not the project's own ZeroHourActivity"
-
-          # 2b. The Phase-3 launcher screen is present; the game Activity is still declared (a
-          #     shortcut placed before it still resolves). Which one is the home-screen entry point
-          #     is asserted from the packaged APK's badging below.
-          grep -q 'android:name="io.github.olcayseygan.zerohourreforged.SetupActivity"' "$MANIFEST" \
-            || fail "the setup Activity (the folder picker screen) is not declared"
-          if grep -q 'android.intent.category.LAUNCHER' "$MANIFEST" ; then
-            : # present; its owner is checked on the APK below
-          else
-            fail "no LAUNCHER entry point is declared"
-          fi
-
-          # 2c. The in-app System Requirements & Device Compatibility screen is declared and is not
-          #     exported (it is reached only from the setup screen).
-          grep -q 'android:name="io.github.olcayseygan.zerohourreforged.CompatibilityActivity"' "$MANIFEST" \
-            || fail "the compatibility screen (CompatibilityActivity) is not declared"
-          grep -A8 'android:name="io.github.olcayseygan.zerohourreforged.CompatibilityActivity"' "$MANIFEST" \
-            | grep -q 'android:exported="false"' \
-            || fail "CompatibilityActivity must not be exported"
-
-          # 3. Orientation and the configChanges set SDL3 3.4.16's android-project declares.
-          grep -q 'android:screenOrientation="landscape"' "$MANIFEST" \
-            || fail "the Activity is not landscape"
-          grep -q 'android:configChanges=' "$MANIFEST" || fail "the Activity declares no configChanges"
-          for c in orientation screenSize screenLayout keyboard keyboardHidden uiMode; do
-            grep -q "$c" "$MANIFEST" || fail "configChanges is missing $c"
-          done
-
-          # 4. Permissions: only the two the native code uses; no storage permission.
-          grep -q 'android.permission.CHANGE_WIFI_MULTICAST_STATE' "$MANIFEST" \
-            || fail "the multicast-lock permission the LAN lobby needs is not declared"
-          grep -q 'android.permission.INTERNET' "$MANIFEST" \
-            || fail "the INTERNET permission the LAN lobby's UDP sockets need is not declared"
-          for p in MANAGE_EXTERNAL_STORAGE READ_EXTERNAL_STORAGE WRITE_EXTERNAL_STORAGE \
-                   ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION; do
-            if grep -q "android.permission.$p" "$MANIFEST"; then
-              fail "an unnecessary permission ($p) was introduced"
-            fi
-          done
-          perms=$(grep -c 'uses-permission' "$MANIFEST" || true)
-          [ "$perms" -le 2 ] || fail "$perms permissions declared; only the two justified ones are allowed"
-
-          echo "the Gradle configuration and the packaged manifest are consistent"
 
       - name: Run the pure-Java unit tests
         run: |

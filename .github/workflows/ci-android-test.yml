@@ -92,8 +92,41 @@ env:
   CCACHE_BASEDIR: /home/runner
 
 jobs:
+  # Stage 1 -- Preliminary Validation. Both checks read the repository as text: the workflow file's
+  # own cache policy and the build script's syntax. Neither needs cmake, the SDK, the NDK, the
+  # vendored sources or a build output, so a typo fails here in seconds instead of after the SDK
+  # download and the vendored-source fetch. `android-arm64` needs this job.
+  preflight:
+    name: Preliminary validation (static checks, no build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Assert the cache policy excludes application outputs
+        run: |
+          set -euo pipefail
+          # A cache may hold only build infrastructure (SDK/NDK, vendored downloads, ccache); never
+          # libmain.so, the CMake/Ninja build tree or an APK, so the engine is always linked from the
+          # current source. This reads the workflow file itself, so a future cache step pointed at an
+          # output fails here instead of silently shipping a stale binary.
+          scripts/build/android/assert-cache-policy.sh .github/workflows/ci-android-test.yml
+
+      - name: Validate the Android build scripts
+        run: |
+          set -euo pipefail
+          bash -n scripts/build/android/build-android.sh
+          scripts/build/android/build-android.sh --help >/dev/null
+          echo "build-android.sh is syntactically valid and answers --help"
+
+  # Stages 2-6: dependency preparation, the pre-compilation detection checks, the configure/compile/
+  # link, the post-build assertions and the diagnostics upload.
   android-arm64:
     name: Android ARM64 foundation (configure and compile)
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -121,14 +154,49 @@ jobs:
           java -version
           df -h "$RUNNER_TEMP"
 
-      - name: Assert the cache policy excludes application outputs
+      - name: Platform and architecture detection matrices
         run: |
           set -euo pipefail
-          # A cache may hold only build infrastructure (SDK/NDK, vendored downloads, ccache); never
-          # libmain.so, the CMake/Ninja build tree or an APK, so the engine is always linked from the
-          # current source. This reads the workflow file itself, so a future cache step pointed at an
-          # output fails here instead of silently shipping a stale binary.
-          scripts/build/android/assert-cache-policy.sh .github/workflows/ci-android-test.yml
+          # Both run on this x86-64 host and exercise the Android rows, because the detection
+          # functions take their inputs as arguments (no compiler, no toolchain needed).
+          cmake -P GeneralsMD/Code/Tests/test_platform_detection.cmake
+          cmake -P GeneralsMD/Code/Tests/test_architecture_detection.cmake
+
+      - name: Android is its own platform and arm64-v8a is AArch64
+        run: |
+          set -euo pipefail
+          # A small explicit assertion over the two detection functions, in addition to the committed
+          # matrices above, so the CI log says in words what the Android contract is. The cmake
+          # directory is passed as ZH_CMAKE_DIR: CMAKE_CURRENT_LIST_DIR is the directory of this
+          # generated script, not of the file it includes. The heredoc body is indented with the
+          # script; CMake ignores leading whitespace.
+          cat > "$RUNNER_TEMP/assert-android.cmake" <<'EOF'
+          include(${ZH_CMAKE_DIR}/DetectPlatform.cmake)
+          include(${ZH_CMAKE_DIR}/DetectArchitecture.cmake)
+          zh_detect_platform("Android" "1" W P M L A)
+          if(NOT A)
+            message(FATAL_ERROR "Android was not detected as its own platform")
+          endif()
+          if(L)
+            message(FATAL_ERROR "Android was classified as Linux - this must never happen")
+          endif()
+          if(NOT P)
+            message(FATAL_ERROR "Android lost the POSIX umbrella it shares with macOS and Linux")
+          endif()
+          if(W OR M)
+            message(FATAL_ERROR "Android was detected as Windows or macOS")
+          endif()
+          zh_detect_architecture("aarch64" "" "" X64 A64 KNOWN)
+          if(NOT A64 OR X64)
+            message(FATAL_ERROR "aarch64 was not identified as AArch64 (or was identified as x86-64)")
+          endif()
+          zh_detect_architecture("" "" "arm64-v8a" X64B A64B KNOWNB)
+          if(NOT A64B OR X64B)
+            message(FATAL_ERROR "the arm64-v8a ABI was not identified as AArch64")
+          endif()
+          message(STATUS "Android is its own platform (never Linux); aarch64 and arm64-v8a are AArch64")
+          EOF
+          cmake -DZH_CMAKE_DIR="$PWD/GeneralsMD/Code/cmake" -P "$RUNNER_TEMP/assert-android.cmake"
 
       - name: Restore the Android SDK and NDK cache
         id: sdk-cache
@@ -165,13 +233,6 @@ jobs:
             || { echo "::error::the NDK toolchain file is missing after install"; exit 1; }
           test -d "${ANDROID_SDK_ROOT}/platforms/android-${ANDROID_API}" \
             || { echo "::error::platform android-${ANDROID_API} is missing after install"; exit 1; }
-
-      - name: Validate the Android build scripts
-        run: |
-          set -euo pipefail
-          bash -n scripts/build/android/build-android.sh
-          scripts/build/android/build-android.sh --help >/dev/null
-          echo "build-android.sh is syntactically valid and answers --help"
 
       - name: Cache the vendored dependency downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -223,50 +284,6 @@ jobs:
             test -e "GeneralsMD/Code/Libraries/Source/${dep}" \
               || { echo "::error::vendor.sh did not produce Libraries/Source/${dep}"; exit 1; }
           done
-
-      - name: Platform and architecture detection matrices
-        run: |
-          set -euo pipefail
-          # Both run on this x86-64 host and exercise the Android rows, because the detection
-          # functions take their inputs as arguments (no compiler, no toolchain needed).
-          cmake -P GeneralsMD/Code/Tests/test_platform_detection.cmake
-          cmake -P GeneralsMD/Code/Tests/test_architecture_detection.cmake
-
-      - name: Android is its own platform and arm64-v8a is AArch64
-        run: |
-          set -euo pipefail
-          # A small explicit assertion over the two detection functions, in addition to the committed
-          # matrices above, so the CI log says in words what the Android contract is. The cmake
-          # directory is passed as ZH_CMAKE_DIR: CMAKE_CURRENT_LIST_DIR is the directory of this
-          # generated script, not of the file it includes. The heredoc body is indented with the
-          # script; CMake ignores leading whitespace.
-          cat > "$RUNNER_TEMP/assert-android.cmake" <<'EOF'
-          include(${ZH_CMAKE_DIR}/DetectPlatform.cmake)
-          include(${ZH_CMAKE_DIR}/DetectArchitecture.cmake)
-          zh_detect_platform("Android" "1" W P M L A)
-          if(NOT A)
-            message(FATAL_ERROR "Android was not detected as its own platform")
-          endif()
-          if(L)
-            message(FATAL_ERROR "Android was classified as Linux - this must never happen")
-          endif()
-          if(NOT P)
-            message(FATAL_ERROR "Android lost the POSIX umbrella it shares with macOS and Linux")
-          endif()
-          if(W OR M)
-            message(FATAL_ERROR "Android was detected as Windows or macOS")
-          endif()
-          zh_detect_architecture("aarch64" "" "" X64 A64 KNOWN)
-          if(NOT A64 OR X64)
-            message(FATAL_ERROR "aarch64 was not identified as AArch64 (or was identified as x86-64)")
-          endif()
-          zh_detect_architecture("" "" "arm64-v8a" X64B A64B KNOWNB)
-          if(NOT A64B OR X64B)
-            message(FATAL_ERROR "the arm64-v8a ABI was not identified as AArch64")
-          endif()
-          message(STATUS "Android is its own platform (never Linux); aarch64 and arm64-v8a are AArch64")
-          EOF
-          cmake -DZH_CMAKE_DIR="$PWD/GeneralsMD/Code/cmake" -P "$RUNNER_TEMP/assert-android.cmake"
 
       - name: Configure the ARM64 build
         run: |

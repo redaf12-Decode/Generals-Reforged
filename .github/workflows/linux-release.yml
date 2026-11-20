@@ -28,8 +28,55 @@ env:
   SNIPER_IMAGE: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest
 
 jobs:
+  # Stage 1 -- Preliminary Validation. Both checks read files as text: `bash -n` parses the CI
+  # helper scripts, and the vendor boundary test drives vendor.sh against a synthetic tree with curl
+  # stubbed out. They need only bash, git and awk - no apt package, no cached download, no compiled
+  # engine. Both ran inside `build` before, after a full apt install and two cache restores; here a
+  # syntax or vendor.sh regression fails in seconds.
+  preflight:
+    name: Preliminary validation (static checks, no build)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate the CI helper scripts' syntax
+        run: |
+          bash -n .github/scripts/linux-ci-tools.sh GeneralsMD/Code/Tools/linux-{portable,packages,packages-check,check}.sh
+
+      - name: Validate vendor.sh's --no-art boundary
+        run: bash GeneralsMD/Code/Tests/test_vendor_no_art.sh
+
+  # Stage 3 -- Pre-Compilation Dependency Checks. test_linux_release.py exercises the release
+  # handoff gates against synthetic fixtures with real tar/zstd; it stops immediately if zstd is
+  # absent, so it belongs after dependency preparation and before the engine is built.
+  dependency-checks:
+    name: Pre-compilation dependency checks
+    needs: preflight
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the tools these checks need
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zstd python3
+          sudo apt-get clean
+          zstd --version
+
+      - name: Exercise the release handoff gates
+        run: python3 GeneralsMD/Code/Tests/test_linux_release.py
+
+  # Stages 2, 4, 5 and 6: toolchain and dependency preparation, the engine build, CTest, then the
+  # artifact handoff the packaging jobs consume.
   build:
     name: Sniper x86_64 build and Ubuntu 22.04 software rendering
+    needs: [preflight, dependency-checks]
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     steps:
@@ -67,12 +114,6 @@ jobs:
         with:
           path: ${{ runner.temp }}/ci-tools/cmake
           key: linux-cmake-x86_64-v1-${{ hashFiles('.github/scripts/linux-ci-tools.sh') }}
-
-      - name: Validate CI helpers
-        run: |
-          bash -n .github/scripts/linux-ci-tools.sh GeneralsMD/Code/Tools/linux-{portable,packages,packages-check,check}.sh
-          bash GeneralsMD/Code/Tests/test_vendor_no_art.sh
-          python3 GeneralsMD/Code/Tests/test_linux_release.py
 
       - name: Fetch code dependencies and verified build tool
         env:
