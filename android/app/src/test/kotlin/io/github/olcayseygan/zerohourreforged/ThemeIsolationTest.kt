@@ -176,13 +176,25 @@ class ThemeIsolationTest {
     fun thePresentationScreensReserveTheCutout() {
         // Edge to edge means the Scaffold's insets are the only thing keeping content out of the
         // bars and the cutout. The M3 default (systemBars) does not cover the cutout.
+        //
+        // The inset is applied once, in PresentationScaffold, rather than in each screen. That is
+        // only safe if the screens cannot bypass it, so this asserts both halves: the scaffold
+        // consumes safeDrawing, and every presentation screen is drawn inside it.
+        val scaffold = module.resolve(
+            "src/main/kotlin/io/github/olcayseygan/zerohourreforged/ui/components/" +
+                "PresentationScaffold.kt",
+        ).readText()
+        assertTrue(
+            "PresentationScaffold does not consume safeDrawing",
+            scaffold.contains("WindowInsets.safeDrawing"),
+        )
         for (screen in listOf(
             "screens/launcher/LauncherScreen.kt",
             "screens/compatibility/CompatibilityScreen.kt",
         )) {
             val src = module.resolve("src/main/kotlin/io/github/olcayseygan/zerohourreforged/ui/$screen")
                 .readText()
-            assertTrue("$screen does not consume safeDrawing", src.contains("WindowInsets.safeDrawing"))
+            assertTrue("$screen does not use PresentationScaffold", src.contains("PresentationScaffold("))
         }
     }
 
