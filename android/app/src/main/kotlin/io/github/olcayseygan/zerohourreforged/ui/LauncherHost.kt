@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.olcayseygan.zerohourreforged.ui.screens.launcher.LauncherScreen
+import io.github.olcayseygan.zerohourreforged.ui.screens.launcher.LauncherStatus
 import io.github.olcayseygan.zerohourreforged.ui.screens.launcher.LauncherUiState
 import io.github.olcayseygan.zerohourreforged.ui.theme.AppearanceMode
 import io.github.olcayseygan.zerohourreforged.ui.theme.AppearanceStore
@@ -55,7 +56,7 @@ class LauncherHost(
         fun onShowRequirements()
     }
 
-    private var state by mutableStateOf(LauncherUiState(status = ""))
+    private var state by mutableStateOf(LauncherUiState())
     private var appearance by mutableStateOf(AppearanceStore.mode(activity))
     private var dynamicColor by mutableStateOf(AppearanceStore.dynamicColor(activity))
 
@@ -101,9 +102,19 @@ class LauncherHost(
         AppearanceStore.save(activity, mode, useDynamicColor)
     }
 
+    /**
+     * Publishes the Activity's state to the Compose tree.
+     *
+     * <p>Every argument is a value the Activity read from the backend, never a value this class
+     * derived: [status] is the branch its own status refresh took, [folderName] the SAF display name
+     * it remembered, [enginePath] the staged path the engine will be rooted at.
+     */
     fun render(
-        status: String,
+        status: LauncherStatus,
+        headline: String,
         detail: String,
+        folderName: String?,
+        enginePath: String?,
         staging: Boolean,
         progressCopied: Long,
         progressTotal: Long,
@@ -112,7 +123,10 @@ class LauncherHost(
     ) {
         state = LauncherUiState(
             status = status,
+            headline = headline,
             detail = detail,
+            folderName = folderName,
+            enginePath = enginePath,
             staging = staging,
             progressCopied = progressCopied,
             progressTotal = progressTotal,

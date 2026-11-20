@@ -28,6 +28,7 @@ import androidx.activity.ComponentActivity;
 import java.io.File;
 
 import io.github.olcayseygan.zerohourreforged.ui.LauncherHost;
+import io.github.olcayseygan.zerohourreforged.ui.screens.launcher.LauncherStatus;
 
 /**
  * The launcher screen: pick the folder Zero Hour is installed in, stage it into a real path, start
@@ -57,8 +58,11 @@ public class SetupActivity extends ComponentActivity implements LauncherHost.Cal
     private LauncherHost host;
 
     // The state the Compose screen renders. Written on the UI thread only.
+    private LauncherStatus status = LauncherStatus.NO_FOLDER;
     private String statusText = "";
     private String detailText = "";
+    private String folderName;
+    private String enginePath;
     private long progressCopied;
     private long progressTotal;
     private boolean canLaunch;
@@ -98,12 +102,24 @@ public class SetupActivity extends ComponentActivity implements LauncherHost.Cal
         if (destroyed) {
             return;
         }
-        host.render(statusText, detailText, staging, progressCopied, progressTotal, canLaunch, canClear);
+        host.render(status, statusText, detailText, folderName, enginePath,
+                staging, progressCopied, progressTotal, canLaunch, canClear);
     }
 
+    /**
+     * Reads the backend and publishes what it says.
+     *
+     * <p>Each branch is one of the launcher's real situations, and each reports the {@link LauncherStatus}
+     * that names it. The verdict itself is never re-derived here: {@link GameFolderStore} decides
+     * whether the staged copy validates, and {@link GameFolderValidator.Result} says which archive is
+     * missing, so the screen can state the real reason rather than a generic failure.
+     */
     private void refreshStatus() {
         Uri tree = GameFolderStore.treeUri(this);
         if (tree == null) {
+            status = LauncherStatus.NO_FOLDER;
+            folderName = null;
+            enginePath = null;
             statusText = getString(R.string.setup_status_none);
             detailText = getString(R.string.setup_detail_none);
             canLaunch = false;
@@ -111,8 +127,12 @@ public class SetupActivity extends ComponentActivity implements LauncherHost.Cal
             publish();
             return;
         }
-        String name = GameFolderStore.sourceName(this);
+        // The remembered display name: what the SAF provider called the folder the player picked.
+        String name = displayNameOf(tree);
+        folderName = name;
         if (!GameFolderStore.hasPersistedRead(this)) {
+            status = LauncherStatus.PERMISSION_LOST;
+            enginePath = null;
             statusText = getString(R.string.setup_status_permission_lost, name);
             detailText = getString(R.string.setup_detail_permission_lost);
             canLaunch = false;
@@ -122,18 +142,61 @@ public class SetupActivity extends ComponentActivity implements LauncherHost.Cal
         }
         GameFolderValidator.Verdict verdict = GameFolderStore.stagedValidation(this);
         if (!verdict.isOk()) {
-            statusText = getString(R.string.setup_status_incomplete, name);
+            // A wrong folder and an incomplete one are different problems with different fixes, so
+            // they are reported as different states rather than as one "not valid".
+            boolean wrongFolder = verdict.result == GameFolderValidator.Result.NO_ZERO_HOUR;
+            status = wrongFolder ? LauncherStatus.INVALID : LauncherStatus.INCOMPLETE;
+            enginePath = null;
+            statusText = getString(
+                    wrongFolder ? R.string.setup_status_invalid : R.string.setup_status_incomplete,
+                    name);
             detailText = messageFor(verdict.result);
             canLaunch = false;
             canClear = true;
             publish();
             return;
         }
+        status = LauncherStatus.READY;
+        enginePath = GameFolderStore.engineRoot(this).getAbsolutePath();
         statusText = getString(R.string.setup_status_ready, name);
-        detailText = getString(R.string.setup_detail_staging,
-                GameFolderStore.engineRoot(this).getAbsolutePath());
+        detailText = getString(R.string.setup_detail_staging, enginePath);
         canLaunch = true;
         canClear = true;
+        publish();
+    }
+
+    /**
+     * The remembered name of the picked folder, never null.
+     *
+     * <p>{@link GameFolderStore#sourceName} is null if the name was never stored, which a stale
+     * preference can produce. The screen treats a null name as "no folder chosen", so a remembered
+     * folder must still have a name: the tree's last path segment is the same fallback
+     * {@link GameFolderStore#remember} already applies, so both agree.
+     */
+    private String displayNameOf(Uri tree) {
+        String stored = GameFolderStore.sourceName(this);
+        if (stored != null && !stored.isEmpty()) {
+            return stored;
+        }
+        String segment = tree.getLastPathSegment();
+        return segment != null ? segment : "";
+    }
+
+    /**
+     * Publishes an interrupted copy as its own state.
+     *
+     * <p>Separate from {@link #refreshStatus()} on purpose: that method reports what the staged copy
+     * validates to, which after a failure is "incomplete" - a verdict that blames the player's folder
+     * for a copy that simply did not finish. The staged copy is kept, so choosing the same folder
+     * again resumes incrementally; only the folder's access is offered for removal here.
+     */
+    private void publishStagingFailed(String failure) {
+        status = LauncherStatus.STAGING_FAILED;
+        enginePath = null;
+        statusText = getString(R.string.setup_staging_failed);
+        detailText = failure;
+        canLaunch = false;
+        canClear = GameFolderStore.treeUri(this) != null;
         publish();
     }
 
@@ -223,6 +286,11 @@ public class SetupActivity extends ComponentActivity implements LauncherHost.Cal
      */
     private void stage(Uri tree) {
         staging = true;
+        status = LauncherStatus.STAGING;
+        // The folder being copied, so the installation card names it while the copy runs rather than
+        // staying on whatever the previous refresh left there.
+        folderName = displayNameOf(tree);
+        enginePath = null;
         statusText = getString(R.string.setup_status_staging);
         detailText = "";
         progressCopied = 0;
@@ -266,12 +334,17 @@ public class SetupActivity extends ComponentActivity implements LauncherHost.Cal
         }
         progressCopied = 0;
         progressTotal = 0;
-        // refreshStatus publishes the post-staging state, including whether the game can start.
-        refreshStatus();
         if (failure != null) {
+            // The copy stopped, so the folder's own validity is not what to report: the staged copy
+            // is partial and the reason is the failure. Publishing the failed state first means the
+            // screen still explains itself after the dialog is dismissed, instead of falling back to
+            // a "not a complete folder" verdict the player did not cause.
+            publishStagingFailed(failure);
             showProblem(failure);
             return;
         }
+        // refreshStatus publishes the post-staging state, including whether the game can start.
+        refreshStatus();
         GameFolderValidator.Verdict verdict = GameFolderStore.stagedValidation(this);
         if (!verdict.isOk()) {
             showProblem(messageFor(verdict.result));

@@ -249,6 +249,42 @@ class WcagContrastTest {
             BrandPalette.LightOnSurfaceVariant,
             BrandPalette.LightSurfaceContainerHigh,
         )
+
+        // The launcher's identity header: the title sits on the page background, not on a surface.
+        assertTextPair("header/dark", BrandPalette.DarkOnBackground, BrandPalette.DarkBackground)
+        assertTextPair("header/light", BrandPalette.LightOnBackground, BrandPalette.LightBackground)
+        // Its subtitle is the quiet caption beneath the title.
+        assertTextPair("subtitle/dark", BrandPalette.DarkOnSurfaceVariant, BrandPalette.DarkBackground)
+        assertTextPair("subtitle/light", BrandPalette.LightOnSurfaceVariant, BrandPalette.LightBackground)
+
+        // The confirmation dialog: its title is a statement (onSurface), and the confirming button
+        // carries the destructive tint (error) on the same container.
+        assertTextPair("confirmTitle/dark", BrandPalette.DarkOnSurface, BrandPalette.DarkSurfaceContainerHigh)
+        assertTextPair("confirmTitle/light", BrandPalette.LightOnSurface, BrandPalette.LightSurfaceContainerHigh)
+        assertTextPair("confirmAction/dark", BrandPalette.DarkError, BrandPalette.DarkSurfaceContainerHigh)
+        assertTextPair("confirmAction/light", BrandPalette.LightError, BrandPalette.LightSurfaceContainerHigh)
+    }
+
+    /**
+     * The divider that separates the installation rows from the copy note must be visible.
+     *
+     * <p>It uses `outline`, not `outlineVariant`: `outlineVariant` is Material 3's *decorative*
+     * hairline and measures about 1.7:1 here, which is too faint for the one line that tells the
+     * player the note below is a different kind of statement. A divider is not text, so it is held to
+     * the 3:1 non-text minimum - the same rule as an outline.
+     */
+    @Test
+    fun installationDividerIsVisible() {
+        assertBoundaryPair(
+            "divider/dark",
+            BrandPalette.DarkOutline,
+            BrandPalette.DarkSurfaceContainerLow,
+        )
+        assertBoundaryPair(
+            "divider/light",
+            BrandPalette.LightOutline,
+            BrandPalette.LightSurfaceContainerLow,
+        )
     }
 
     /** Outlines and dividers must be visible against the surfaces they separate. */

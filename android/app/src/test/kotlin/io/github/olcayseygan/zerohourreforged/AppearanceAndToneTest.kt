@@ -18,11 +18,14 @@
 
 package io.github.olcayseygan.zerohourreforged
 
+import io.github.olcayseygan.zerohourreforged.ui.screens.launcher.LauncherStatus
 import io.github.olcayseygan.zerohourreforged.ui.screens.launcher.LauncherUiState
+import io.github.olcayseygan.zerohourreforged.ui.screens.launcher.formatBytes
 import io.github.olcayseygan.zerohourreforged.ui.components.StatusTone
 import io.github.olcayseygan.zerohourreforged.ui.theme.AppearanceMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -76,49 +79,90 @@ class AppearanceAndToneTest {
     }
 
     /**
-     * The launcher's status tone follows the same flags its buttons do.
+     * Every launcher state maps to the tone that expresses it.
      *
-     * <p>The precedence is what matters: staging is in progress (INFO) even if the previous state
-     * could launch, and a remembered-but-unusable folder is a WARNING because the player can fix it
-     * by choosing again - not a DANGER, which is reserved for a hard failure.
+     * <p>Each of these is a real branch of SetupActivity's status refresh, so the table is the
+     * contract between the backend's verdict and the colour the player sees. A wrong folder and an
+     * interrupted copy are both hard failures; a folder that is merely incomplete is a warning,
+     * because the player can complete it without losing anything.
      */
     @Test
-    fun launcherToneFollowsItsFlags() {
-        assertEquals(StatusTone.NEUTRAL, LauncherUiState(status = "").tone)
+    fun everyLauncherStateHasItsTone() {
+        assertEquals(StatusTone.NEUTRAL, LauncherUiState(status = LauncherStatus.NO_FOLDER).tone)
+        assertEquals(StatusTone.INFO, LauncherUiState(status = LauncherStatus.STAGING).tone)
+        assertEquals(StatusTone.SUCCESS, LauncherUiState(status = LauncherStatus.READY).tone)
         assertEquals(
             StatusTone.WARNING,
-            LauncherUiState(status = "", canClear = true).tone,
+            LauncherUiState(status = LauncherStatus.PERMISSION_LOST).tone,
         )
-        assertEquals(
-            StatusTone.SUCCESS,
-            LauncherUiState(status = "", canLaunch = true, canClear = true).tone,
-        )
-        assertEquals(
-            StatusTone.INFO,
-            LauncherUiState(status = "", staging = true, canLaunch = true).tone,
-        )
+        assertEquals(StatusTone.WARNING, LauncherUiState(status = LauncherStatus.INCOMPLETE).tone)
+        assertEquals(StatusTone.DANGER, LauncherUiState(status = LauncherStatus.INVALID).tone)
+        assertEquals(StatusTone.DANGER, LauncherUiState(status = LauncherStatus.STAGING_FAILED).tone)
+    }
+
+    /** Every state that is not playable asks the player for a folder; the playable ones do not. */
+    @Test
+    fun needsFolderCoversEveryUnplayableState() {
+        assertTrue(LauncherStatus.NO_FOLDER.needsFolder)
+        assertTrue(LauncherStatus.PERMISSION_LOST.needsFolder)
+        assertTrue(LauncherStatus.INVALID.needsFolder)
+        assertTrue(LauncherStatus.INCOMPLETE.needsFolder)
+        assertTrue(LauncherStatus.STAGING_FAILED.needsFolder)
+        assertFalse(LauncherStatus.READY.needsFolder)
+        // A running copy is not a state the player should be asked to resolve by picking again.
+        assertFalse(LauncherStatus.STAGING.needsFolder)
     }
 
     /** Progress is a fraction of the reported total, clamped, and zero when no total is known. */
     @Test
     fun progressFractionIsClampedAndTotalDependent() {
-        assertEquals(0f, LauncherUiState(status = "").progressFraction, 0f)
-        assertFalse(LauncherUiState(status = "").hasProgressTotal)
+        assertEquals(0f, LauncherUiState().progressFraction, 0f)
+        assertFalse(LauncherUiState().hasProgressTotal)
 
-        val half = LauncherUiState(status = "", progressCopied = 50, progressTotal = 100)
+        val half = LauncherUiState(progressCopied = 50, progressTotal = 100)
         assertTrue(half.hasProgressTotal)
         assertEquals(0.5f, half.progressFraction, 0.0001f)
 
         // A copy that briefly reports more than it announced must not produce a bar past 100%.
         assertEquals(
             1f,
-            LauncherUiState(status = "", progressCopied = 150, progressTotal = 100).progressFraction,
+            LauncherUiState(progressCopied = 150, progressTotal = 100).progressFraction,
             0f,
         )
         assertEquals(
             0f,
-            LauncherUiState(status = "", progressCopied = -5, progressTotal = 100).progressFraction,
+            LauncherUiState(progressCopied = -5, progressTotal = 100).progressFraction,
             0f,
         )
     }
+
+    /**
+     * The byte line is built from the reported counts, and is absent when no total is known.
+     *
+     * <p>Absent rather than "0 B / 0 B": an unknown length is drawn with the indeterminate bar, and a
+     * zero total would read as a copy that has nothing to do.
+     */
+    @Test
+    fun progressBytesReportTheRealCounts() {
+        assertNull(LauncherUiState(progressCopied = 10).progressBytes)
+        assertEquals(
+            "3.2 GB / 7.5 GB",
+            LauncherUiState(progressCopied = 3_435_973_837, progressTotal = 8_053_063_680)
+                .progressBytes,
+        )
+    }
+
+    /** Sizes use the unit a player would use, and stay readable at every magnitude. */
+    @Test
+    fun formatBytesPicksAReadableUnit() {
+        assertEquals("0 B", formatBytes(0))
+        assertEquals("1023 B", formatBytes(1023))
+        assertEquals("1 KB", formatBytes(1024))
+        assertEquals("512 KB", formatBytes(512L * 1024))
+        assertEquals("1.5 MB", formatBytes((1.5 * 1024 * 1024).toLong()))
+        assertEquals("812 MB", formatBytes(812L * 1024 * 1024))
+        assertEquals("3.4 GB", formatBytes((3.4 * 1024 * 1024 * 1024).toLong()))
+        assertEquals("12 GB", formatBytes(12L * 1024 * 1024 * 1024))
+    }
+}
 }

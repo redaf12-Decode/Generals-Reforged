@@ -19,20 +19,29 @@
 package io.github.olcayseygan.zerohourreforged.ui.screens.launcher
 
 import io.github.olcayseygan.zerohourreforged.ui.components.StatusTone
+import java.util.Locale
 
 /**
  * Everything the launcher screen draws, as plain values.
  *
- * <p>The screen is a pure function of this state and the four callbacks, so SetupActivity keeps
- * every decision - which folder, whether the staged copy validates, whether staging is running -
- * and only renders the answer. Nothing here reads storage, the SAF grant or the validator.
+ * <p>The screen is a pure function of this state and its callbacks, so SetupActivity keeps every
+ * decision - which folder, whether the staged copy validates, whether staging is running - and only
+ * renders the answer. Nothing here reads storage, the SAF grant or the validator, and nothing here
+ * guesses: every field is either a value the Activity read from the backend or a string it formatted
+ * from one.
  */
 data class LauncherUiState(
+    /** Which situation the screen is in; the Activity decides, the screen only draws it. */
+    val status: LauncherStatus = LauncherStatus.NO_FOLDER,
     /** The headline status line, already formatted by the Activity. */
-    val status: String,
+    val headline: String = "",
     /** The supporting line beneath it, or empty for none. */
     val detail: String = "",
-    /** Staging is running: the buttons are disabled and progress is shown. */
+    /** The display name of the picked folder, or null when none is remembered. */
+    val folderName: String? = null,
+    /** The real filesystem path the engine reads from, or null until a copy has validated. */
+    val enginePath: String? = null,
+    /** Staging is running: the actions are disabled and progress is shown. */
     val staging: Boolean = false,
     /** Copied bytes so far, and the total when the copy reported one (0 means unknown). */
     val progressCopied: Long = 0,
@@ -45,17 +54,19 @@ data class LauncherUiState(
     /**
      * The state of the game folder, as the shared status vocabulary.
      *
-     * <p>Derived from the flags rather than passed in, so it cannot disagree with the buttons: if
-     * the screen offers "Start game", the card is a success. The order matters - staging outranks
-     * everything (nothing else is true while it runs), and a remembered-but-unusable folder is a
-     * warning rather than a failure, because the player can still fix it by choosing again.
+     * <p>Mapped from [status] rather than re-derived from the flags, so the card's colour cannot
+     * disagree with the sentence the Activity wrote: the Activity is the only thing that knows
+     * whether a missing archive is a wrong folder or a revoked permission.
      */
     internal val tone: StatusTone
-        get() = when {
-            staging -> StatusTone.INFO
-            canLaunch -> StatusTone.SUCCESS
-            canClear -> StatusTone.WARNING
-            else -> StatusTone.NEUTRAL
+        get() = when (status) {
+            LauncherStatus.READY -> StatusTone.SUCCESS
+            LauncherStatus.STAGING -> StatusTone.INFO
+            LauncherStatus.NO_FOLDER -> StatusTone.NEUTRAL
+            LauncherStatus.PERMISSION_LOST -> StatusTone.WARNING
+            LauncherStatus.INCOMPLETE -> StatusTone.WARNING
+            LauncherStatus.INVALID -> StatusTone.DANGER
+            LauncherStatus.STAGING_FAILED -> StatusTone.DANGER
         }
 
     /** Whether the copy reported a total, so progress can be shown as a fraction. */
@@ -69,4 +80,46 @@ data class LauncherUiState(
         } else {
             0f
         }
+
+    /**
+     * "3.4 GB / 8.1 GB", or null when the copy has not reported a total.
+     *
+     * <p>Formatted from the byte counts the staging callback actually reported, so it says what was
+     * copied rather than an estimate. Null rather than "0%" when no total is known: an unknown
+     * length is drawn with the indeterminate bar, not with a number that would be a guess.
+     */
+    internal val progressBytes: String?
+        get() = if (hasProgressTotal) {
+            formatBytes(progressCopied) + " / " + formatBytes(progressTotal)
+        } else {
+            null
+        }
+}
+
+/**
+ * A byte count as a short, human-sized string: "812 MB", "3.4 GB".
+ *
+ * <p>Decimal-looking units with a binary divisor, matching how Android's own storage settings
+ * reports sizes. One decimal below ten of a unit and none above it, so a copy that creeps from
+ * "3.2 GB" to "3.4 GB" visibly moves instead of sitting on "3 GB" for minutes. Locale.US so the
+ * decimal separator does not change under a test.
+ */
+internal fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) {
+        return "$bytes B"
+    }
+    val megabytes = bytes / (1024.0 * 1024.0)
+    return when {
+        megabytes < 1 -> String.format(Locale.US, "%.0f KB", bytes / 1024.0)
+        megabytes < 10 -> String.format(Locale.US, "%.1f MB", megabytes)
+        megabytes < 1024 -> String.format(Locale.US, "%.0f MB", megabytes)
+        else -> {
+            val gigabytes = megabytes / 1024.0
+            if (gigabytes < 10) {
+                String.format(Locale.US, "%.1f GB", gigabytes)
+            } else {
+                String.format(Locale.US, "%.0f GB", gigabytes)
+            }
+        }
+    }
 }
