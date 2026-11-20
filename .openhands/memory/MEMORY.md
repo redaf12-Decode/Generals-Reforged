@@ -686,7 +686,7 @@ the fuller option). Consequences to remember:
   `LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES` fills the notch, it does not protect content from it.
   `enableEdgeToEdge` must run before `setContent` (it re-lays out the window) and never for an SDL
   surface. `ThemeIsolationTest` pins all of it against the real manifest/XML/Java files.
-- **Responsive/a11y phase 6 green** (`agent/material3-ui-redesign`, CI run 44695615538, **98 tests**).
+- **Responsive/a11y phase 6 green** (`agent/material3-ui-redesign`, CI runs 44695615538 & 44696822918, **98 tests**).
   The Phase-4/5 `maxLines = 2` on the appearance segmented control was a *vertical* clip: M3
   `SegmentedButton` is a non-negotiable 40dp tall, so two lines fit at 1.0x and clip at ~1.3x.
   Fix = change the control (`LayoutRules.stackSegmentControls` -> stacked `RadioButton` rows), never
