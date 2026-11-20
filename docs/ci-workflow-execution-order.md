@@ -236,3 +236,19 @@ Only the following commands changed position. None changed text.
 - `scripts/build/android/assert-cache-policy.sh` on both Android workflows: passes (8 cache paths).
 - `bash -n` and `--help` for `build-android.sh` and `package-android.sh` run locally: pass.
 - `git diff --check`: clean.
+
+## GitHub Actions execution results
+
+Dispatched on `agent/ci-dependency-aware-pipeline` at commit `3cd8224` (all three build workflows
+have narrow `push` triggers, so `workflow_dispatch` is how they run on a development branch):
+
+| Run | Workflow | Result | Evidence the staging works |
+|:--|:--|:--|:--|
+| [44703124037](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44703124037) | CI Android App | **success** | `preflight` green in ~30 s; then "Assert the Gradle configuration and the packaged manifest" **passed before** "Build the native engine" — the reordering is real, and the manifest check no longer waits for the engine. Post-build stages then ran in order: 98 unit tests in 11 suites, 0 failures, APK inspection green |
+| [44703183164](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44703183164) | CI Android Test | **success** | `preflight` green; "Platform and architecture detection matrices" and "Android is its own platform and arm64-v8a is AArch64" ran **immediately after** the apt install and **before** the SDK/NDK download and `vendor.sh`, then configure/compile/link/assert all passed |
+| [44703187551](https://github.com/redaf12-Decode/Generals-Reforged/actions/runs/44703187551) | Linux build and release | **failure (pre-existing)** | The new `preflight` job passed `bash -n`, then failed `test_vendor_no_art.sh` in 17 s with the pre-existing fixture defect (limitation 2). `dependency-checks`, `build`, `packages`, `flatpak`, `package-check`, `assemble` and `release` were all **skipped** — the gate stopped the pipeline instead of letting a full apt install, a Docker pull and the Sniper build run first, which is exactly the intended behaviour |
+
+The `linux-release` failure is the pre-existing `test_vendor_no_art.sh` defect, unchanged by this work:
+it fails identically on the base branch (run 44148144123, step "Validate CI helpers"). Fixing it would
+mean changing what the test asserts, which is out of scope here. The value of the change is visible in
+the timing: 17 s to fail instead of after the runner preparation and both cache restores.
