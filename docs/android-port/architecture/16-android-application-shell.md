@@ -66,6 +66,10 @@ repository.
 
 ## 4. SDL3 Activity integration
 
+> **Superseded (Phase 1, 2026-11-20).** SDL3 is no longer linked statically: the Android build now
+> produces a standalone `libSDL3.so` and the override returns `{"SDL3", "main"}`. See
+> [`../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md`](../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md).
+
 `ZeroHourActivity` extends `org.libsdl.app.SDLActivity` (staged from the vendored SDL3 3.4.16 tree)
 and overrides exactly one method.
 

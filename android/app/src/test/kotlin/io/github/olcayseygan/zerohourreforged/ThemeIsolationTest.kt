@@ -143,7 +143,10 @@ class ThemeIsolationTest {
             "src/main/java/io/github/olcayseygan/zerohourreforged/ZeroHourActivity.java",
         ).readText()
         assertTrue("must extend SDLActivity", game.contains("extends SDLActivity"))
-        assertTrue("must load libmain.so", game.contains("return new String[] { \"main\" }"))
+        assertTrue(
+            "must load SDL3 before the engine",
+            game.contains("return new String[] { \"SDL3\", \"main\" }"),
+        )
         assertTrue("must pass -root", game.contains("\"-root\""))
         // Checked as declarations, not names: the class javadoc discusses both methods by name,
         // so a bare `contains` would fail on the documentation rather than on an override.

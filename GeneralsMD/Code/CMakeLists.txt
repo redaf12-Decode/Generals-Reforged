@@ -938,22 +938,54 @@ endif()
 # They are built by default all the same, so that a break shows up in the build that caused it
 # rather than in the first task to link them.
 if(ZH_PLATFORM_POSIX)
-  # SDL3 static, and only the subsystems decision 3 uses.  On: video (window, events, message boxes),
-  # GPU (the renderer - Metal on macOS, Vulkan on Linux) and dialog (the first launch's folder chooser,
-  # PosixMain.cpp: NSOpenPanel on macOS, the portal or zenity on Linux; with it off, SDL answers every
-  # dialog at once with "not built with dialog support", and the chooser quit before showing anything).
+  # SDL3, and only the subsystems decision 3 uses.  On: video (window, events, message boxes),
+  # GPU (the renderer - Metal on macOS, Vulkan on Linux and Android) and dialog (the first launch's
+  # folder chooser, PosixMain.cpp: NSOpenPanel on macOS, the portal or zenity on Linux, an intent on
+  # Android; with it off, SDL answers every dialog at once with "not built with dialog support", and
+  # the chooser quit before showing anything).
   # Off: audio (miniaudio has that job), render (SDL's 2D renderer; D4 uses the GPU API directly),
   # camera, joystick, haptic, hidapi, power, sensor and tray, and the OpenGL/GLES video drivers, which
   # the GPU API does not use.  Tests, examples and install are off.
-  foreach(_sdl_off SDL_SHARED SDL_TEST_LIBRARY SDL_TESTS SDL_EXAMPLES SDL_INSTALL SDL_UNINSTALL
+  #
+  # Static or shared is the one thing Android does differently.  The desktop keeps SDL3 static, as it
+  # has always been: one binary, nothing to stage.  Android gets a standalone libSDL3.so, because
+  # SDL3's own Java glue owns the process entry there: SDLActivity loads "SDL3" before "main"
+  # (getLibraries) and SDL3's JNI_OnLoad, which registers that activity's native methods, lives in
+  # libSDL3.so.  ZH_SDL3_TARGET is the single place the choice is made and every link below names it,
+  # so no target can link the other type and put a second SDL3 implementation inside libmain.so.
+  # See docs/android-port/implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md.
+  foreach(_sdl_off SDL_TEST_LIBRARY SDL_TESTS SDL_EXAMPLES SDL_INSTALL SDL_UNINSTALL
                    SDL_AUDIO SDL_RENDER SDL_CAMERA SDL_JOYSTICK SDL_HAPTIC SDL_HIDAPI SDL_POWER
                    SDL_SENSOR SDL_TRAY SDL_OPENGL SDL_OPENGLES)
     set(${_sdl_off} OFF CACHE BOOL "" FORCE)
   endforeach()
-  foreach(_sdl_on SDL_STATIC SDL_VIDEO SDL_GPU SDL_DIALOG)
+  foreach(_sdl_on SDL_VIDEO SDL_GPU SDL_DIALOG)
     set(${_sdl_on} ON CACHE BOOL "" FORCE)
   endforeach()
+  if(ZH_PLATFORM_ANDROID)
+    set(SDL_SHARED ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+  else()
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+  endif()
   add_subdirectory(${LIBSRC}/SDL3 ${CMAKE_CURRENT_BINARY_DIR}/SDL3)
+
+  # SDL3's CMakeLists defines each target name only for the library type it was asked to build, so the
+  # choice above is checked here rather than surfacing as "target not found" from a link line later.
+  if(ZH_PLATFORM_ANDROID)
+    if(NOT TARGET SDL3::SDL3-shared)
+      message(FATAL_ERROR "SDL3 built no shared target (SDL3::SDL3-shared).  The Android build needs "
+        "libSDL3.so: SDL_STATIC must be OFF and SDL_SHARED ON.")
+    endif()
+    set(ZH_SDL3_TARGET SDL3::SDL3-shared)
+  else()
+    if(NOT TARGET SDL3::SDL3-static)
+      message(FATAL_ERROR "SDL3 built no static target (SDL3::SDL3-static).  The desktop build links "
+        "SDL3 statically: SDL_STATIC must be ON and SDL_SHARED OFF.")
+    endif()
+    set(ZH_SDL3_TARGET SDL3::SDL3-static)
+  endif()
 
   # miniaudio: one C file.  Its own CMakeLists builds extras and examples this does not want.
   # It opens the platform's audio libraries at run time by default, so the static library needs
@@ -1013,7 +1045,7 @@ if(ZH_PLATFORM_POSIX)
   # What SDL3's GPU API can do on this machine: the evidence D2 and D5 need before the backend
   # interface is designed.  Needs a GPU and a display, so it is built but not registered with ctest.
   add_executable(sdl_gpu_probe ${CMAKE_CURRENT_SOURCE_DIR}/Tests/sdl_gpu_probe.cpp)
-  target_link_libraries(sdl_gpu_probe PRIVATE SDL3::SDL3-static)
+  target_link_libraries(sdl_gpu_probe PRIVATE ${ZH_SDL3_TARGET})
 
   # The D-spike: one real model and its DDS textures, read from the game's archives, drawn through
   # SDL3's GPU API.  Parses W3D with WWLib's chunkio and w3d_file.h; WW3D2 itself is not built.  Needs
@@ -1031,7 +1063,7 @@ if(ZH_PLATFORM_POSIX)
     ${WW}/WW3D2 ${WW}/WWLib ${WW}/WWMath ${WW}/WWDebug)
   # --shaders generated draws with the game's own generated programs, compiled as the SDL3 backend
   # will compile them (D3).
-  target_link_libraries(w3d_view PRIVATE SDL3::SDL3-static wwmath wwlib wwsaveload wwdebug
+  target_link_libraries(w3d_view PRIVATE ${ZH_SDL3_TARGET} wwmath wwlib wwsaveload wwdebug
     ffvertex engineshader sdl3shadercompile)
 endif()
 
@@ -1076,12 +1108,12 @@ if(ZH_PLATFORM_POSIX)
   # wrote.  DXIL (and so DXC) is not used.
   add_library(sdl3_shadercross STATIC ${LIBSRC}/SDL_shadercross/src/SDL_shadercross.c)
   target_include_directories(sdl3_shadercross PUBLIC ${LIBSRC}/SDL_shadercross/include)
-  target_link_libraries(sdl3_shadercross PUBLIC SDL3::SDL3-static PRIVATE spirv-cross-c)
+  target_link_libraries(sdl3_shadercross PUBLIC ${ZH_SDL3_TARGET} PRIVATE spirv-cross-c)
 
   # HLSL to SPIR-V to what a device takes, behind the one function that names the HLSL front end.
   add_library(sdl3shadercompile STATIC ${WW}/WW3D2/sdl3shadercompile.cpp ${WW}/WW3D2/sdl3storage.cpp)
   target_include_directories(sdl3shadercompile PUBLIC ${WW}/WW3D2)
-  target_link_libraries(sdl3shadercompile PUBLIC SDL3::SDL3-static
+  target_link_libraries(sdl3shadercompile PUBLIC ${ZH_SDL3_TARGET}
     PRIVATE sdl3_shadercross glslang::glslang glslang::glslang-default-resource-limits)
 
 endif()
@@ -1549,7 +1581,7 @@ if(ZH_PLATFORM_POSIX)
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Include)
   # A3: with a window the device draws through SDL3 GPU, and compiles its own small programs (the gamma
   # pass) the way the generated ones are compiled.
-  target_link_libraries(posixd3d9 PRIVATE SDL3::SDL3-static sdl3shadercompile engineshader ffshader ffvertex postprocess)
+  target_link_libraries(posixd3d9 PRIVATE ${ZH_SDL3_TARGET} sdl3shadercompile engineshader ffshader ffvertex postprocess)
 
   # Depth-format fallback follows the complete scene-depth capability, without requiring a GPU.
   add_executable(sdl_gpu_depth_format_selfcheck ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_sdl_gpu_depth_format.cpp)
@@ -1572,21 +1604,21 @@ if(ZH_PLATFORM_POSIX)
   set_target_properties(sdl_gpu_frame_selfcheck PROPERTIES CXX_STANDARD 17)
   target_include_directories(sdl_gpu_frame_selfcheck PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-  target_link_libraries(sdl_gpu_frame_selfcheck PRIVATE posixd3d9 SDL3::SDL3-static)
+  target_link_libraries(sdl_gpu_frame_selfcheck PRIVATE posixd3d9 ${ZH_SDL3_TARGET})
   add_test(NAME sdl_gpu_frame_selfcheck COMMAND sdl_gpu_frame_selfcheck)
 
   add_executable(test_water_path_gpu ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_water_path_gpu.cpp)
   set_target_properties(test_water_path_gpu PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_water_path_gpu PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-  target_link_libraries(test_water_path_gpu PRIVATE posixd3d9 SDL3::SDL3-static)
+  target_link_libraries(test_water_path_gpu PRIVATE posixd3d9 ${ZH_SDL3_TARGET})
   add_test(NAME test_water_path_gpu COMMAND test_water_path_gpu)
   set_tests_properties(test_water_path_gpu PROPERTIES SKIP_RETURN_CODE 77)
 
   add_executable(test_renderer_water_foam ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_renderer_water_foam.cpp)
   set_target_properties(test_renderer_water_foam PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_renderer_water_foam PRIVATE ${ZH_POSIX_RENDER_DIR})
-  target_link_libraries(test_renderer_water_foam PRIVATE posixd3d9 SDL3::SDL3-static)
+  target_link_libraries(test_renderer_water_foam PRIVATE posixd3d9 ${ZH_SDL3_TARGET})
   add_test(NAME test_renderer_water_foam COMMAND test_renderer_water_foam)
   add_test(NAME test_renderer_water_foam_gpu COMMAND test_renderer_water_foam --gpu)
   set_tests_properties(test_renderer_water_foam_gpu PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
@@ -1594,7 +1626,7 @@ if(ZH_PLATFORM_POSIX)
   add_executable(test_renderer_effects ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_renderer_effects.cpp)
   set_target_properties(test_renderer_effects PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_renderer_effects PRIVATE ${ZH_POSIX_RENDER_DIR})
-  target_link_libraries(test_renderer_effects PRIVATE posixd3d9 ffshader sdl3shadercompile SDL3::SDL3-static)
+  target_link_libraries(test_renderer_effects PRIVATE posixd3d9 ffshader sdl3shadercompile ${ZH_SDL3_TARGET})
   add_test(NAME test_renderer_effects COMMAND test_renderer_effects)
   add_test(NAME test_renderer_effects_gpu COMMAND test_renderer_effects --gpu)
   set_tests_properties(test_renderer_effects_gpu PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
@@ -1602,7 +1634,7 @@ if(ZH_PLATFORM_POSIX)
   add_executable(test_renderer_particles ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_renderer_particles.cpp)
   set_target_properties(test_renderer_particles PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_renderer_particles PRIVATE ${ZH_POSIX_RENDER_DIR})
-  target_link_libraries(test_renderer_particles PRIVATE posixd3d9 ffshader ffvertex sdl3shadercompile SDL3::SDL3-static)
+  target_link_libraries(test_renderer_particles PRIVATE posixd3d9 ffshader ffvertex sdl3shadercompile ${ZH_SDL3_TARGET})
   add_test(NAME test_renderer_particles COMMAND test_renderer_particles)
   add_test(NAME test_renderer_particles_gpu COMMAND test_renderer_particles --gpu)
   set_tests_properties(test_renderer_particles_gpu PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
@@ -1611,7 +1643,7 @@ if(ZH_PLATFORM_POSIX)
   set_target_properties(test_renderer_foundation PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_renderer_foundation PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-  target_link_libraries(test_renderer_foundation PRIVATE posixd3d9 SDL3::SDL3-static)
+  target_link_libraries(test_renderer_foundation PRIVATE posixd3d9 ${ZH_SDL3_TARGET})
   add_test(NAME test_renderer_foundation COMMAND test_renderer_foundation)
   add_test(NAME test_renderer_foundation_gpu COMMAND test_renderer_foundation --gpu)
   set_tests_properties(test_renderer_foundation_gpu PROPERTIES SKIP_RETURN_CODE 77)
@@ -1620,7 +1652,7 @@ if(ZH_PLATFORM_POSIX)
   set_target_properties(test_renderer_lighting PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_renderer_lighting PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-  target_link_libraries(test_renderer_lighting PRIVATE w3ddevice ww3d2 posixdevice gameengine SDL3::SDL3-static)
+  target_link_libraries(test_renderer_lighting PRIVATE w3ddevice ww3d2 posixdevice gameengine ${ZH_SDL3_TARGET})
   add_test(NAME test_renderer_lighting COMMAND test_renderer_lighting)
   add_test(NAME test_renderer_lighting_gpu COMMAND test_renderer_lighting --gpu)
   set_tests_properties(test_renderer_lighting_gpu PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
@@ -1629,7 +1661,7 @@ if(ZH_PLATFORM_POSIX)
   set_target_properties(test_sdl_post PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_sdl_post PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-  target_link_libraries(test_sdl_post PRIVATE posixd3d9 postprocess SDL3::SDL3-static)
+  target_link_libraries(test_sdl_post PRIVATE posixd3d9 postprocess ${ZH_SDL3_TARGET})
   add_test(NAME test_sdl_post COMMAND test_sdl_post)
   add_test(NAME test_sdl_post_gpu COMMAND test_sdl_post --gpu)
   set_tests_properties(test_sdl_post_gpu PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
@@ -1638,7 +1670,7 @@ if(ZH_PLATFORM_POSIX)
   set_target_properties(test_sdl_ao PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_sdl_ao PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-  target_link_libraries(test_sdl_ao PRIVATE posixd3d9 postprocess SDL3::SDL3-static)
+  target_link_libraries(test_sdl_ao PRIVATE posixd3d9 postprocess ${ZH_SDL3_TARGET})
   add_test(NAME test_sdl_ao COMMAND test_sdl_ao)
   add_test(NAME test_sdl_ao_gpu COMMAND test_sdl_ao --gpu)
   set_tests_properties(test_sdl_ao_gpu PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
@@ -1647,7 +1679,7 @@ if(ZH_PLATFORM_POSIX)
   set_target_properties(test_sdl_atmosphere PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_sdl_atmosphere PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-  target_link_libraries(test_sdl_atmosphere PRIVATE posixd3d9 postprocess SDL3::SDL3-static)
+  target_link_libraries(test_sdl_atmosphere PRIVATE posixd3d9 postprocess ${ZH_SDL3_TARGET})
   add_test(NAME test_sdl_atmosphere COMMAND test_sdl_atmosphere)
   add_test(NAME test_sdl_atmosphere_gpu COMMAND test_sdl_atmosphere --gpu)
   set_tests_properties(test_sdl_atmosphere_gpu PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
@@ -1656,7 +1688,7 @@ if(ZH_PLATFORM_POSIX)
     add_executable(test_sdl_${_post_test} ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_sdl_${_post_test}.cpp)
     set_target_properties(test_sdl_${_post_test} PROPERTIES CXX_STANDARD 17)
     target_include_directories(test_sdl_${_post_test} PRIVATE ${ZH_POSIX_RENDER_DIR})
-    target_link_libraries(test_sdl_${_post_test} PRIVATE posixd3d9 postprocess SDL3::SDL3-static)
+    target_link_libraries(test_sdl_${_post_test} PRIVATE posixd3d9 postprocess ${ZH_SDL3_TARGET})
     add_test(NAME test_sdl_${_post_test} COMMAND test_sdl_${_post_test})
     add_test(NAME test_sdl_${_post_test}_gpu COMMAND test_sdl_${_post_test} --gpu)
     set_tests_properties(test_sdl_${_post_test}_gpu PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
@@ -1667,7 +1699,7 @@ if(ZH_PLATFORM_POSIX)
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/W3DDevice/GameClient/HazardCloudShader.cpp)
   set_target_properties(test_sdl_reach PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_sdl_reach PRIVATE ${ZH_POSIX_RENDER_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Include)
-  target_link_libraries(test_sdl_reach PRIVATE posixd3d9 sdl3shadercompile SDL3::SDL3-static)
+  target_link_libraries(test_sdl_reach PRIVATE posixd3d9 sdl3shadercompile ${ZH_SDL3_TARGET})
   add_test(NAME test_sdl_reach COMMAND test_sdl_reach)
   add_test(NAME test_sdl_reach_gpu COMMAND test_sdl_reach --gpu)
   set_tests_properties(test_sdl_reach_gpu PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
@@ -1677,7 +1709,7 @@ if(ZH_PLATFORM_POSIX)
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/W3DDevice/GameClient/HazardCloudShader.cpp)
   set_target_properties(test_sdl_owner_release PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_sdl_owner_release PRIVATE ${ZH_POSIX_RENDER_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Include)
-  target_link_libraries(test_sdl_owner_release PRIVATE posixd3d9 sdl3shadercompile SDL3::SDL3-static)
+  target_link_libraries(test_sdl_owner_release PRIVATE posixd3d9 sdl3shadercompile ${ZH_SDL3_TARGET})
   add_test(NAME test_sdl_owner_release COMMAND test_sdl_owner_release)
   add_test(NAME test_sdl_owner_release_gpu COMMAND test_sdl_owner_release --gpu)
   set_tests_properties(test_sdl_owner_release_gpu PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
@@ -1692,7 +1724,7 @@ if(ZH_PLATFORM_POSIX)
       $<TARGET_PROPERTY:gameengine,INCLUDE_DIRECTORIES>)
     target_compile_options(${name} PRIVATE -ffunction-sections -fdata-sections)
     target_link_options(${name} PRIVATE -Wl,--gc-sections)
-    target_link_libraries(${name} PRIVATE posixd3d9 sdl3shadercompile SDL3::SDL3-static)
+    target_link_libraries(${name} PRIVATE posixd3d9 sdl3shadercompile ${ZH_SDL3_TARGET})
     add_test(NAME ${name} COMMAND ${name})
   endforeach()
   add_test(NAME test_sdl_gpu_particles_gpu COMMAND test_sdl_gpu_particles --gpu)
@@ -1701,7 +1733,7 @@ if(ZH_PLATFORM_POSIX)
   add_executable(test_sdl_classic_foam ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_sdl_classic_foam.cpp)
   set_target_properties(test_sdl_classic_foam PROPERTIES CXX_STANDARD 17)
   target_include_directories(test_sdl_classic_foam PRIVATE ${ZH_POSIX_RENDER_DIR})
-  target_link_libraries(test_sdl_classic_foam PRIVATE engineshader sdl3shadercompile spirv-cross-c SDL3::SDL3-static)
+  target_link_libraries(test_sdl_classic_foam PRIVATE engineshader sdl3shadercompile spirv-cross-c ${ZH_SDL3_TARGET})
   add_test(NAME test_sdl_classic_foam COMMAND test_sdl_classic_foam)
   add_test(NAME test_sdl_classic_foam_gpu COMMAND test_sdl_classic_foam --gpu)
   set_tests_properties(test_sdl_classic_foam_gpu PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
@@ -1731,7 +1763,7 @@ if(ZH_PLATFORM_POSIX)
   set_target_properties(sdl_program_cache_selfcheck PROPERTIES CXX_STANDARD 17)
   target_include_directories(sdl_program_cache_selfcheck PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-  target_link_libraries(sdl_program_cache_selfcheck PRIVATE posixd3d9 ffshader ffvertex SDL3::SDL3-static)
+  target_link_libraries(sdl_program_cache_selfcheck PRIVATE posixd3d9 ffshader ffvertex ${ZH_SDL3_TARGET})
   add_test(NAME sdl_program_cache_selfcheck COMMAND sdl_program_cache_selfcheck)
   set_tests_properties(sdl_program_cache_selfcheck PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -1741,7 +1773,7 @@ if(ZH_PLATFORM_POSIX)
   set_target_properties(sdl_pipeline_state_selfcheck PROPERTIES CXX_STANDARD 17)
   target_include_directories(sdl_pipeline_state_selfcheck PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render ${WW}/WWLib ${WW}/WWDebug ${WW}/WWMath)
-  target_link_libraries(sdl_pipeline_state_selfcheck PRIVATE posixd3d9 d3dx9runtime ffshader ffvertex SDL3::SDL3-static)
+  target_link_libraries(sdl_pipeline_state_selfcheck PRIVATE posixd3d9 d3dx9runtime ffshader ffvertex ${ZH_SDL3_TARGET})
   add_test(NAME sdl_pipeline_state_selfcheck COMMAND sdl_pipeline_state_selfcheck)
   set_tests_properties(sdl_pipeline_state_selfcheck PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -1752,7 +1784,7 @@ if(ZH_PLATFORM_POSIX)
   target_include_directories(posix_gpu_draw_selfcheck PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render
     ${CMAKE_CURRENT_SOURCE_DIR}/GameEngine/Include)
-  target_link_libraries(posix_gpu_draw_selfcheck PRIVATE posixd3d9 SDL3::SDL3-static)
+  target_link_libraries(posix_gpu_draw_selfcheck PRIVATE posixd3d9 ${ZH_SDL3_TARGET})
   add_test(NAME posix_gpu_draw_selfcheck COMMAND posix_gpu_draw_selfcheck)
   set_tests_properties(posix_gpu_draw_selfcheck PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -1761,7 +1793,7 @@ if(ZH_PLATFORM_POSIX)
     set_target_properties(posix_reset_selfcheck PROPERTIES CXX_STANDARD 17)
     target_include_directories(posix_reset_selfcheck PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-    target_link_libraries(posix_reset_selfcheck PRIVATE posixd3d9 SDL3::SDL3-static)
+    target_link_libraries(posix_reset_selfcheck PRIVATE posixd3d9 ${ZH_SDL3_TARGET})
     target_link_options(posix_reset_selfcheck PRIVATE
       "LINKER:--wrap=SDL_AcquireGPUCommandBuffer" "LINKER:--wrap=SDL_CreateGPUTexture")
     add_test(NAME posix_reset_selfcheck COMMAND posix_reset_selfcheck)
@@ -1776,7 +1808,7 @@ if(ZH_PLATFORM_POSIX)
     target_include_directories(water_preview PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render
       ${WW}/WW3D2 ${ZH_POSIX_D3D9_INCLUDE})
-    target_link_libraries(water_preview PRIVATE posixd3d9 SDL3::SDL3-static)
+    target_link_libraries(water_preview PRIVATE posixd3d9 ${ZH_SDL3_TARGET})
     # Preserve the original proposal's build-target name for existing local workflows.
     add_custom_target(thrax_water_preview DEPENDS water_preview)
   endif()
@@ -1786,7 +1818,7 @@ if(ZH_PLATFORM_POSIX)
   add_executable(ffref_gpu_selfcheck ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_ffref_gpu.cpp)
   set_target_properties(ffref_gpu_selfcheck PROPERTIES CXX_STANDARD 17)
   target_include_directories(ffref_gpu_selfcheck PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-  target_link_libraries(ffref_gpu_selfcheck PRIVATE posixd3d9 ffreference SDL3::SDL3-static)
+  target_link_libraries(ffref_gpu_selfcheck PRIVATE posixd3d9 ffreference ${ZH_SDL3_TARGET})
   add_test(NAME ffref_gpu_selfcheck COMMAND ffref_gpu_selfcheck)
   set_tests_properties(ffref_gpu_selfcheck PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -1795,7 +1827,7 @@ if(ZH_PLATFORM_POSIX)
   add_executable(ffref_capture_selfcheck ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_ffref_capture.cpp)
   set_target_properties(ffref_capture_selfcheck PROPERTIES CXX_STANDARD 17)
   target_include_directories(ffref_capture_selfcheck PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-  target_link_libraries(ffref_capture_selfcheck PRIVATE posixd3d9 ffreference SDL3::SDL3-static)
+  target_link_libraries(ffref_capture_selfcheck PRIVATE posixd3d9 ffreference ${ZH_SDL3_TARGET})
   add_test(NAME ffref_capture_selfcheck COMMAND ffref_capture_selfcheck)
   set_tests_properties(ffref_capture_selfcheck PROPERTIES SKIP_RETURN_CODE 77)
   set_tests_properties(sdl_gpu_frame_selfcheck PROPERTIES SKIP_RETURN_CODE 77)
@@ -2005,7 +2037,7 @@ if(ZH_PLATFORM_POSIX)
     target_include_directories(test_sun_shadow_sorting PRIVATE
       ${WW}/WWLib ${WW}/WWMath ${WW}/WWDebug ${WW}/WW3D2
       ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/PosixDevice/Render)
-    target_link_libraries(test_sun_shadow_sorting PRIVATE w3ddevice ww3d2 posixdevice gameengine SDL3::SDL3-static)
+    target_link_libraries(test_sun_shadow_sorting PRIVATE w3ddevice ww3d2 posixdevice gameengine ${ZH_SDL3_TARGET})
     add_test(NAME test_sun_shadow_sorting COMMAND test_sun_shadow_sorting)
     set_tests_properties(test_sun_shadow_sorting PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
   endif()
@@ -2250,7 +2282,7 @@ if(ZH_PLATFORM_POSIX)
   add_library(sdlinput STATIC ${SDLINPUT_SOURCES})
   target_include_directories(sdlinput PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Include)
   set_target_properties(sdlinput PROPERTIES CXX_STANDARD 17)
-  target_link_libraries(sdlinput PUBLIC gameengine SDL3::SDL3-static)
+  target_link_libraries(sdlinput PUBLIC gameengine ${ZH_SDL3_TARGET})
 
   file(GLOB_RECURSE SDLDEVICE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Source/SdlDevice/*.cpp)
   list(FILTER SDLDEVICE_SOURCES EXCLUDE REGEX "/SdlDevice/GameClient/")
@@ -2258,7 +2290,7 @@ if(ZH_PLATFORM_POSIX)
   target_include_directories(sdldevice PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/GameEngineDevice/Include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Stubs)
   set_target_properties(sdldevice PROPERTIES CXX_STANDARD 17)
-  target_link_libraries(sdldevice PUBLIC posixdevice w3ddevice SDL3::SDL3-static milesaudiomanager sdlinput)
+  target_link_libraries(sdldevice PUBLIC posixdevice w3ddevice ${ZH_SDL3_TARGET} milesaudiomanager sdlinput)
   if(APPLE)
     target_link_libraries(sdldevice PRIVATE "-framework CoreGraphics")		# SdlDisplays' panel size
   endif()
@@ -2285,6 +2317,10 @@ if(ZH_PLATFORM_POSIX)
   # source is identical either way and only the target's kind differs.  The target keeps the name
   # `generals` so every reference below - $<TARGET_FILE:generals>, the compile definitions - is
   # unchanged; only its artifact differs (generals vs libmain.so).
+  #
+  # SDL3 is named directly here as well as through sdldevice: on Android that is the standalone
+  # libSDL3.so, and libmain.so must carry it in DT_NEEDED so the loader resolves SDL_* at start-up
+  # (docs/android-port/implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md).
   if(ZH_PLATFORM_ANDROID)
     add_library(generals SHARED ${CMAKE_CURRENT_SOURCE_DIR}/Main/PosixMain.cpp)
     set_target_properties(generals PROPERTIES OUTPUT_NAME main)
@@ -2293,7 +2329,7 @@ if(ZH_PLATFORM_POSIX)
   endif()
   target_include_directories(generals PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Main ${GENERATED})
   set_target_properties(generals PROPERTIES CXX_STANDARD 17)
-  target_link_libraries(generals PRIVATE sdldevice installroot)
+  target_link_libraries(generals PRIVATE sdldevice installroot ${ZH_SDL3_TARGET})
   # C2's SDL side of Monitors.h and MessageBoxWrapper, on SDL's offscreen video driver.
   # test_gameengine_stubs.cpp: the names the executable supplies, which GCC's larger pull from sdldevice
   # reaches (ld.lld, L1b); clang's does not, and they cost nothing there.

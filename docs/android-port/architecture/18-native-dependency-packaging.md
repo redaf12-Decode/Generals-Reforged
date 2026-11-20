@@ -19,6 +19,10 @@ The engine is `libmain.so` (`PosixMain.cpp` built as the `generals` target, `add
 SHARED)`, `OUTPUT_NAME main` — `CMakeLists.txt:2288-2290`). Built for arm64-v8a, its `DT_NEEDED` is
 the ground truth for what the APK must carry. Read from the object with the NDK's `llvm-readelf -d`:
 
+> **Superseded (Phase 1, 2026-11-20).** SDL3 is now a standalone shared library, so `libSDL3.so` is
+> the second packaged dependency and the APK's native payload is three files. See
+> [`../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md`](../implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md).
+
 | `DT_NEEDED` | Class | Provided by | In the APK? |
 |:--|:--|:--|:--|
 | `libc.so` | Android system | bionic | no (device) |

@@ -54,7 +54,7 @@ android {
             // Staged by scripts/build/android/package-android.sh: java-sdl holds
             // org/libsdl/app/*.java from the vendored SDL3 3.4.16 tree, so the
             // Java glue always matches the SDL3 the engine linked; jniLibs holds
-            // libmain.so and libc++_shared.so.
+            // libmain.so, libSDL3.so and libc++_shared.so.
             java.srcDirs += 'src/main/java-sdl'
             jniLibs.srcDirs = ['src/main/jniLibs']
         }
@@ -83,12 +83,12 @@ android {
             // loads with System.loadLibrary - no fallback, so a call into it throws
             // UnsatisfiedLinkError when the library is absent.
             //
-            // It is excluded because the APK must carry exactly the engine's two libraries
-            // (libmain.so, libc++_shared.so) - CI asserts nothing else is under lib/. The library is
-            // reached only through Compose's Path.iterator(); this app iterates no Path, and the one
-            // artifact that can reach it (animation-core's PathEasing) is never instantiated here.
-            // Any future screen that iterates a Path, or uses PathEasing, must remove this exclusion
-            // and relax that CI assertion.
+            // It is excluded because the APK must carry exactly the engine's three libraries
+            // (libmain.so, libSDL3.so, libc++_shared.so) - CI asserts nothing else is under lib/.
+            // The library is reached only through Compose's Path.iterator(); this app iterates no
+            // Path, and the one artifact that can reach it (animation-core's PathEasing) is never
+            // instantiated here. Any future screen that iterates a Path, or uses PathEasing, must
+            // remove this exclusion and relax that CI assertion.
             excludes.add '**/libandroidx.graphics.path.so'
         }
     }

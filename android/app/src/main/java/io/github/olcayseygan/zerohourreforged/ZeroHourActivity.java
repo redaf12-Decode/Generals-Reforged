@@ -34,7 +34,7 @@ import java.io.File;
  * a dedicated thread. This class adds nothing to that: no lifecycle override, no
  * duplicate entry point, no rendering or input code.
  *
- * <p>The one thing it decides is which native libraries to load.
+ * <p>The one thing it decides is which native libraries to load, and in what order.
  *
  * <p>The engine is built as {@code libmain.so} (GeneralsMD/Code/CMakeLists.txt,
  * {@code add_library(generals SHARED ...)} with {@code OUTPUT_NAME main}) from
@@ -43,21 +43,25 @@ import java.io.File;
  * resolves to {@code libmain.so} and {@link #getMainFunction()} to {@code SDL_main},
  * so the entry point needs no override here.
  *
- * <p>SDL3 itself is linked <em>statically</em> into libmain.so (the build forces
- * {@code SDL_STATIC} on and {@code SDL_SHARED} off), so the APK carries no
- * {@code libSDL3.so} and SDL3's JNI {@code JNI_OnLoad} lives inside libmain.so. SDL3's
- * default {@code getLibraries()} returns {@code {"SDL3", "main"}}, which would try to
- * load a library that is not in the APK; this override returns only the one library
- * that is.
+ * <p>SDL3 is a standalone shared library, {@code libSDL3.so}, built from the same vendored
+ * SDL3 tree (3.4.16) the engine compiles against (on Android the build sets
+ * {@code SDL_SHARED} on and {@code SDL_STATIC} off; see
+ * docs/android-port/implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md). The APK
+ * therefore carries exactly two SDL-related objects: {@code libSDL3.so} and
+ * {@code libmain.so}. {@code libSDL3.so} must be loaded first - SDL3's
+ * {@code JNI_OnLoad}, which registers this activity's native methods, lives there, and
+ * libmain.so imports every SDL_* it calls from it. SDLActivity's default
+ * {@code getLibraries()} is already {@code {"SDL3", "main"}}; the override below states
+ * that order as this app's contract rather than inheriting it.
  */
 public class ZeroHourActivity extends SDLActivity {
 
     @Override
     protected String[] getLibraries() {
-        // Only libmain.so: it already contains SDL3 (linked statically) and exports
-        // SDL3's JNI_OnLoad, so SDLActivity's JNI bindings are registered when this
-        // library loads. There is no separate libSDL3.so to load.
-        return new String[] { "main" };
+        // Load order matters: SDL3 first (its JNI_OnLoad registers the native methods of
+        // SDLActivity and friends), then the engine, which imports SDL_* from it. The last
+        // entry is also what getMainSharedObject() turns into libmain.so.
+        return new String[] { "SDL3", "main" };
     }
 
     /**

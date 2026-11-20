@@ -39,16 +39,19 @@ Android-specific renderer. What runs is the fork's own D3D9-shaped device over S
 | Application shell | A Gradle project under [`android/`](.) (`app/`): a thin Java Activity and the manifest. AGP 8.7.3, Gradle 8.12. |
 | Entry point | The engine's existing `main()` in `Main/PosixMain.cpp`, exported as `SDL_main`; `ZeroHourActivity` extends SDL3's `SDLActivity`, which loads `libmain.so` and calls it. |
 | Engine | `libmain.so` — the whole native engine cross-compiled with the NDK (Clang, C++17, `arm64-v8a`, API 28). |
-| Platform layer | **SDL3 3.4.16**, linked **statically** into `libmain.so` (no `libSDL3.so` in the APK). |
+| Platform layer | **SDL3 3.4.16** as a standalone shared library, `libSDL3.so`, loaded by `SDLActivity` before `libmain.so`. |
 | Graphics | The fork's renderer over **SDL3's GPU API**; on Android the only backend is **Vulkan** (SDL3 3.4.16 has no GLES GPU backend, and DXVK is not used). Shaders are HLSL → glslang → SPIR-V. |
 | Audio | The Miles 6.5 API implemented over **miniaudio**, with the **AAudio** backend first and **OpenSL ES** as the fallback. |
 | Input | A native touch layer (`SdlTouch`) for battlefield gestures, plus the unchanged mouse/keyboard paths; SDL's IME for text entry. |
 | Storage | The player's picked game folder is staged once into app storage; saves, options and logs go to app-private storage. |
 
-The engine's only non-system native dependency is `libc++_shared.so`; every third-party library
-(SDL3, miniaudio, FreeType, glslang, SPIRV-Cross, SDL_shadercross, mbedTLS, zlib, LZH-Light, GameSpy,
-FFmpeg) is a static archive linked into `libmain.so`. The APK's native payload is therefore two
-files: `lib/arm64-v8a/libmain.so` and `lib/arm64-v8a/libc++_shared.so`.
+SDL3 is the one third-party library the APK carries as its own shared object, because SDL3's Java
+glue owns the process entry on Android: `SDLActivity` loads `libSDL3.so` and then `libmain.so`, and
+SDL3's `JNI_OnLoad` lives in `libSDL3.so`. Every other third-party library (miniaudio, FreeType,
+glslang, SPIRV-Cross, SDL_shadercross, mbedTLS, zlib, LZH-Light, GameSpy, FFmpeg) is a static archive
+linked into `libmain.so`. The APK's native payload is therefore three files under
+`lib/arm64-v8a/`: `libmain.so`, `libSDL3.so` and the NDK's `libc++_shared.so` (the C++ runtime
+`libmain.so` needs).
 
 ## Implemented Android features
 
@@ -183,9 +186,9 @@ ANDROID_SDK_ROOT=/path/to/sdk ANDROID_NDK_HOME=/path/to/ndk \
   scripts/build/android/package-android.sh --install
 ```
 
-`package-android.sh` stages `libmain.so`, `libc++_shared.so` and SDL3's Java glue into `android/`
-(both staged directories are gitignored), then runs Gradle. The SDK must hold platform `android-35`;
-the NDK must be named so `libc++_shared.so` can be found.
+`package-android.sh` stages `libmain.so`, `libSDL3.so`, `libc++_shared.so` and SDL3's Java glue into
+`android/` (both staged directories are gitignored), then runs Gradle. The SDK must hold platform
+`android-35`; the NDK must be named so `libc++_shared.so` can be found.
 
 ## Verification and limitations
 

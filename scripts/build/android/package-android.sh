@@ -31,9 +31,14 @@
 # vendored SDL3 tree (Libraries/Source/SDL3), the exact version the engine linked.
 #
 # What is staged into android/app/src/main (both gitignored, re-staged every run):
-#   jniLibs/arm64-v8a/libmain.so      the engine, built from Main/PosixMain.cpp
+#   jniLibs/arm64-v8a/libmain.so        the engine, built from Main/PosixMain.cpp
+#   jniLibs/arm64-v8a/libSDL3.so        SDL3 3.4.16 as a standalone shared library (SDL_SHARED on)
 #   jniLibs/arm64-v8a/libc++_shared.so  the NDK's shared C++ runtime (ANDROID_STL=c++_shared)
-#   java-sdl/org/libsdl/app/*.java    SDL3's Java glue (SDLActivity et al)
+#   java-sdl/org/libsdl/app/*.java      SDL3's Java glue (SDLActivity et al), the same version as
+#                                       libSDL3.so: both come from Libraries/Source/SDL3
+#
+# libSDL3.so and libmain.so are the two libraries SDLActivity loads, in that order
+# (ZeroHourActivity.getLibraries). SDL3's JNI_OnLoad lives in libSDL3.so, so it is not optional.
 #
 # Nothing is worked around: a missing library is a failure with its name, not a flag that hides it.
 
@@ -88,6 +93,16 @@ ENGINE="$BUILD/libmain.so"
 [package]        Build it first:  scripts/build/android/build-android.sh
 [package]        (or point --build-dir at the tree that holds it)."
 
+# --- SDL3, the engine's standalone platform library ----------------------------------------------
+# The Android build configures SDL3 with SDL_SHARED on and SDL_STATIC off, so the build tree holds
+# libSDL3.so beside libmain.so and libmain.so names it in DT_NEEDED. It has to reach the APK:
+# SDLActivity loads "SDL3" before "main", and SDL3's JNI_OnLoad - which registers the activity's
+# native methods - is in libSDL3.so.
+SDL3_LIB="$BUILD/libSDL3.so"
+[ -f "$SDL3_LIB" ] || fail "libSDL3.so was not found at $SDL3_LIB.
+[package]        The Android build produces it from the vendored SDL3 tree (SDL_SHARED on), as part
+[package]        of the engine's link: scripts/build/android/build-android.sh --target generals."
+
 # --- the NDK, for libc++_shared.so ---------------------------------------------------------------
 [ -n "$NDK" ] || fail "the Android NDK was not found. Set ANDROID_NDK_HOME (or ANDROID_NDK_ROOT), or pass --ndk DIR.
 [package]        libc++_shared.so comes from the same NDK the engine was built with."
@@ -119,6 +134,7 @@ else
 fi
 
 echo "[package] engine:  $ENGINE"
+echo "[package] sdl3:    $SDL3_LIB"
 echo "[package] ndk:     $NDK"
 echo "[package] sdk:     $SDK (platform android-$SDK_PLATFORM)"
 echo "[package] gradle:  $GRADLE"
@@ -128,6 +144,7 @@ echo "[package] variant: $VARIANT"
 rm -rf "$JNILIBS"
 mkdir -p "$JNILIBS"
 cp "$ENGINE" "$JNILIBS/libmain.so"
+cp "$SDL3_LIB" "$JNILIBS/libSDL3.so"
 cp "$LIBCXX" "$JNILIBS/libc++_shared.so"
 echo "[package] staged native libraries:"
 ls -la "$JNILIBS"

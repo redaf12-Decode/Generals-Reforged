@@ -16,6 +16,8 @@
 #   3. the native dependencies are classified from the ELF itself (Phase 4): Class/Machine/Type,
 #      SONAME, the DT_NEEDED set, the exported SDL_main, the dynamic symbols the loader must
 #      resolve, and the Android API the object was built for - no desktop library may appear;
+#      and libSDL3.so, the standalone SDL3 the engine links against, is checked as an object in its
+#      own right (AArch64, SONAME libSDL3.so, exports JNI_OnLoad and SDL_*);
 #   4. the application project's Gradle configuration is valid and the packaged manifest is the
 #      merged one AGP produces: the setup (folder-picker) Activity and the game Activity, the
 #      landscape orientation, the configChanges set, the single justified multicast permission
@@ -24,17 +26,18 @@
 #      (INIZH.big plus the base game's Textures.big) and the incremental staging plan (copy
 #      once, then only what changed) - see GameFolderValidatorTest, GameDataStagingTest;
 #   6. the packaging script is syntactically valid and finds the libraries it stages;
-#   7. an APK is actually assembled and its contents inspected - libmain.so and libc++_shared.so
-#      under lib/arm64-v8a, no other ABI, no duplicate SDL3 shared object, every non-system
-#      DT_NEEDED of libmain.so present in the APK, no proprietary game data, SetupActivity as the
-#      home-screen entry point, and no storage permission.
+#   7. an APK is actually assembled and its contents inspected - libmain.so, libSDL3.so and
+#      libc++_shared.so under lib/arm64-v8a, no other ABI, exactly one SDL3 shared object, every
+#      non-system DT_NEEDED of libmain.so present in the APK, no proprietary game data,
+#      SetupActivity as the home-screen entry point, and no storage permission.
 #
 # Reuse: the engine is built here rather than downloaded because no compatible native output
 # exists to reuse - ci-android-test.yml publishes only logs (no libmain.so artifact) and does not
 # trigger on this branch. Rebuilding it is therefore the only way to package the real engine, and
 # it happens here, in GitHub Actions, never locally. The dependency classification (step 3) is
-# the reference port's "every non-system DT_NEEDED must be a real file inside the APK" check,
-# adapted: this port links SDL3 statically, so the only non-system need is libc++_shared.so.
+# the reference port's "every non-system DT_NEEDED must be a real file inside the APK" check:
+# this port links SDL3 as a standalone shared library (libSDL3.so) and the NDK's C++ runtime
+# (libc++_shared.so), so those two are the packaged dependencies.
 
 name: CI Android App
 
@@ -363,6 +366,11 @@ jobs:
             || { echo "::error::$NATIVE_BUILD/libmain.so predates this build step: it was not linked from the current source"; exit 1; }
           echo "libmain.so linked this run at $(date -d "@$linked" -u '+%Y-%m-%dT%H:%M:%SZ')"
           ls -la "$NATIVE_BUILD/libmain.so"
+          # SDL3 is a standalone shared library on Android (SDL_SHARED on, SDL_STATIC off), so the
+          # same link must have produced it beside the engine. Without it libmain.so cannot start.
+          test -f "$NATIVE_BUILD/libSDL3.so" \
+            || { echo "::error::the build did not produce $NATIVE_BUILD/libSDL3.so: SDL3 was not built shared"; exit 1; }
+          ls -la "$NATIVE_BUILD/libSDL3.so"
 
       - name: Print the ccache statistics
         run: |
@@ -433,32 +441,69 @@ jobs:
               libGLESv3.so|libEGL.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libmediandk.so|\
               libcamera2ndk.so|libjnigraphics.so|libnativewindow.so|libsync.so)
                 system+=("$lib"); echo "  system-provided : $lib" ;;
-              libc++_shared.so)
+              libc++_shared.so|libSDL3.so)
                 packaged+=("$lib"); echo "  packaged in APK : $lib" ;;
               *)
                 fail "libmain.so needs '$lib', which is neither a known Android system library nor one this port packages. Classify it before shipping." ;;
             esac
           done
-          [ "${#packaged[@]}" -eq 1 ] && [ "${packaged[0]}" = "libc++_shared.so" ] \
-            || fail "the only non-system dependency must be libc++_shared.so; got: ${packaged[*]:-none}"
+          for lib in libSDL3.so libc++_shared.so; do
+            printf '%s\n' "${packaged[@]:-}" | grep -qx "$lib" \
+              || fail "libmain.so does not depend on $lib, which the APK must carry"
+          done
 
           # No desktop-Linux or Windows library may have reached the shared object.
-          for token in libX11 libfontconfig libwayland libxkbcommon libGL.so libSDL3 libdxvk libcurl; do
+          for token in libX11 libfontconfig libwayland libxkbcommon libGL.so libdxvk libcurl; do
             if grep -q -- "$token" <<<"$dynamic"; then
-              fail "a desktop-only or duplicate library ($token) reached libmain.so's DT_NEEDED"
+              fail "a desktop-only library ($token) reached libmain.so's DT_NEEDED"
             fi
           done
 
-          # SDL3 must be static: if it were shared, the link graph would carry a libSDL3 DT_NEEDED
-          # (there is none - the loop above would have failed) and the APK would need a second .so.
-          # Confirm no SDL_ symbol is left strongly undefined (weak references are ignored: they are
-          # optional by definition).
-          undef_sdl=$("$NM" --undefined-only "$LIB" | grep -E '(^| )U +SDL_' || true)
-          if [ -n "$undef_sdl" ]; then
-            echo "$undef_sdl"
-            fail "SDL_ symbols are undefined: SDL3 is not linked statically into libmain.so"
+          # SDL3 is a standalone shared library, so libmain.so imports SDL_* and names libSDL3.so
+          # (classified above). What libmain.so must NOT contain is an SDL3 implementation of its
+          # own: that would be a second copy of SDL3, and the two would disagree about state. The
+          # one SDL_ symbol it defines is the app's own entry point, SDL_main.
+          undef_sdl=$("$NM" --undefined-only "$LIB" | grep -cE '(^| )U +SDL_' || true)
+          echo "SDL_ symbols imported from libSDL3.so: ${undef_sdl}"
+          [ "${undef_sdl:-0}" -gt 0 ] \
+            || fail "libmain.so imports no SDL_ symbol: SDL3 is not linked into the engine"
+          defined_sdl=$("$NM" --dynamic --defined-only "$LIB" | grep -E '[[:space:]]SDL_' | grep -vE '[[:space:]]SDL_main$' || true)
+          if [ -n "$defined_sdl" ]; then
+            echo "$defined_sdl"
+            fail "libmain.so defines SDL_ symbols of its own: a second SDL3 implementation is inside the engine (only SDL_main may be defined there)"
           fi
-          echo "no SDL_ symbol is undefined: SDL3 is linked in statically"
+          echo "libmain.so defines no SDL3 symbol but its own SDL_main: one SDL3 implementation, in libSDL3.so"
+
+          # libSDL3.so is the other half of the pair: it must be the AArch64 SDL3 the engine linked,
+          # with the SONAME libmain.so names, SDL3's JNI entry point (SDLActivity's native methods
+          # are registered by it) and the SDL_* the engine imports.
+          SDL3_LIB="$NATIVE_BUILD/libSDL3.so"
+          [ -f "$SDL3_LIB" ] || fail "the build produced no libSDL3.so: SDL3 was not built shared"
+          echo "===== libSDL3.so ====="
+          sdl3_header=$("$READELF" -h "$SDL3_LIB"); grep -E 'Class:|Machine:|Type:' <<<"$sdl3_header"
+          grep -q 'Class: *ELF64' <<<"$sdl3_header" || fail "libSDL3.so is not ELF64"
+          grep -q 'Machine: *AArch64' <<<"$sdl3_header" || fail "libSDL3.so is not AArch64"
+          grep -qE 'Type: *DYN' <<<"$sdl3_header" || fail "libSDL3.so is not a shared object"
+          sdl3_dynamic=$("$READELF" -d "$SDL3_LIB"); grep -E 'SONAME|NEEDED' <<<"$sdl3_dynamic"
+          grep -q 'Library soname: \[libSDL3\.so\]' <<<"$sdl3_dynamic" \
+            || fail "libSDL3.so's SONAME is not libSDL3.so (libmain.so names it in DT_NEEDED)"
+          sdl3_dynsyms=$("$READELF" --dyn-syms "$SDL3_LIB")
+          for sym in JNI_OnLoad SDL_Init SDL_CreateGPUDevice SDL_GetAndroidInternalStoragePath; do
+            grep -qE "[[:space:]]${sym}\$" <<<"$sdl3_dynsyms" \
+              || fail "libSDL3.so does not export ${sym}"
+          done
+          echo "libSDL3.so exports JNI_OnLoad and the SDL_* entry points the engine uses"
+          # SDL3 is C and needs nothing but bionic and the NDK's system libraries.
+          for lib in $(sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' <<<"$sdl3_dynamic"); do
+            case "$lib" in
+              libc.so|libm.so|libdl.so|liblog.so|libandroid.so|libz.so|libGLESv1_CM.so|libGLESv2.so|\
+              libGLESv3.so|libEGL.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libmediandk.so|\
+              libcamera2ndk.so|libjnigraphics.so|libnativewindow.so|libsync.so)
+                continue ;;
+            esac
+            fail "libSDL3.so needs '$lib', which is neither an Android system library nor packaged in the APK"
+          done
+          echo "libSDL3.so needs Android system libraries only"
 
           # The Android API the object was built for: the build's own configure record is the
           # authoritative floor; the NDK normally also stamps an Android ident note into the ELF, so
@@ -483,13 +528,14 @@ jobs:
           undef=$("$READELF" --dyn-syms "$LIB" | grep -c 'UND' || true)
           echo "undefined dynamic symbols the loader resolves from DT_NEEDED: ${undef}"
 
-          echo "libmain.so: ELF64 AArch64 DYN, SONAME libmain.so, exports SDL_main, SDL3 static,"
-          echo "            DT_NEEDED = system libs + libc++_shared.so (the only packaged dependency)"
+          echo "libmain.so: ELF64 AArch64 DYN, SONAME libmain.so, exports SDL_main, imports SDL_* from libSDL3.so,"
+          echo "            DT_NEEDED = system libs + libSDL3.so + libc++_shared.so (the packaged dependencies)"
+          echo "libSDL3.so: ELF64 AArch64 DYN, SONAME libSDL3.so, exports JNI_OnLoad and SDL_*, system libs only"
 
-      - name: Package the APK (stage the engine and the C++ runtime, then run Gradle)
+      - name: Package the APK (stage the engine, SDL3 and the C++ runtime, then run Gradle)
         run: |
           set -euo pipefail
-          # package-android.sh stages libmain.so and the NDK's libc++_shared.so into
+          # package-android.sh stages libmain.so, libSDL3.so and the NDK's libc++_shared.so into
           # android/app/src/main/jniLibs/arm64-v8a (and SDL3's Java glue into java-sdl/), then runs
           # Gradle. Both staged directories are gitignored and re-staged every run.
           scripts/build/android/package-android.sh --build-dir "$NATIVE_BUILD"
@@ -527,21 +573,21 @@ jobs:
 
           # 1. Expected native libraries at the expected paths, for arm64-v8a only.
           entries=$(unzip -Z1 "$APK")
-          grep -q '^lib/arm64-v8a/libmain\.so$' <<<"$entries" \
-            || fail "the APK does not carry lib/arm64-v8a/libmain.so"
-          grep -q '^lib/arm64-v8a/libc++_shared\.so$' <<<"$entries" \
-            || fail "the APK does not carry lib/arm64-v8a/libc++_shared.so"
+          for lib in libmain.so libSDL3.so libc++_shared.so; do
+            grep -q "^lib/arm64-v8a/${lib//./\\.}\$" <<<"$entries" \
+              || fail "the APK does not carry lib/arm64-v8a/$lib"
+          done
           others=$(grep -E '^lib/(armeabi|armeabi-v7a|x86|x86_64)/' <<<"$entries" || true)
           [ -z "$others" ] || fail "the APK carries an ABI other than arm64-v8a: $others"
-          # The staged set is exactly two libraries: nothing else may be under lib/ (directory
+          # The staged set is exactly three libraries: nothing else may be under lib/ (directory
           # entries, which end in '/', are not libraries).
           extra_libs=$(grep -E '^lib/' <<<"$entries" | grep -vE '/$' \
-            | grep -vE '^lib/arm64-v8a/(libmain|libc\+\+_shared)\.so$' || true)
+            | grep -vE '^lib/arm64-v8a/(libmain|libSDL3|libc\+\+_shared)\.so$' || true)
           [ -z "$extra_libs" ] || fail "the APK carries unexpected native libraries: $extra_libs"
-          # SDL3 is static in libmain.so: there must be no separate SDL3 shared object.
-          if grep -qE '^lib/.*/libSDL3.*\.so$' <<<"$entries"; then
-            fail "the APK carries a libSDL3 shared object, but SDL3 is linked statically into libmain.so"
-          fi
+          # SDL3 is a standalone shared library: exactly one libSDL3.so, at the arm64 path above.
+          sdl3_count=$(grep -cE '^lib/.*/libSDL3.*\.so$' <<<"$entries" || true)
+          [ "${sdl3_count:-0}" -eq 1 ] \
+            || fail "the APK carries ${sdl3_count:-0} SDL3 shared objects; the engine links exactly one (libSDL3.so)"
 
           # 2. No duplicate native library anywhere in the archive (same basename twice), and no
           #    library staged in more than one ABI directory.
@@ -559,7 +605,7 @@ jobs:
 
           # 4. The packaged libmain.so is the real engine: an AArch64 shared object, and its
           #    DT_NEEDED set is satisfied by the APK's own contents plus Android system libraries
-          #    (the reference port's cross-check, adapted to this port's static SDL3).
+          #    (the reference port's cross-check, adapted to this port's libSDL3.so + c++_shared).
           unzip -o -q "$APK" 'lib/arm64-v8a/*' -d "$RUNNER_TEMP/apk-lib"
           BIN="$(ls -d "${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}"/toolchains/llvm/prebuilt/*/bin | head -n 1)"
           readelf="$BIN/llvm-readelf"
@@ -570,6 +616,18 @@ jobs:
           grep -qE 'Type: *DYN' <<<"$header" || fail "the packaged libmain.so is not a shared object"
           dynsyms=$("$readelf" --dyn-syms "$RUNNER_TEMP/apk-lib/lib/arm64-v8a/libmain.so")
           grep -qE '[[:space:]]SDL_main$' <<<"$dynsyms" || fail "the packaged libmain.so does not export SDL_main"
+
+          # The packaged SDL3 is the library the engine was linked against: same SONAME that
+          # libmain.so's DT_NEEDED names, and the JNI entry point SDLActivity needs. AGP strips
+          # symbols from the dynamic symbol table's local half only, so these stay visible.
+          sdl3_apk="$RUNNER_TEMP/apk-lib/lib/arm64-v8a/libSDL3.so"
+          sdl3_dynamic=$("$readelf" -d "$sdl3_apk")
+          grep -q 'Library soname: \[libSDL3\.so\]' <<<"$sdl3_dynamic" \
+            || fail "the packaged libSDL3.so's SONAME is not libSDL3.so"
+          sdl3_dynsyms=$("$readelf" --dyn-syms "$sdl3_apk")
+          grep -qE '[[:space:]]JNI_OnLoad$' <<<"$sdl3_dynsyms" \
+            || fail "the packaged libSDL3.so does not export JNI_OnLoad"
+          echo "the packaged libSDL3.so is an AArch64 shared object, SONAME libSDL3.so, exporting JNI_OnLoad"
 
           # The packaged engine is the one just built and audited: compare the dynamic dependency
           # set, which AGP's symbol stripping does not touch (a stand-in stub would not link
@@ -626,7 +684,7 @@ jobs:
             fi
           done
 
-          echo "the APK: valid archive; libmain.so + libc++_shared.so for arm64-v8a only, no duplicates,"
+          echo "the APK: valid archive; libmain.so + libSDL3.so + libc++_shared.so for arm64-v8a only, no duplicates,"
           echo "        no game data, every DT_NEEDED satisfied, SetupActivity the launcher, minSdk 28/target 35"
 
       - name: Upload the APK, the engine and the diagnostics
