@@ -19,21 +19,11 @@
 package io.github.olcayseygan.zerohourreforged.ui.screens.compatibility
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
@@ -48,6 +38,7 @@ import io.github.olcayseygan.zerohourreforged.ui.components.CheckRow
 import io.github.olcayseygan.zerohourreforged.ui.components.CompatibilityCheckList
 import io.github.olcayseygan.zerohourreforged.ui.components.CompatibilitySummaryCard
 import io.github.olcayseygan.zerohourreforged.ui.components.InformationRow
+import io.github.olcayseygan.zerohourreforged.ui.components.PresentationScaffold
 import io.github.olcayseygan.zerohourreforged.ui.components.SectionContainer
 import io.github.olcayseygan.zerohourreforged.ui.components.StatusChip
 import io.github.olcayseygan.zerohourreforged.ui.theme.ZeroHourTheme
@@ -79,65 +70,43 @@ fun CompatibilityScreen(
     modifier: Modifier = Modifier,
     onNavigateBack: (() -> Unit)? = null,
 ) {
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
+    PresentationScaffold(
+        contentMaxWidth = CONTENT_MAX_WIDTH,
+        modifier = modifier,
         topBar = {
             ApplicationTopBar(
                 title = stringResource(R.string.compat_title),
                 onNavigateBack = onNavigateBack,
             )
         },
-        containerColor = MaterialTheme.colorScheme.background,
-        // Edge to edge (enableEdgeToEdgeWindow): safeDrawing keeps content clear of the bars and of
-        // the display cutout, which the default systemBars would not cover.
-        contentWindowInsets = WindowInsets.safeDrawing,
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            Column(
-                modifier = Modifier
-                    .widthIn(max = CONTENT_MAX_WIDTH)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(
-                        horizontal = MaterialTheme.spacing.screenEdge,
-                        vertical = MaterialTheme.spacing.screenVertical,
-                    ),
-                verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.sectionGap),
-            ) {
-                CompatibilitySummaryCard(
-                    tone = CompatibilityPresentation.resultTone(report.result),
-                    headline = verdictText(report.result),
-                    summary = stringResource(R.string.compat_result_summary),
-                )
+    ) {
+        CompatibilitySummaryCard(
+            tone = CompatibilityPresentation.resultTone(report.result),
+            headline = verdictText(report.result),
+            summary = stringResource(R.string.compat_result_summary),
+        )
 
-                SectionContainer(title = stringResource(R.string.compat_group_checks)) {
-                    CompatibilityCheckList(rows = report.checks.map { it.toRow() })
-                }
-
-                SectionContainer(title = stringResource(R.string.compat_group_app)) {
-                    RequirementsGroup()
-                }
-
-                SectionContainer(title = stringResource(R.string.compat_group_device)) {
-                    DeviceGroup(device)
-                }
-
-                SectionContainer(title = stringResource(R.string.compat_group_unverified)) {
-                    UnverifiedGroup()
-                }
-
-                Text(
-                    text = stringResource(R.string.compat_performance_note),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        SectionContainer(title = stringResource(R.string.compat_group_checks)) {
+            CompatibilityCheckList(rows = report.checks.map { it.toRow() })
         }
+
+        SectionContainer(title = stringResource(R.string.compat_group_app)) {
+            RequirementsGroup()
+        }
+
+        SectionContainer(title = stringResource(R.string.compat_group_device)) {
+            DeviceGroup(device)
+        }
+
+        SectionContainer(title = stringResource(R.string.compat_group_unverified)) {
+            UnverifiedGroup()
+        }
+
+        Text(
+            text = stringResource(R.string.compat_performance_note),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

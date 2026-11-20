@@ -65,6 +65,11 @@
     <string name="action_dismiss">Dismiss</string>
     <string name="action_in_progress">In progress</string>
 
+    <!-- Progress announcements. The determinate one is a live region, so it is a short sentence the
+         screen reader can read out repeatedly without becoming tiring. -->
+    <string name="progress_announcement">%1$d%% complete</string>
+    <string name="progress_indeterminate">Copying, time remaining unknown</string>
+
     <!-- The launcher's action group heading. -->
     <string name="setup_group_actions">Game folder</string>
 

@@ -18,25 +18,11 @@
 
 package io.github.olcayseygan.zerohourreforged.ui.screens.launcher
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
@@ -48,13 +34,13 @@ import io.github.olcayseygan.zerohourreforged.ui.components.DeterminateProgress
 import io.github.olcayseygan.zerohourreforged.ui.components.ErrorDialog
 import io.github.olcayseygan.zerohourreforged.ui.components.IndeterminateProgress
 import io.github.olcayseygan.zerohourreforged.ui.components.InstallationCard
+import io.github.olcayseygan.zerohourreforged.ui.components.PresentationScaffold
 import io.github.olcayseygan.zerohourreforged.ui.components.PrimaryActionButton
 import io.github.olcayseygan.zerohourreforged.ui.components.SecondaryActionButton
 import io.github.olcayseygan.zerohourreforged.ui.components.SectionContainer
 import io.github.olcayseygan.zerohourreforged.ui.components.StatusCard
 import io.github.olcayseygan.zerohourreforged.ui.theme.AppearanceMode
 import io.github.olcayseygan.zerohourreforged.ui.theme.ZeroHourTheme
-import io.github.olcayseygan.zerohourreforged.ui.theme.spacing
 
 /**
  * The launcher: pick the folder Zero Hour is installed in, stage it, start the game.
@@ -130,106 +116,83 @@ fun LauncherScreen(
         )
     }
 
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        containerColor = MaterialTheme.colorScheme.background,
-        // The window is edge to edge (enableEdgeToEdgeWindow), so this padding is the only thing
-        // keeping content out of the bars. safeDrawing, not the default systemBars: it also reports
-        // the display cutout, which in landscape sits on a short edge under the content.
-        contentWindowInsets = WindowInsets.safeDrawing,
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            Column(
-                modifier = Modifier
-                    .widthIn(max = CONTENT_MAX_WIDTH)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(
-                        horizontal = MaterialTheme.spacing.screenEdge,
-                        vertical = MaterialTheme.spacing.screenVertical,
-                    ),
-                verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.sectionGap),
-            ) {
-                ApplicationHeader(
-                    title = stringResource(R.string.setup_title),
-                    subtitle = stringResource(R.string.setup_subtitle),
+    PresentationScaffold(
+        contentMaxWidth = CONTENT_MAX_WIDTH,
+        modifier = modifier,
+    ) {
+        ApplicationHeader(
+            title = stringResource(R.string.setup_title),
+            subtitle = stringResource(R.string.setup_subtitle),
+        )
+
+        InstallationCard(
+            folderName = state.folderName,
+            enginePath = state.enginePath,
+            showCopyNote = state.status != LauncherStatus.READY,
+        )
+
+        StatusCard(
+            tone = state.tone,
+            title = state.headline,
+            detail = state.detail.takeIf { it.isNotEmpty() },
+        )
+
+        // The status card above already names what is being copied, so the bar carries the
+        // byte counts instead of repeating that sentence. A total the copy has not reported
+        // yet is drawn as indeterminate rather than as a bar stuck at 0%.
+        if (state.staging) {
+            if (state.hasProgressTotal) {
+                DeterminateProgress(
+                    progress = state.progressFraction,
+                    label = state.progressBytes,
                 )
+            } else {
+                IndeterminateProgress()
+            }
+        }
 
-                InstallationCard(
-                    folderName = state.folderName,
-                    enginePath = state.enginePath,
-                    showCopyNote = state.status != LauncherStatus.READY,
+        SectionContainer(title = stringResource(R.string.setup_group_actions)) {
+            if (state.canLaunch) {
+                PrimaryActionButton(
+                    text = stringResource(R.string.setup_launch),
+                    onClick = onLaunchGame,
+                    enabled = !state.staging,
                 )
-
-                StatusCard(
-                    tone = state.tone,
-                    title = state.headline,
-                    detail = state.detail.takeIf { it.isNotEmpty() },
+                SecondaryActionButton(
+                    text = stringResource(R.string.setup_select_folder),
+                    onClick = onSelectFolder,
+                    enabled = !state.staging,
                 )
+            } else {
+                // Disabled rather than busy: the spinner would label "Choose game folder"
+                // as the running operation, but the folder is already chosen and it is the
+                // copy that is running. The progress bar above is the busy indicator.
+                PrimaryActionButton(
+                    text = stringResource(R.string.setup_select_folder),
+                    onClick = onSelectFolder,
+                    enabled = !state.staging,
+                )
+            }
+            SecondaryActionButton(
+                text = stringResource(R.string.compat_button),
+                onClick = onShowRequirements,
+            )
+            if (state.canClear) {
+                SecondaryActionButton(
+                    text = stringResource(R.string.setup_clear_folder),
+                    onClick = { confirmingClear = true },
+                    enabled = !state.staging,
+                )
+            }
+        }
 
-                // The status card above already names what is being copied, so the bar carries the
-                // byte counts instead of repeating that sentence. A total the copy has not reported
-                // yet is drawn as indeterminate rather than as a bar stuck at 0%.
-                if (state.staging) {
-                    if (state.hasProgressTotal) {
-                        DeterminateProgress(
-                            progress = state.progressFraction,
-                            label = state.progressBytes,
-                        )
-                    } else {
-                        IndeterminateProgress()
-                    }
-                }
-
-                SectionContainer(title = stringResource(R.string.setup_group_actions)) {
-                    if (state.canLaunch) {
-                        PrimaryActionButton(
-                            text = stringResource(R.string.setup_launch),
-                            onClick = onLaunchGame,
-                            enabled = !state.staging,
-                        )
-                        SecondaryActionButton(
-                            text = stringResource(R.string.setup_select_folder),
-                            onClick = onSelectFolder,
-                            enabled = !state.staging,
-                        )
-                    } else {
-                        // Disabled rather than busy: the spinner would label "Choose game folder"
-                        // as the running operation, but the folder is already chosen and it is the
-                        // copy that is running. The progress bar above is the busy indicator.
-                        PrimaryActionButton(
-                            text = stringResource(R.string.setup_select_folder),
-                            onClick = onSelectFolder,
-                            enabled = !state.staging,
-                        )
-                    }
-                    SecondaryActionButton(
-                        text = stringResource(R.string.compat_button),
-                        onClick = onShowRequirements,
-                    )
-                    if (state.canClear) {
-                        SecondaryActionButton(
-                            text = stringResource(R.string.setup_clear_folder),
-                            onClick = { confirmingClear = true },
-                            enabled = !state.staging,
-                        )
-                    }
-                }
-
-                if (onAppearanceChange != null) {
-                    SectionContainer(title = stringResource(R.string.appearance_title)) {
-                        AppearanceSection(
-                            appearance = appearance,
-                            dynamicColor = dynamicColor,
-                            onAppearanceChange = onAppearanceChange,
-                        )
-                    }
-                }
+        if (onAppearanceChange != null) {
+            SectionContainer(title = stringResource(R.string.appearance_title)) {
+                AppearanceSection(
+                    appearance = appearance,
+                    dynamicColor = dynamicColor,
+                    onAppearanceChange = onAppearanceChange,
+                )
             }
         }
     }
@@ -375,6 +338,86 @@ private fun LauncherStagingFailedPreview() {
                 headline = "Copying the game data did not finish.",
                 detail = "No space left on device",
                 folderName = "Zero Hour",
+                canClear = true,
+            ),
+            onSelectFolder = {},
+            onLaunchGame = {},
+            onClearFolder = {},
+            onShowRequirements = {},
+            onAppearanceChange = { _, _ -> },
+        )
+    }
+}
+
+/**
+ * A landscape phone: about 360dp of height after the bars, so the vertical padding is the compact
+ * one and the whole screen has to scroll. This is the case the padding rule exists for.
+ */
+@Preview(name = "Landscape phone", showBackground = true, widthDp = 800, heightDp = 360)
+@Composable
+private fun LauncherLandscapePreview() {
+    ZeroHourTheme {
+        LauncherScreen(
+            state = LauncherUiState(
+                status = LauncherStatus.READY,
+                headline = "Ready: \"Zero Hour\".",
+                folderName = "Zero Hour",
+                enginePath = "/storage/emulated/0/Android/data/…/files/game",
+                canLaunch = true,
+                canClear = true,
+            ),
+            onSelectFolder = {},
+            onLaunchGame = {},
+            onClearFolder = {},
+            onShowRequirements = {},
+            onAppearanceChange = { _, _ -> },
+        )
+    }
+}
+
+/**
+ * A tablet: the column is capped and centred rather than stretched, which is the other half of the
+ * responsive requirement.
+ */
+@Preview(name = "Tablet", showBackground = true, widthDp = 900, heightDp = 1200)
+@Composable
+private fun LauncherTabletPreview() {
+    ZeroHourTheme {
+        LauncherScreen(
+            state = LauncherUiState(
+                status = LauncherStatus.READY,
+                headline = "Ready: \"Zero Hour\".",
+                folderName = "Zero Hour",
+                enginePath = "/storage/emulated/0/Android/data/…/files/game",
+                canLaunch = true,
+                canClear = true,
+            ),
+            onSelectFolder = {},
+            onLaunchGame = {},
+            onClearFolder = {},
+            onShowRequirements = {},
+            onAppearanceChange = { _, _ -> },
+        )
+    }
+}
+
+/** A large font scale on a small phone: the appearance control falls back to its stacked layout. */
+@Preview(
+    name = "Small phone, large font",
+    showBackground = true,
+    widthDp = 320,
+    heightDp = 640,
+    fontScale = 2.0f,
+)
+@Composable
+private fun LauncherLargeFontPreview() {
+    ZeroHourTheme {
+        LauncherScreen(
+            state = LauncherUiState(
+                status = LauncherStatus.READY,
+                headline = "Ready: \"Zero Hour\".",
+                folderName = "Zero Hour",
+                canLaunch = true,
                 canClear = true,
             ),
             onSelectFolder = {},

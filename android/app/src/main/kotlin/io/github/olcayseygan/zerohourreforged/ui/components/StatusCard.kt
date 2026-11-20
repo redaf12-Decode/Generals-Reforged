@@ -115,8 +115,13 @@ internal fun StatusChip(
     modifier: Modifier = Modifier,
 ) {
     val colors = tone.colors()
+    val spokenTone = tone.label()
     Surface(
-        modifier = modifier,
+        // A label, not a control: cleared and replaced so it is announced once, as the tone and
+        // then the words, instead of as a glyph and a fragment of text.
+        modifier = modifier.clearAndSetSemantics {
+            contentDescription = "$spokenTone. $label"
+        },
         shape = MaterialTheme.shapes.extraSmall,
         color = colors.container,
     ) {

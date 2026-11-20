@@ -29,7 +29,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import io.github.olcayseygan.zerohourreforged.R
+import io.github.olcayseygan.zerohourreforged.ui.theme.LayoutRules
 import io.github.olcayseygan.zerohourreforged.ui.theme.spacing
 
 /**
@@ -55,6 +62,10 @@ internal fun DeterminateProgress(
 ) {
     val fraction = progress.coerceIn(0f, 1f)
     val percent = (fraction * 100).toInt()
+    // Stepped, so the live region below changes about ten times over a whole copy rather than once
+    // per file. The visible percentage keeps the exact value.
+    val announced = LayoutRules.announcedPercent(percent)
+    val progressDescription = stringResource(R.string.progress_announcement, announced)
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
@@ -79,10 +90,19 @@ internal fun DeterminateProgress(
                 color = MaterialTheme.colorScheme.onSurface,
             )
         }
-        // The indicator publishes its own progressBarRangeInfo, so no semantics block is needed.
+        // The bar publishes its own progressBarRangeInfo, so a screen reader can query the value
+        // on focus. It is not enough on its own: a bar that changes while unfocused is silent, and
+        // this operation runs for minutes. The live region below announces the stepped percentage
+        // instead - stepped, because the copy reports once per file and announcing every file would
+        // bury whatever the player was listening to.
         LinearProgressIndicator(
             progress = { fraction },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics {
+                    liveRegion = LiveRegionMode.Polite
+                    contentDescription = progressDescription
+                },
             color = MaterialTheme.colorScheme.primary,
             trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         )
@@ -100,6 +120,7 @@ internal fun DeterminateProgress(
  */
 @Composable
 internal fun IndeterminateProgress(modifier: Modifier = Modifier, label: String? = null) {
+    val indeterminateDescription = stringResource(R.string.progress_indeterminate)
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
@@ -111,8 +132,14 @@ internal fun IndeterminateProgress(modifier: Modifier = Modifier, label: String?
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        // Indeterminate operations announce themselves once rather than on a timer: there is no
+        // progress to report, and a repeating announcement would be noise.
         LinearProgressIndicator(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics {
+                    contentDescription = indeterminateDescription
+                },
             color = MaterialTheme.colorScheme.primary,
             trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         )

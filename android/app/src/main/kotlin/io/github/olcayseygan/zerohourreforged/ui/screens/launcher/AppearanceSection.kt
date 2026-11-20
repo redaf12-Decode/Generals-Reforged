@@ -20,13 +20,16 @@ package io.github.olcayseygan.zerohourreforged.ui.screens.launcher
 
 import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -35,11 +38,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.semantics.Role
 import io.github.olcayseygan.zerohourreforged.R
 import io.github.olcayseygan.zerohourreforged.ui.theme.AppearanceMode
+import io.github.olcayseygan.zerohourreforged.ui.theme.LayoutRules
 import io.github.olcayseygan.zerohourreforged.ui.theme.spacing
 
 /**
@@ -75,22 +80,46 @@ internal fun AppearanceSection(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
     ) {
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            modes.forEachIndexed { index, (mode, label) ->
-                SegmentedButton(
-                    selected = appearance == mode,
-                    onClick = { onAppearanceChange(mode, dynamicColor) },
-                    shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
-                ) {
-                    // Two lines, not one: at 200% font scale a three-way row cannot fit the labels
-                    // on a single line of a narrow phone, and a clipped "Follow sys…" is worse than
-                    // a wrapped one.
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelMedium,
-                        textAlign = TextAlign.Center,
-                        maxLines = 2,
-                    )
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            // A segmented button has a fixed 40dp height and an equal share of the row. At the
+            // default font scale a phone fits three wrapped labels; at 1.3x and above it does not,
+            // because two lines no longer fit 40dp - which is what the old always-segmented layout
+            // clipped. The rule decides from the width the row really has and the player's font
+            // scale; when the labels would not fit, the same three choices are drawn as a stacked
+            // list, which wraps and grows instead.
+            val stacked = LayoutRules.stackSegmentControls(
+                contentWidthDp = maxWidth.value,
+                fontScale = LocalDensity.current.fontScale,
+            )
+            if (stacked) {
+                Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.tight)) {
+                    modes.forEach { (mode, label) ->
+                        AppearanceChoiceRow(
+                            label = label,
+                            selected = appearance == mode,
+                            onClick = { onAppearanceChange(mode, dynamicColor) },
+                        )
+                    }
+                }
+            } else {
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    modes.forEachIndexed { index, (mode, label) ->
+                        SegmentedButton(
+                            selected = appearance == mode,
+                            onClick = { onAppearanceChange(mode, dynamicColor) },
+                            shape = SegmentedButtonDefaults.itemShape(
+                                index = index,
+                                count = modes.size,
+                            ),
+                        ) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelMedium,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -128,5 +157,41 @@ internal fun AppearanceSection(
                 enabled = dynamicAvailable,
             )
         }
+    }
+}
+
+/**
+ * One appearance choice in the stacked layout: a full-width selectable row.
+ *
+ * <p>Used instead of a segmented button when the row is too narrow to hold the labels. A
+ * [RadioButton] rather than a [Switch], because the three choices are mutually exclusive and a
+ * switch reads as on/off; the whole row is the touch target, at [Spacing.touchTarget], so the
+ * control is reachable without hitting the 20dp glyph.
+ */
+@Composable
+private fun AppearanceChoiceRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = MaterialTheme.spacing.touchTarget)
+            .selectable(
+                selected = selected,
+                role = Role.RadioButton,
+                onClick = onClick,
+            ),
+        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
