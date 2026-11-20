@@ -631,3 +631,17 @@ the fuller option). Consequences to remember:
   `compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }`. **Dispatch this branch's CI by hand**
   (`gh workflow run ci-android-app.yml --ref <branch>`): its `push` trigger lists only the
   older port branch, so a plain push runs nothing.
+- **Material 3 phase 2 (design system) is CI-verified green** (`agent/material3-ui-redesign`;
+  run 44645246453 @ `2e24156`): engine + `assembleDebug` + all 10 JVM suites (66 WCAG pair
+  assertions) + APK/manifest assertions pass. Detail in `2026-11-19.md`.
+- **The one thing static audits could NOT catch: a duplicate resource *name*.** A new
+  `res/values/themes.xml` re-declared `<style name="AppTheme">`, which already lived in the
+  pre-existing `res/values/styles.xml` → aapt2 `:app:mergeDebugResources FAILED` "Duplicate
+  resources". Nothing in the Kotlin/XML source looks wrong; only `mergeDebugResources` knows.
+  Before adding any `values*/` file, grep the *whole* `res/` tree for each resource name —
+  including the legacy `styles.xml` nobody remembers. My own dup-checker script (scan all
+  `values*/*.xml` per qualifier bucket) is the cheap substitute when no local build exists.
+- **`AppTheme` is the game's own bare fullscreen theme** (`styles.xml`,
+  `android:Theme.NoTitleBar.Fullscreen`) and must stay separate from `Theme.ZeroHour` (the
+  Compose window theme). `ZeroHourActivity` inherits `AppTheme` from `<application>`; only
+  `SetupActivity`/`CompatibilityActivity` carry `android:theme="@style/Theme.ZeroHour"`.
