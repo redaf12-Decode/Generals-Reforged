@@ -15,7 +15,18 @@
     Compose.
 -->
 <resources>
-    <style name="Theme.ZeroHour.Base" parent="android:Theme.Material.Light.NoActionBar">
+    <!--
+        The window behind both Compose screens. One base, two named children: the screens draw the
+        same window today, but they are separate Activities with separate lifecycles, so naming them
+        apart means a future change to one (a different cutout mode, a different splash) does not
+        silently move the other.
+
+        The bar colours below are the pre-Compose fallback and the Android 9-11 answer. From
+        PresentationWindow onwards the window is drawn edge to edge and the bars are transparent, so
+        on API 28-34 these colours are visible only for the first frame; on API 35+ the system
+        ignores them entirely, which is why the runtime path - not this file - is what must be right.
+    -->
+    <style name="Theme.ZeroHour.Presentation.Base" parent="android:Theme.Material.Light.NoActionBar">
         <!-- The colour of the window before Compose draws. Matches the light scheme's background,
              so there is no flash between the window and the first frame. -->
         <item name="android:windowBackground">@color/window_background</item>
@@ -31,5 +42,9 @@
         <item name="android:windowActionBar">false</item>
     </style>
 
-    <style name="Theme.ZeroHour" parent="Theme.ZeroHour.Base" />
+    <!-- The launcher: the folder picker, the staging progress and the launch button. -->
+    <style name="Theme.ZeroHour.Setup" parent="Theme.ZeroHour.Presentation.Base" />
+
+    <!-- The System Requirements & Device Compatibility screen. -->
+    <style name="Theme.ZeroHour.Compatibility" parent="Theme.ZeroHour.Presentation.Base" />
 </resources>

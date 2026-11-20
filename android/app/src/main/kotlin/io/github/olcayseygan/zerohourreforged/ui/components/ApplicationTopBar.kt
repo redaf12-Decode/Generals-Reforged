@@ -19,6 +19,10 @@
 package io.github.olcayseygan.zerohourreforged.ui.components
 
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -82,6 +86,11 @@ internal fun ApplicationTopBar(
             }
         },
         actions = actions,
+        // safeDrawing, not the M3 default (systemBars): the window is edge to edge, and in
+        // landscape a phone cutout sits on a short edge, which systemBars does not report, so
+        // the title or a trailing action could be drawn under the notch.
+        windowInsets = WindowInsets.safeDrawing
+            .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top),
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.primary,

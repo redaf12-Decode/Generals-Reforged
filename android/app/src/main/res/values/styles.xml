@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The fullscreen game theme. SDLActivity draws its own surface and the game draws
-     through SDL3's GPU API, so there are no widgets to theme. -->
+<!--
+    The fullscreen game theme, and the named theme the game Activity binds to.
+
+    SDLActivity draws its own surface and the game draws through SDL3's GPU API, so there are no
+    widgets to theme: AppTheme is the whole of it, and it stays exactly what it has always been.
+
+    Theme.ZeroHour.Game exists so ZeroHourActivity can name the window it runs in instead of
+    inheriting the <application> theme by omission. It adds nothing - the parent is AppTheme - so the
+    fullscreen behaviour, and the fact that AppTheme is still what an activity without a theme gets,
+    are both unchanged. Naming it is the point: a change to a presentation theme can no longer reach
+    the game surface by accident, which is the failure this phase exists to prevent.
+-->
 <resources>
     <style name="AppTheme" parent="android:Theme.NoTitleBar.Fullscreen" />
+
+    <style name="Theme.ZeroHour.Game" parent="AppTheme" />
 </resources>

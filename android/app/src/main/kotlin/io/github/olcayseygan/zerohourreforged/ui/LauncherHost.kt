@@ -29,6 +29,7 @@ import io.github.olcayseygan.zerohourreforged.ui.screens.launcher.LauncherUiStat
 import io.github.olcayseygan.zerohourreforged.ui.theme.AppearanceMode
 import io.github.olcayseygan.zerohourreforged.ui.theme.AppearanceStore
 import io.github.olcayseygan.zerohourreforged.ui.theme.ZeroHourTheme
+import io.github.olcayseygan.zerohourreforged.ui.theme.enableEdgeToEdgeWindow
 
 /**
  * The bridge between the Java [android.app.Activity] that owns the launcher's logic and the
@@ -70,6 +71,10 @@ class LauncherHost(
     private var errorMessage by mutableStateOf<String?>(null)
 
     fun install() {
+        // Before setContent: this re-lays out the window, so doing it after the first frame would
+        // make the drawn content jump by the height of the system bars. The game Activity never
+        // calls this - SDL owns its surface geometry.
+        activity.enableEdgeToEdgeWindow()
         activity.setContent {
             ZeroHourTheme(appearance = appearance, dynamicColor = dynamicColor) {
                 LauncherScreen(

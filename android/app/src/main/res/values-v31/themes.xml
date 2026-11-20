@@ -1,16 +1,10 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!--
-    Android 12 (API 31) and later replaced the launch window with the SplashScreen API: the system
-    shows a centred icon on a solid colour while the Activity starts. Without these attributes the
-    splash uses the platform's own tint, which does not match the palette and flashes on every
-    launch. Setting windowSplashScreenBackground and windowSplashScreenAnimatedIcon makes the splash
-    the same colour as the window Compose draws next, so launch is one continuous frame.
-
-    These attributes exist only on API 31+, which is why they live in values-v31 rather than in the
-    base style: referencing them below 31 is an aapt2 error.
--->
 <resources>
-    <style name="Theme.ZeroHour" parent="Theme.ZeroHour.Base">
+    <style name="Theme.ZeroHour.Setup" parent="Theme.ZeroHour.Presentation.Base">
+        <item name="android:windowSplashScreenBackground">@color/window_splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    </style>
+
+    <style name="Theme.ZeroHour.Compatibility" parent="Theme.ZeroHour.Presentation.Base">
         <item name="android:windowSplashScreenBackground">@color/window_splash_background</item>
         <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
     </style>

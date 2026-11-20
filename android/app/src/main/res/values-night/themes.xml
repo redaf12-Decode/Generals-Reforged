@@ -7,7 +7,7 @@
     AppCompat, which this application does not use.
 -->
 <resources>
-    <style name="Theme.ZeroHour.Base" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.ZeroHour.Presentation.Base" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/window_background</item>
         <item name="android:statusBarColor">@color/window_surface</item>
         <item name="android:navigationBarColor">@color/window_background</item>
@@ -17,4 +17,11 @@
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>
     </style>
+
+    <!--
+        The two presentation screens are declared once, in values/themes.xml, parented to
+        Theme.ZeroHour.Presentation.Base. A style's parent is resolved as a resource lookup at
+        runtime, so redefining the base here is enough to move both children onto the dark window;
+        redeclaring them would only duplicate the same two lines.
+    -->
 </resources>

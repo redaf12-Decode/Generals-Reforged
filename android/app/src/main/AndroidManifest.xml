@@ -70,7 +70,7 @@
             android:name=".SetupActivity"
             android:label="@string/app_name"
             android:exported="true"
-            android:theme="@style/Theme.ZeroHour"
+            android:theme="@style/Theme.ZeroHour.Setup"
             android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -94,6 +94,7 @@
             android:launchMode="singleInstance"
             android:screenOrientation="landscape"
             android:exported="true"
+            android:theme="@style/Theme.ZeroHour.Game"
             android:preferMinimalPostProcessing="true"
             android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation">
             <intent-filter>
@@ -112,7 +113,7 @@
             android:name=".CompatibilityActivity"
             android:label="@string/compat_title"
             android:exported="false"
-            android:theme="@style/Theme.ZeroHour"
+            android:theme="@style/Theme.ZeroHour.Compatibility"
             android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation" />
     </application>
 </manifest>

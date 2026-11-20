@@ -21,11 +21,13 @@ package io.github.olcayseygan.zerohourreforged.ui.theme
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.view.View
 import android.view.Window
 import android.view.WindowInsetsController
+import android.view.WindowManager
 import androidx.compose.material3.ColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -56,27 +58,89 @@ internal fun ApplyWindowAppearance(colorScheme: ColorScheme) {
     if (view.isInEditMode) return
     val activity = view.context.findActivity() ?: return
     val background = colorScheme.background.toArgb()
-    val surface = colorScheme.surface.toArgb()
     // Measured, not taken from the mode: a wallpaper-derived surface is not guaranteed to sit on the
     // same side of mid-grey as the mode it was generated for.
-    val lightBars = colorScheme.surface.luminance() > 0.5f
+    //
+    // Both colours are consulted because the bars are transparent: the status bar sits over the app
+    // bar's surface on the compatibility screen but over the background on the launcher, which has a
+    // header rather than a top bar. Dark icons are only safe if *every* colour they can land on is
+    // light, so the darker of the two decides.
+    val lightBars = minOf(
+        colorScheme.background.luminance(),
+        colorScheme.surface.luminance(),
+    ) > 0.5f
 
-    LaunchedEffect(background, surface, lightBars) {
-        activity.window.applyAppearance(background, surface, lightBars)
+    LaunchedEffect(background, lightBars) {
+        activity.window.applyAppearance(background, lightBars)
+    }
+}
+
+/**
+ * Lets the window draw behind the system bars, so a transparent bar shows the Compose background
+ * rather than a second colour.
+ *
+ * <p>Called from the two presentation hosts in `onCreate`, before `setContent`, and never from the
+ * game Activity. Both halves of that are deliberate.
+ *
+ * <p>Before `setContent` because this changes the window's layout: doing it after the first frame
+ * would re-lay out a drawn screen, and the content would jump by the height of the bars. Compose's
+ * own `enableEdgeToEdge` runs here for the same reason.
+ *
+ * <p>Never for the game because SDL owns that surface's geometry and decides its own fullscreen
+ * insets; a second party turning `decorFitsSystemWindows` off underneath it would change how the
+ * game renders, which this phase is not allowed to do.
+ *
+ * <p>Two code paths because the flag that does this moved: API 30 replaced the systemUiVisibility
+ * layout flags with `setDecorFitsSystemWindows`. Below 30 the flags are still the only way, and all
+ * three are needed - dropping LAYOUT_HIDE_NAVIGATION leaves the navigation bar reserving its strip
+ * while the status bar does not, which is the half-edge-to-edge look.
+ *
+ * <p>Cutout mode is `SHORT_EDGES`: the window is allowed to paint into the cutout area on the short
+ * edges, so the background reaches the edge of the screen instead of being letterboxed. That mode
+ * does <em>not</em> keep content out of a notch - in landscape a phone's notch is on a short edge,
+ * so the window may paint under it. Keeping text clear of the cutout is the insets' job, which is why
+ * the screens consume [androidx.compose.foundation.layout.WindowInsets.safeDrawing] rather than only
+ * the system bars: `safeDrawing` reports the cutout on every edge, `systemBars` does not.
+ */
+@Suppress("DEPRECATION")
+internal fun Activity.enableEdgeToEdgeWindow() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        window.setDecorFitsSystemWindows(false)
+    } else {
+        window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+    }
+    // API 28+; minSdk is 28, so no version check is needed.
+    window.attributes = window.attributes.apply {
+        layoutInDisplayCutoutMode =
+            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
     }
 }
 
 /**
  * The deprecated bar colours and icon flags are used deliberately: they are the only API that works
  * down to minSdk 28, and the modern replacement only exists from API 30.
+ *
+ * <p>Both bars are transparent, not tinted. From API 35 the system draws every app edge to edge and
+ * ignores `statusBarColor`/`navigationBarColor` outright, so a colour set here would work on 28-34
+ * and silently do nothing on 35 - two different layouts from one code path. Transparent everywhere
+ * means the Compose background is what shows behind the bars on every release: the app bar's surface
+ * behind the status bar on the compatibility screen, the background behind it on the launcher, which
+ * has a header instead of a top bar.
+ *
+ * <p>The icon tint still has to be set explicitly: a transparent bar does not tell the system
+ * whether the content behind it is light or dark, and the player can pin either regardless of the
+ * device's night mode.
  */
 @Suppress("DEPRECATION")
-private fun Window.applyAppearance(background: Int, surface: Int, lightBars: Boolean) {
+private fun Window.applyAppearance(background: Int, lightBars: Boolean) {
     // Also set here, not only in XML: the window outlives an Activity recreation, so a scheme change
     // must repaint it rather than leave the colour the previous theme installed.
     setBackgroundDrawable(ColorDrawable(background))
-    statusBarColor = surface
-    navigationBarColor = background
+    statusBarColor = Color.TRANSPARENT
+    navigationBarColor = Color.TRANSPARENT
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         val light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or

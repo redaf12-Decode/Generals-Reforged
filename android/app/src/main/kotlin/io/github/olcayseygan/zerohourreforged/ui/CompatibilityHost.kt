@@ -27,6 +27,7 @@ import io.github.olcayseygan.zerohourreforged.DeviceCapabilities
 import io.github.olcayseygan.zerohourreforged.ui.screens.compatibility.CompatibilityScreen
 import io.github.olcayseygan.zerohourreforged.ui.theme.AppearanceStore
 import io.github.olcayseygan.zerohourreforged.ui.theme.ZeroHourTheme
+import io.github.olcayseygan.zerohourreforged.ui.theme.enableEdgeToEdgeWindow
 
 /**
  * Installs the compatibility screen on [activity]. The screen is a pure renderer of the values it
@@ -48,6 +49,10 @@ fun installCompatibilityContent(
     report: CompatibilityEvaluator.Report,
     onNavigateBack: Runnable? = null,
 ) {
+    // Before setContent, for the same reason as the launcher: this re-lays out the window, so doing
+    // it after the first frame would make the drawn content jump. The game Activity never calls
+    // this - SDL owns its surface geometry.
+    activity.enableEdgeToEdgeWindow()
     activity.setContent {
         ZeroHourTheme(
             appearance = AppearanceStore.mode(activity),

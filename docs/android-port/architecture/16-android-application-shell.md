@@ -119,7 +119,12 @@ Identity, orientation and the `configChanges` set are as §3 and §4 above. Beyo
   permission is declared: the game reads a folder the player picks and writes only to its own private
   storage (`08-game-data-delivery.md`). `MANAGE_EXTERNAL_STORAGE`, which the reference port declares,
   is deliberately not adopted.
-- **Theme** is the fullscreen `AppTheme`; there are no widgets to theme.
+- **Themes** are one per Activity, so no screen can inherit another's window: `Theme.ZeroHour.Game`
+  for the game (parent `AppTheme`, the fullscreen platform theme - SDL draws its own surface, so
+  there are no widgets to theme), and `Theme.ZeroHour.Setup` / `Theme.ZeroHour.Compatibility` for the
+  two Compose screens (both parent `Theme.ZeroHour.Presentation.Base`, which is the Android 9-11
+  window fallback). The Compose screens draw edge to edge and consume `WindowInsets.safeDrawing`; the
+  game Activity is never edge to edge, because SDL owns its surface geometry.
 
 ## 7. Packaging script
 
