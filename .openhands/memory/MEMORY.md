@@ -645,3 +645,17 @@ the fuller option). Consequences to remember:
   `android:Theme.NoTitleBar.Fullscreen`) and must stay separate from `Theme.ZeroHour` (the
   Compose window theme). `ZeroHourActivity` inherits `AppTheme` from `<application>`; only
   `SetupActivity`/`CompatibilityActivity` carry `android:theme="@style/Theme.ZeroHour"`.
+- **Launcher is state-driven now (phase 3, `agent/material3-ui-redesign` @ `c1e6a45`, CI green run
+  44683742145, 74 tests/9 suites).** Detail in `2026-11-19.md`. `LauncherStatus` is a pure-Kotlin
+  7-constant enum (`NO_FOLDER`, `STAGING`, `READY`, `PERMISSION_LOST`, `INCOMPLETE`, `INVALID`,
+  `STAGING_FAILED`) set by `SetupActivity` from the verdict it already computed; `LauncherUiState`
+  owns `tone`/`progressFraction`/`progressBytes`/`formatBytes` so the screen only draws. Two real
+  fixes rode along: a failed copy used to publish "incomplete folder" (blaming the player's folder
+  for a copy that did not finish) and is now `STAGING_FAILED`; `NO_ZERO_HOUR` is `INVALID`, not
+  `INCOMPLETE`. Lessons: **`outlineVariant` is decorative (~1.7:1) and fails the 3:1 non-text
+  minimum — use `outline` for a meaningful boundary** (a divider separating two kinds of statement
+  is one); `GameFolderStore.sourceName()` can be null for a stale preference, so the Activity falls
+  back to `tree.getLastPathSegment()` (same as `remember`) and the card uses `isNullOrBlank()`;
+  there is no edge-to-edge in this app, so `Scaffold`'s `innerPadding` suffices without an app bar.
+  A scripted rewrite ending at `s.rindex("}\n")` keeps the old trailing brace — check the file tail
+  (that stray `}` was the only CI failure; the APK task passing localised it to the test source set).
