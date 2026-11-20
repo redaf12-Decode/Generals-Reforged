@@ -152,7 +152,7 @@ build on the first violation.
 | shared-library resolution | a packaged `DT_NEEDED` that is not a real file in the payload; `libmain.so` importing C++ symbols without `libc++_shared.so` in `DT_NEEDED`; a C++ import that neither `libSDL3.so` nor `libc++_shared.so` defines |
 | required exports | `libmain.so` without `SDL_main`; `libSDL3.so` without `JNI_OnLoad`, `SDL_Init`, `SDL_CreateGPUDevice`, `SDL_GetAndroidActivity`, `SDL_GetAndroidJNIEnv`, `SDL_GetAndroidInternalStoragePath`, `SDL_GetVersion`; `libc++_shared.so` without `_Znwm`/`_ZdlPv` |
 | JNI symbols | `libmain.so` exporting `JNI_OnLoad` (two registration authorities); a native method the staged glue declares that `libSDL3.so` does not register (glue/native version drift) |
-| duplicate SDL3 | more than one `libSDL3*.so`; more than one object defining `SDL_Init`; more than one defining `JNI_OnLoad`; any `SDL_*` defined in `libmain.so` except `SDL_main` |
+| duplicate SDL3 | more than one `libSDL3*.so`; more than one object defining `SDL_Init`; more than one defining `JNI_OnLoad`; any symbol `libSDL3.so` exports also defined by `libmain.so` (identity, not the `SDL_` prefix: SDL_shadercross is static in the engine and legitimately defines `SDL_ShaderCross_*`, which `libSDL3.so` does not export) |
 | stale reuse | with `--reference`: a packaged library whose build id differs from the staged one (falling back to SONAME + `DT_NEEDED` + export set when no build id exists) |
 
 `libc++_shared.so` is in the payload set, not in the system-library list, so its absence is a
@@ -239,6 +239,8 @@ No application build was run, and no NDK, SDK or Gradle is present in this works
    | `DT_NEEDED libX11` | rejected: desktop library |
    | glue declaring a native `libSDL3.so` does not register | rejected: glue/native drift |
    | packaged object rebuilt after staging (`--reference`) | rejected: build id differs |
+   | `libmain.so` redefining a symbol `libSDL3.so` exports (`SDL_GetVersion`) | rejected: second SDL3 implementation |
+   | `libmain.so` defining `SDL_ShaderCross_Init`/`SDL_ShaderCross_Quit` (SDL_shadercross, static in the engine) | **pass**: not an SDL3 duplicate |
 
 3. **The manifest/Activity assertions, simulated against the real manifest.** The new
    `theGameActivityIsDeclaredForSdl` contract was replayed over `AndroidManifest.xml`: the exact
@@ -251,9 +253,10 @@ No application build was run, and no NDK, SDK or Gradle is present in this works
    a guess.
 5. **Cross-references.** Every doc reference added here resolves; `grep` finds no remaining
    "SDL3 is static" statement in docs 16 and 18.
-6. **The first CI run** (44806441122) did what no local check could: it built the engine for real.
-   It found the `libSDL3.so` output-directory defect of §8.1, which is now fixed; the run after that
-   fix is the one that has to be green before this phase can be called done.
+6. **The first two CI runs** did what no local check could: they built and linked the engine for
+   real. Run 44806441122 found the `libSDL3.so` output-directory defect; run 44810757247 found the
+   `SDL_ShaderCross_*` false positive. Both are fixed in §8.1, and the run after them is the one
+   that has to be green before this phase can be called done.
 
 ### 8.1 The first CI run, and what it found
 
@@ -280,6 +283,23 @@ this document assumes. Nothing else about the two-artifact design changed.
 
 The lesson is the phase's own point: the first real link was the first thing that could contradict
 the design, and it did - one directory deeper than expected.
+
+The next run (44810757247) got past the build, and past the ELF audit of `libmain.so`, and then
+failed the **Phase 4** audit's duplicate check:
+
+```
+##[error]libmain.so defines SDL_ symbols of its own: a second SDL3 implementation is inside the
+engine (only SDL_main may be defined there)
+```
+
+The symbols were `SDL_ShaderCross_CompileDXBCFromHLSL`, `SDL_ShaderCross_ReflectGraphicsSPIRV` and
+friends. They are SDL3's *shadercross* library, which is vendored separately and static in the
+engine (`sdl3_shadercross`, decision 4) - not SDL3 core, and not exported by `libSDL3.so`. The
+check's rule ("no `SDL_` symbol but `SDL_main`") was a proxy that the real build disproved.
+
+Both the workflow assertion and this phase's verifier now test **identity** instead: no symbol that
+`libSDL3.so` exports may be defined by `libmain.so`. That still catches a partially linked SDL3
+subset (which need not define `SDL_Init`) and no longer rejects SDL_shadercross.
 
 ## 9. What CI proves, and what it does not
 

@@ -229,11 +229,8 @@ for lib in "${EXPECTED[@]}"; do
       if printf '%s\n' "$syms" | grep -qx "JNI_OnLoad"; then
         fail "libmain.so exports JNI_OnLoad: SDL3's JNI registration belongs to libSDL3.so alone"
       fi
-      extra_sdl=$(printf '%s\n' "$syms" | grep -E '^SDL_' | grep -vx 'SDL_main' || true)
-      if [ -n "$extra_sdl" ]; then
-        printf '%s\n' "$extra_sdl" >&2
-        fail "libmain.so defines SDL_* symbols of its own: a second SDL3 implementation is inside the engine"
-      fi
+      # SDL_ShaderCross_* is the engine's static SDL_shadercross, not SDL3 core, so the SDL_ prefix
+      # alone proves nothing: the duplicate check against libSDL3.so's exports is done on the set.
       ;;
     libSDL3.so)
       for sym in $SDL3_REQUIRED; do
@@ -273,6 +270,17 @@ done | sort)
   || fail "JNI_OnLoad is defined by [${jni_definers//$'\n'/ }]: exactly one library may register the JNI methods"
 [ "$jni_definers" = "libSDL3.so" ] \
   || fail "JNI_OnLoad is defined by $jni_definers, not libSDL3.so: SDLActivity's native methods are registered by SDL3"
+
+# A second SDL3 does not have to define SDL_Init: a partially linked subset - one subsystem, or a
+# copy whose version script hides the rest - is enough to give the process two SDL3 states. Compare
+# identities instead: no symbol libSDL3.so exports may also be defined by libmain.so. The one
+# exception is the app's own entry point. (SDL_shadercross is static in the engine and defines
+# SDL_ShaderCross_*, which libSDL3.so does not export - a prefix test would reject it wrongly.)
+overlap=$(comm -12   <(defined_syms "$LIBS/libmain.so" | sort -u)   <(defined_syms "$LIBS/libSDL3.so" | sort -u) | grep -vx 'SDL_main' || true)
+if [ -n "$overlap" ]; then
+  printf '  %s\n' $overlap >&2
+  fail "libmain.so defines $(printf '%s\n' $overlap | grep -c .) symbol(s) that libSDL3.so also exports: a second SDL3 implementation is inside the engine"
+fi
 step "one SDL3 implementation (libSDL3.so), one JNI registration (libSDL3.so)"
 
 # libmain.so's C++ symbols come from the packaged runtime, not from a static libc++ that would give

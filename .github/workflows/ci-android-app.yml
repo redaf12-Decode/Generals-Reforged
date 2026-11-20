@@ -470,15 +470,22 @@ jobs:
           # SDL3 is a standalone shared library, so libmain.so imports SDL_* and names libSDL3.so
           # (classified above). What libmain.so must NOT contain is an SDL3 implementation of its
           # own: that would be a second copy of SDL3, and the two would disagree about state. The
-          # one SDL_ symbol it defines is the app's own entry point, SDL_main.
+          # test is symbol identity, not the SDL_ prefix: SDL_shadercross is a separate vendored
+          # library that is static in the engine and legitimately defines SDL_ShaderCross_*, which
+          # libSDL3.so does not export.
           undef_sdl=$("$NM" --undefined-only "$LIB" | grep -cE '(^| )U +SDL_' || true)
           echo "SDL_ symbols imported from libSDL3.so: ${undef_sdl}"
           [ "${undef_sdl:-0}" -gt 0 ] \
             || fail "libmain.so imports no SDL_ symbol: SDL3 is not linked into the engine"
-          defined_sdl=$("$NM" --dynamic --defined-only "$LIB" | grep -E '[[:space:]]SDL_' | grep -vE '[[:space:]]SDL_main$' || true)
-          if [ -n "$defined_sdl" ]; then
-            echo "$defined_sdl"
-            fail "libmain.so defines SDL_ symbols of its own: a second SDL3 implementation is inside the engine (only SDL_main may be defined there)"
+          SDL3="$NATIVE_BUILD/libSDL3.so"
+          [ -f "$SDL3" ] || fail "libSDL3.so was not built"
+          "$NM" --dynamic --defined-only "$LIB" | awk 'NF {print $NF}' | sort -u > "$RUNNER_TEMP/libmain-defined.txt"
+          "$NM" --dynamic --defined-only "$SDL3" | awk 'NF {print $NF}' | sort -u > "$RUNNER_TEMP/libsdl3-defined.txt"
+          duplicates=$(comm -12 "$RUNNER_TEMP/libmain-defined.txt" "$RUNNER_TEMP/libsdl3-defined.txt" \
+            | grep -vx 'SDL_main' || true)
+          if [ -n "$duplicates" ]; then
+            echo "$duplicates"
+            fail "libmain.so defines symbols that libSDL3.so also exports: a second SDL3 implementation is inside the engine"
           fi
           echo "libmain.so defines no SDL3 symbol but its own SDL_main: one SDL3 implementation, in libSDL3.so"
 
