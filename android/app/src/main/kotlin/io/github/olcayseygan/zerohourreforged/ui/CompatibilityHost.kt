@@ -37,24 +37,27 @@ import io.github.olcayseygan.zerohourreforged.ui.theme.ZeroHourTheme
  * launcher the player came from even though it is a separate Activity with no shared state.
  *
  * @param onNavigateBack called by the top bar's back arrow. Null leaves the arrow off, which is
- *   correct only if this screen is ever shown as the task root.
+ *   correct only if this screen is ever shown as the task root. Typed as [Runnable] rather than
+ *   `() -> Unit` so a Java caller can pass a method reference: a Kotlin `Unit`-returning function
+ *   type is not assignable from a Java `void` lambda.
  */
 @JvmOverloads
 fun installCompatibilityContent(
     activity: ComponentActivity,
     device: DeviceCapabilities,
     report: CompatibilityEvaluator.Report,
-    onNavigateBack: (() -> Unit)? = null,
+    onNavigateBack: Runnable? = null,
 ) {
     activity.setContent {
         ZeroHourTheme(
             appearance = AppearanceStore.mode(activity),
             dynamicColor = AppearanceStore.dynamicColor(activity),
         ) {
+            val back: (() -> Unit)? = onNavigateBack?.let { runnable -> { runnable.run() } }
             CompatibilityScreen(
                 device = device,
                 report = report,
-                onNavigateBack = onNavigateBack,
+                onNavigateBack = back,
             )
         }
     }
