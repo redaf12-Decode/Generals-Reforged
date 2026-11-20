@@ -199,10 +199,12 @@ and unit-test tasks run before the payload is staged in CI and must not require 
 | `docs/android-port/architecture/16-android-application-shell.md` | §4/§5 rewritten for the two-library model (the "superseded" note is replaced by the real text) |
 | `docs/android-port/architecture/18-native-dependency-packaging.md` | `DT_NEEDED` table, static-vs-shared paragraph, ELF audit and APK inspection steps updated for `libSDL3.so` |
 | `docs/android-port/IMPLEMENTATION-CONTINUATION-STATUS.md` | Phase 2 note pointing here |
+| `GeneralsMD/Code/CMakeLists.txt` | the shared SDL3 target gets `LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}`, so `libSDL3.so` is produced beside `libmain.so` (see §8.1) |
+| `docs/android-port/implementation/ANDROID_ENGINE_AND_SDL3_SHARED_LIBRARY.md` | §6.1: what the first CI run found, and the fix |
 | `docs/android-port/implementation/ANDROID_SDL3_APPLICATION_PACKAGING.md` | **new.** This document |
 
-Untouched, deliberately: `GeneralsMD/Code/**` (no native change in this phase, so
-`BuildFingerprint.manifest` needs no regeneration), `Main/PosixMain.cpp`, the manifest, the
+Untouched, deliberately: `Main/PosixMain.cpp`, `GeneralsMD/Code/BuildFingerprint.manifest` (the only
+`GeneralsMD/Code/` change is a CMake output-directory property, not a source file), the manifest, the
 permissions, the Gradle plugin versions, the SDK levels, the application identity, SDL3's Java glue
 itself (staged, never edited) and the reference port's dependency set.
 
@@ -249,6 +251,35 @@ No application build was run, and no NDK, SDK or Gradle is present in this works
    a guess.
 5. **Cross-references.** Every doc reference added here resolves; `grep` finds no remaining
    "SDL3 is static" statement in docs 16 and 18.
+6. **The first CI run** (44806441122) did what no local check could: it built the engine for real.
+   It found the `libSDL3.so` output-directory defect of §8.1, which is now fixed; the run after that
+   fix is the one that has to be green before this phase can be called done.
+
+### 8.1 The first CI run, and what it found
+
+The first run of `ci-android-app.yml` on this branch (run 44806441122) reached the native build and
+failed there:
+
+```
+libmain.so linked this run at 2026-11-20T20:16:37Z
+-rwxr-xr-x 1 runner runner 278474016 Nov 20 20:16 build-android-arm64/libmain.so
+##[error]the build did not produce build-android-arm64/libSDL3.so: SDL3 was not built shared
+```
+
+The message was misleading; the shared/static choice was right. CMake's
+`if(NOT TARGET SDL3::SDL3-shared)` guard had passed, so the shared target existed and `libmain.so`
+linked it. SDL3 is added as a subproject (`add_subdirectory(.../SDL3 ${CMAKE_BINARY_DIR}/SDL3)`), and
+CMake puts a subproject's library in that subproject's binary directory - so the artifact was
+`build-android-arm64/SDL3/libSDL3.so`, while this packaging (and `ci-android-test.yml`) look for it
+beside the engine.
+
+Fix: `GeneralsMD/Code/CMakeLists.txt` sets `LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"` on the
+real target behind `SDL3::SDL3-shared` (read through `ALIASED_TARGET`, so an SDL3 rename cannot
+silently drop it). Both artifacts are now produced in one directory, which is what every check in
+this document assumes. Nothing else about the two-artifact design changed.
+
+The lesson is the phase's own point: the first real link was the first thing that could contradict
+the design, and it did - one directory deeper than expected.
 
 ## 9. What CI proves, and what it does not
 
@@ -276,7 +307,7 @@ checklist item.
 1. **Nothing here has been executed end to end.** No NDK, SDK, Gradle or device exists in this
    workspace: the verifier was validated against synthetic ELF objects and the manifest assertions
    against the real manifest, but the first real run of `package-android.sh` and of the workflow is
-   CI.
+   CI - and that first run is what found the `libSDL3.so` output-directory defect in §8.1.
 2. **The stale-object check depends on a build id.** NDK links carry `.note.gnu.build-id` and AGP's
    `llvm-strip` keeps it, but if a toolchain ever drops it the verifier falls back to SONAME +
    `DT_NEEDED` + export set, which is weaker: an object rebuilt from unchanged sources would not be

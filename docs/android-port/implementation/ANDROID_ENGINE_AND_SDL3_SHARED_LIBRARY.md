@@ -276,6 +276,21 @@ No application build was run locally. What was run:
 `ci-android-test.yml`: `SDL3-shared` compiles and produces `libSDL3.so`; the engine links and its
 `DT_NEEDED` names `libSDL3.so`, whose SONAME and machine match.
 
+### 6.1 What the first CI run found
+
+The first run of `ci-android-app.yml` on this branch (run 44806441122, 2026-11-20) linked `libmain.so`
+and then stopped at "the build did not produce `build-android-arm64/libSDL3.so`". The shared/static
+choice was right: CMake's `if(NOT TARGET SDL3::SDL3-shared)` guard passed, so the shared target
+existed and `libmain.so` linked it. The **location** was wrong. SDL3 is a subproject
+(`add_subdirectory(.../SDL3 ${CMAKE_BINARY_DIR}/SDL3)`), and CMake puts a subproject's library in
+that subproject's own binary directory, so the artifact was
+`build-android-arm64/SDL3/libSDL3.so` - while this document, `package-android.sh` and both workflows
+look for it beside the engine.
+
+Phase 2 fixed it in `GeneralsMD/Code/CMakeLists.txt`: the shared target gets
+`LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}`, so `libmain.so` and `libSDL3.so` are produced in one
+directory. Nothing else about the two-artifact design changed.
+
 Both workflows must be dispatched by hand for this branch (`gh workflow run <file> --ref <branch>`):
 their `push` triggers list the older port branches only.
 

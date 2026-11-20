@@ -978,6 +978,12 @@ if(ZH_PLATFORM_POSIX)
       message(FATAL_ERROR "SDL3 built no shared target (SDL3::SDL3-shared).  The Android build needs "
         "libSDL3.so: SDL_STATIC must be OFF and SDL_SHARED ON.")
     endif()
+    # SDL3 is a subproject, so its library would land in its own binary directory
+    # (build-android-arm64/SDL3/libSDL3.so) and the payload would have to be collected from two
+    # places.  It lands beside libmain.so instead, which is where the engine's DT_NEEDED, the
+    # packaging script and the CI checks all look for it.
+    get_target_property(_sdl3_shared SDL3::SDL3-shared ALIASED_TARGET)
+    set_target_properties(${_sdl3_shared} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     set(ZH_SDL3_TARGET SDL3::SDL3-shared)
   else()
     if(NOT TARGET SDL3::SDL3-static)
