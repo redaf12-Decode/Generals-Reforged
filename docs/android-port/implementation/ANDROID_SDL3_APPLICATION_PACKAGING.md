@@ -326,6 +326,25 @@ Three consequences, all fixed:
 versions now too, so its required-export, JNI-registration, C++-resolution and duplicate checks all
 work against a version-scripted `libSDL3.so`.
 
+The run after that (44914731274) got through the whole ELF audit and failed on the last of
+`libSDL3.so`'s own dependencies:
+
+```
+##[error]libSDL3.so needs 'libc++_shared.so', which is neither an Android system library nor packaged in the APK
+```
+
+`libc++_shared.so` **is** packaged - it is one of the three libraries in the payload. The audit's
+list for `libSDL3.so` allowed system libraries only, on the Phase 1 assumption that "SDL3 is C, so
+it needs no C++ runtime". The first real link disproved that: with `ANDROID_STL=c++_shared` the NDK
+puts `libc++_shared.so` in the `DT_NEEDED` of the shared objects it links, SDL3's included, even
+though SDL3's Android sources are C.
+
+That is not a second C++ runtime and not a second SDL3: it is the same packaged file the engine
+loads, resolved by the loader before either library runs. The rule is now what it should always have
+been - `libSDL3.so`'s non-system dependencies may be `libc++_shared.so` and nothing else, so a
+dependency on `libmain.so` (a cycle) or a second SDL3 still fails. The verifier says the same thing
+and both directions are covered by its cases.
+
 ## 9. What CI proves, and what it does not
 
 `ci-android-app.yml` (now triggered by a push to this branch as well as by hand) builds the real
@@ -337,7 +356,8 @@ engine and SDL3, runs the verifier on the staged payload and on the APK's, and i
   and defines none but `SDL_main`, `DT_NEEDED` = system libraries + `libSDL3.so` +
   `libc++_shared.so`;
 - `libSDL3.so` is `ELF64`/`AArch64`/`DYN`, `SONAME libSDL3.so`, exports `JNI_OnLoad` and the SDL3
-  entry points, and needs Android system libraries only - before and after AGP's strip;
+  entry points, and needs Android system libraries plus the packaged `libc++_shared.so` - before
+  and after AGP's strip;
 - every non-system `DT_NEEDED` of the packaged `libmain.so` is a file in the APK;
 - the packaged libraries are the staged ones (build id), so nothing stale is shipped;
 - the manifest still declares the three Activities, the launcher, `minSdk 28`/`target 35`,

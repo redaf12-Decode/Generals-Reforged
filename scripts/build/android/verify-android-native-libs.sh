@@ -237,6 +237,15 @@ for lib in "${EXPECTED[@]}"; do
       # alone proves nothing: the duplicate check against libSDL3.so's exports is done on the set.
       ;;
     libSDL3.so)
+      # The NDK's c++_shared configuration names libc++_shared.so in the DT_NEEDED of every shared
+      # object it links, SDL3 included, even though SDL3's own sources are C. That is the one
+      # packaged dependency SDL3 may have: anything else packaged is a cycle (libmain.so) or a
+      # second SDL3.
+      for dep in $needs; do
+        is_system_lib "$dep" && continue
+        [ "$dep" = "libc++_shared.so" ] \
+          || fail "libSDL3.so needs the packaged '$dep': SDL3 may depend only on Android system libraries and the C++ runtime"
+      done
       for sym in $SDL3_REQUIRED; do
         printf '%s\n' "$syms" | grep -qx "$sym" \
           || fail "libSDL3.so does not export $sym, which the engine or the Java glue calls"

@@ -511,17 +511,21 @@ jobs:
               || fail "libSDL3.so does not export ${sym}"
           done
           echo "libSDL3.so exports JNI_OnLoad and the SDL_* entry points the engine uses"
-          # SDL3 is C and needs nothing but bionic and the NDK's system libraries.
+          # SDL3's own sources are C, but the NDK's c++_shared configuration puts libc++_shared.so in
+          # the DT_NEEDED of every shared object it links, so libSDL3.so names it too. That is the
+          # one non-system dependency it may have: it is packaged, and it is the same file the engine
+          # loads, so the process still has exactly one C++ runtime. Anything else - libmain.so, a
+          # second SDL3, a desktop library - fails.
           for lib in $(sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' <<<"$sdl3_dynamic"); do
             case "$lib" in
               libc.so|libm.so|libdl.so|liblog.so|libandroid.so|libz.so|libGLESv1_CM.so|libGLESv2.so|\
               libGLESv3.so|libEGL.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libmediandk.so|\
-              libcamera2ndk.so|libjnigraphics.so|libnativewindow.so|libsync.so)
+              libcamera2ndk.so|libjnigraphics.so|libnativewindow.so|libsync.so|libc++_shared.so)
                 continue ;;
             esac
-            fail "libSDL3.so needs '$lib', which is neither an Android system library nor packaged in the APK"
+            fail "libSDL3.so needs '$lib', which is neither an Android system library nor the packaged libc++_shared.so"
           done
-          echo "libSDL3.so needs Android system libraries only"
+          echo "libSDL3.so needs Android system libraries plus the packaged libc++_shared.so"
 
           # The Android API the object was built for: the build's own configure record is the
           # authoritative floor; the NDK normally also stamps an Android ident note into the ELF, so
@@ -548,7 +552,7 @@ jobs:
 
           echo "libmain.so: ELF64 AArch64 DYN, SONAME libmain.so, exports SDL_main, imports SDL_* from libSDL3.so,"
           echo "            DT_NEEDED = system libs + libSDL3.so + libc++_shared.so (the packaged dependencies)"
-          echo "libSDL3.so: ELF64 AArch64 DYN, SONAME libSDL3.so, exports JNI_OnLoad and SDL_*, system libs only"
+          echo "libSDL3.so: ELF64 AArch64 DYN, SONAME libSDL3.so, exports JNI_OnLoad and SDL_*, system libs + packaged libc++_shared.so"
 
       - name: Package the APK (stage the engine, SDL3 and the C++ runtime, then run Gradle)
         run: |

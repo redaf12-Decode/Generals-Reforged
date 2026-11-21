@@ -204,7 +204,7 @@ they are built from one tree and packaged from one build.
 |:--|:--|
 | ARM64 | Both objects are built by the same NDK toolchain in the same configure (`android.toolchain.cmake`: `arm64-v8a`). A non-AArch64 Android configure is refused at `CMakeLists.txt:52-58`. |
 | Android API | Both are built at `ANDROID_PLATFORM=android-28` from the same cache entry; nothing raises SDL3's floor. |
-| C++ runtime | `libmain.so` needs `libc++_shared.so` (`ANDROID_STL=c++_shared`), packaged from the same NDK. `libSDL3.so` is C and needs no C++ runtime, so there is exactly one `libc++_shared.so` and no second copy inside SDL3. |
+| C++ runtime | Both objects name `libc++_shared.so` (`ANDROID_STL=c++_shared`): `libmain.so` because the engine is C++, `libSDL3.so` because the NDK toolchain puts the shared STL in the `DT_NEEDED` of every shared object it links, although SDL3's Android sources are C (found by the first CI run, §6.1). One copy is packaged from the same NDK and both load it, so the process has one C++ runtime and SDL3 contains no second copy. |
 | JNI visibility | `JNI_OnLoad` is exported by `libSDL3.so` through the version script (default visibility), so `System.loadLibrary("SDL3")` registers `SDLActivity`'s native methods. `libmain.so` needs no `JNI_OnLoad` of its own. |
 | SDL3 initialization ownership | Unchanged: the engine calls `SDL_Init`/`SDL_CreateGPUDevice` through `SdlGameEngine`/`SdlGpuFrame`; there is one SDL3 instance, in `libSDL3.so`, and the engine is its only user. Nothing in the app shell initializes SDL. |
 | Native loading order | `ZeroHourActivity.getLibraries()` returns `{"SDL3", "main"}` — SDL3 first, so its `JNI_OnLoad` runs before `SDL_main`; `libmain.so`'s `DT_NEEDED` on `libSDL3.so` also lets the loader resolve it automatically. |
@@ -263,7 +263,8 @@ No application build was run locally. What was run:
   `SDL_main`; stamped `android-28`.
 - `libSDL3.so`: exists; `ELF64`, `AArch64`, `DYN`; `SONAME libSDL3.so`; exports `JNI_OnLoad`,
   `SDL_Init`, `SDL_CreateGPUDevice`, `SDL_GetAndroidInternalStoragePath`; its own `DT_NEEDED` is
-  Android system libraries only.
+  Android system libraries plus the packaged `libc++_shared.so` (see §6.1 and the C++ runtime row
+  above), and nothing else.
 
 `ci-android-app.yml`, "Inspect the packaged APK":
 
@@ -290,6 +291,12 @@ look for it beside the engine.
 Phase 2 fixed it in `GeneralsMD/Code/CMakeLists.txt`: the shared target gets
 `LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}`, so `libmain.so` and `libSDL3.so` are produced in one
 directory. Nothing else about the two-artifact design changed.
+
+Three further runs each found one more thing that only a real build could show, all recorded in
+`ANDROID_SDL3_APPLICATION_PACKAGING.md` §8.1: an `SDL_`-prefix test that rejected SDL_shadercross's
+`SDL_ShaderCross_*`, a `JNI_OnLoad$` match that could never see `JNI_OnLoad@@SDL3_0.0.0` (SDL3's
+version script versions every export), and this table's C++ runtime row, which said `libSDL3.so`
+needs no C++ runtime when the NDK puts `libc++_shared.so` in its `DT_NEEDED`.
 
 Both workflows must be dispatched by hand for this branch (`gh workflow run <file> --ref <branch>`):
 their `push` triggers list the older port branches only.
