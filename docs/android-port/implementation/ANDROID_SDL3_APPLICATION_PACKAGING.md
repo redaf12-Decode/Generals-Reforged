@@ -301,6 +301,31 @@ Both the workflow assertion and this phase's verifier now test **identity** inst
 `libSDL3.so` exports may be defined by `libmain.so`. That still catches a partially linked SDL3
 subset (which need not define `SDL_Init`) and no longer rejects SDL_shadercross.
 
+The run after that (44816143356) then failed one step further on:
+
+```
+##[error]libSDL3.so does not export JNI_OnLoad
+```
+
+`JNI_OnLoad` is defined (`src/core/android/SDL_android.c:578`) and named in SDL3's version script
+(`src/dynapi/SDL_dynapi.sym:3`), so the library does export it - as `JNI_OnLoad@@SDL3_0.0.0`. The
+version script gives **every** exported name a default version, and `readelf --dyn-syms` and `nm -D`
+both print the suffix (verified locally against a version-scripted shared object: `foo@@V1`). The
+checks matched `JNI_OnLoad$`, so they could never see a versioned name.
+
+Three consequences, all fixed:
+
+- symbol-presence checks now compare bare names (`nm -D | awk '{print $NF}' | sed 's/@.*//'`);
+- the duplicate-SDL3 comparison does the same on **both** sides - otherwise a plain `SDL_Init` in
+  `libmain.so` and a versioned `SDL_Init@@SDL3_0.0.0` in `libSDL3.so` compare as different names and
+  a second implementation would pass unnoticed;
+- the packaged `libSDL3.so` check in the APK inspection uses the same rule, since AGP's strip leaves
+  the versioned dynamic names alone.
+
+`verify-android-native-libs.sh` had the same defect in `defined_syms`/`undefined_syms`; it strips
+versions now too, so its required-export, JNI-registration, C++-resolution and duplicate checks all
+work against a version-scripted `libSDL3.so`.
+
 ## 9. What CI proves, and what it does not
 
 `ci-android-app.yml` (now triggered by a push to this branch as well as by hand) builds the real

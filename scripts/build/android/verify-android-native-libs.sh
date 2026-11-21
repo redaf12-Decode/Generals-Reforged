@@ -129,8 +129,12 @@ elf_header() { "$READELF" -h "$1"; }
 elf_field() { elf_header "$1" | sed -n "s/^ *$2: *//p" | head -n 1; }
 soname() { "$READELF" -d "$1" | sed -n 's/.*SONAME.*\[\(.*\)\].*/\1/p' | head -n 1; }
 needed() { "$READELF" -d "$1" | sed -n 's/.*NEEDED.*\[\(.*\)\].*/\1/p'; }
-defined_syms() { "$NM" -D --defined-only "$1" 2>/dev/null | awk 'NF>0 {print $NF}'; }
-undefined_syms() { "$NM" -D --undefined-only "$1" 2>/dev/null | awk 'NF>0 {print $NF}'; }
+# nm prints a default-versioned symbol as name@@version, and SDL3's version script gives every name
+# it exports one (JNI_OnLoad@@SDL3_0.0.0), so the version is stripped: the checks below are about
+# names, and comparing a versioned name with a bare one would report a present symbol as missing -
+# and, worse, a duplicated one as absent.
+defined_syms() { "$NM" -D --defined-only "$1" 2>/dev/null | awk 'NF>0 {print $NF}' | sed 's/@.*//'; }
+undefined_syms() { "$NM" -D --undefined-only "$1" 2>/dev/null | awk 'NF>0 {print $NF}' | sed 's/@.*//'; }
 
 # The build id survives the symbol strip AGP applies, so it identifies the object that was packaged.
 build_id() {

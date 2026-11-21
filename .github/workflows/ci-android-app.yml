@@ -479,8 +479,11 @@ jobs:
             || fail "libmain.so imports no SDL_ symbol: SDL3 is not linked into the engine"
           SDL3="$NATIVE_BUILD/libSDL3.so"
           [ -f "$SDL3" ] || fail "libSDL3.so was not built"
-          "$NM" --dynamic --defined-only "$LIB" | awk 'NF {print $NF}' | sort -u > "$RUNNER_TEMP/libmain-defined.txt"
-          "$NM" --dynamic --defined-only "$SDL3" | awk 'NF {print $NF}' | sort -u > "$RUNNER_TEMP/libsdl3-defined.txt"
+          # SDL3's version script gives every name it exports a default version, so the dynamic
+          # symbol table spells them JNI_OnLoad@@SDL3_0.0.0. Both sides are compared bare: a version
+          # suffix would make a duplicated SDL_Init look like two different symbols.
+          "$NM" --dynamic --defined-only "$LIB" | awk 'NF {print $NF}' | sed 's/@.*//' | sort -u > "$RUNNER_TEMP/libmain-defined.txt"
+          "$NM" --dynamic --defined-only "$SDL3" | awk 'NF {print $NF}' | sed 's/@.*//' | sort -u > "$RUNNER_TEMP/libsdl3-defined.txt"
           duplicates=$(comm -12 "$RUNNER_TEMP/libmain-defined.txt" "$RUNNER_TEMP/libsdl3-defined.txt" \
             | grep -vx 'SDL_main' || true)
           if [ -n "$duplicates" ]; then
@@ -502,9 +505,9 @@ jobs:
           sdl3_dynamic=$("$READELF" -d "$SDL3_LIB"); grep -E 'SONAME|NEEDED' <<<"$sdl3_dynamic"
           grep -q 'Library soname: \[libSDL3\.so\]' <<<"$sdl3_dynamic" \
             || fail "libSDL3.so's SONAME is not libSDL3.so (libmain.so names it in DT_NEEDED)"
-          sdl3_dynsyms=$("$READELF" --dyn-syms "$SDL3_LIB")
+          sdl3_exports=$("$NM" --dynamic --defined-only "$SDL3_LIB" | awk 'NF {print $NF}' | sed 's/@.*//' | sort -u)
           for sym in JNI_OnLoad SDL_Init SDL_CreateGPUDevice SDL_GetAndroidInternalStoragePath; do
-            grep -qE "[[:space:]]${sym}\$" <<<"$sdl3_dynsyms" \
+            grep -qx "$sym" <<<"$sdl3_exports" \
               || fail "libSDL3.so does not export ${sym}"
           done
           echo "libSDL3.so exports JNI_OnLoad and the SDL_* entry points the engine uses"
@@ -639,8 +642,12 @@ jobs:
           sdl3_dynamic=$("$readelf" -d "$sdl3_apk")
           grep -q 'Library soname: \[libSDL3\.so\]' <<<"$sdl3_dynamic" \
             || fail "the packaged libSDL3.so's SONAME is not libSDL3.so"
-          sdl3_dynsyms=$("$readelf" --dyn-syms "$sdl3_apk")
-          grep -qE '[[:space:]]JNI_OnLoad$' <<<"$sdl3_dynsyms" \
+          # AGP strips local symbols only; the versioned dynamic names (JNI_OnLoad@@SDL3_0.0.0) stay,
+          # and are compared bare.
+          nm="$BIN/llvm-nm"
+          [ -x "$nm" ] || fail "llvm-nm is missing: $nm"
+          sdl3_apk_exports=$("$nm" --dynamic --defined-only "$sdl3_apk" | awk 'NF {print $NF}' | sed 's/@.*//' | sort -u)
+          grep -qx 'JNI_OnLoad' <<<"$sdl3_apk_exports" \
             || fail "the packaged libSDL3.so does not export JNI_OnLoad"
           echo "the packaged libSDL3.so is an AArch64 shared object, SONAME libSDL3.so, exporting JNI_OnLoad"
 
